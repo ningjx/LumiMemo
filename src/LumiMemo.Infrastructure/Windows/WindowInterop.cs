@@ -54,19 +54,44 @@ public static class WindowInterop
         && PInvoke.SetWindowPos(new HWND(hwnd), HwndTopMost, 0, 0, 0, 0, MoveNothing);
 
     /// <summary>
-    /// 取 z 序里紧挨着这个窗口<strong>上面</strong>的那个窗口，也就是此刻盖住它的那个。
+    /// 取 z 序里紧挨着这个窗口<strong>上面</strong>的那个<em>可见</em>窗口，也就是此刻盖住它的那个。
     /// </summary>
     /// <param name="hwnd">目标窗口句柄。</param>
     /// <returns>
-    /// 上一个窗口；窗口已在 z 序最顶、或句柄无效时返回 <see cref="IntPtr.Zero"/>。
+    /// 上一个可见窗口；往上全是隐藏窗口、已到 z 序顶端，或句柄无效时返回 <see cref="IntPtr.Zero"/>。
     /// </returns>
     /// <remarks>
+    /// <para>
     /// 临时置顶<strong>之前</strong>调用，把结果留给 <see cref="PlaceBehind"/>，
     /// 就是"从哪儿来回哪儿去"里的那个"哪儿"。提升之后再问就没有意义了——
     /// 那时它紧挨着的是桌面窗口。
+    /// </para>
+    /// <para>
+    /// <strong>必须跳过隐藏窗口，不能只问一次 <c>GW_HWNDPREV</c>。</strong>
+    /// 便签上面常挤着一串不可见的辅助窗口——每个有过输入焦点的线程都挂着一个
+    /// <c>IME</c> 与 <c>MSCTFIME UI</c>，实测一张便签上面能连着压五六个。它们是
+    /// 可见序列里的透明人：用户看不见，却实实在在占着 z 序。拿它们当锚点，便签会落进
+    /// 一个"看着像在最上面"的位置——排到 Chrome 之上、却排在这些幽灵之下，用户看到的
+    /// 就是"便签浮在所有窗口之上"。锚点的意义是"用户眼里盖住便签的那个窗口"，
+    /// 所以只能落在可见窗口上。
+    /// </para>
     /// </remarks>
-    public static IntPtr GetZOrderPredecessor(IntPtr hwnd) =>
-        hwnd == IntPtr.Zero ? IntPtr.Zero : PInvoke.GetWindow(new HWND(hwnd), GET_WINDOW_CMD.GW_HWNDPREV);
+    public static IntPtr GetZOrderPredecessor(IntPtr hwnd)
+    {
+        if (hwnd == IntPtr.Zero)
+        {
+            return IntPtr.Zero;
+        }
+
+        IntPtr current = PInvoke.GetWindow(new HWND(hwnd), GET_WINDOW_CMD.GW_HWNDPREV);
+
+        while (current != IntPtr.Zero && !PInvoke.IsWindowVisible(new HWND(current)))
+        {
+            current = PInvoke.GetWindow(new HWND(current), GET_WINDOW_CMD.GW_HWNDPREV);
+        }
+
+        return current;
+    }
 
     /// <summary>
     /// 撤掉临时置顶：清 <c>WS_EX_TOPMOST</c>，不动 z 序。
@@ -114,8 +139,9 @@ public static class WindowInterop
     ///     而撤退只处理自己提升过的那些）。
     ///   </item>
     ///   <item>
-    ///     <paramref name="after"/> 已经失效——提升与撤退之间隔着整个"显示桌面"，
-    ///     期间系统可能已经把那个窗口销毁了，句柄还可能被复用。
+    ///     <paramref name="after"/> 已经失效或不再可见——提升与撤退之间隔着整个"显示桌面"，
+    ///     期间系统可能已经把那个窗口销毁了，句柄还可能被复用；输入法那类辅助窗口也会
+    ///     随时显隐。
     ///   </item>
     ///   <item>
     ///     <paramref name="after"/> 就是自己——窗口会落进"已激活却排在别人之下"的
@@ -130,7 +156,7 @@ public static class WindowInterop
             return true;
         }
 
-        if (!PInvoke.IsWindow(new HWND(after)) || IsTopMost(after))
+        if (!PInvoke.IsWindow(new HWND(after)) || !PInvoke.IsWindowVisible(new HWND(after)) || IsTopMost(after))
         {
             return true;
         }

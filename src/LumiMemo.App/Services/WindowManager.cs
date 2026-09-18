@@ -470,8 +470,18 @@ public sealed class WindowManager : IWindowManager, IDisposable
 
     /// <summary>把所有可见的、非置顶的便签临时提到置顶档。</summary>
     /// <remarks>
+    /// <para>
     /// 用户主动置顶的便签跳过：它们本来就在置顶档，再动一次只会在撤退时多一份
     /// "这张是不是我们提的" 的歧义。
+    /// </para>
+    /// <para>
+    /// <strong>已经在 <see cref="_promotedForShowDesktop"/> 里的也要跳过。</strong>
+    /// 桌面窗口连续两次成为前台时会再调一次本方法，而这时便签<em>已经</em>在置顶档上：
+    /// 再问一次 <see cref="WindowInterop.GetZOrderPredecessor"/>，问到的只会是置顶区里
+    /// 的邻居（任务栏、缩略图辅助窗口那一类），拿它覆盖掉先前记下的正确锚点，
+    /// 撤退时就再也回不到原位——<see cref="WindowInterop.PlaceBehind"/> 判定锚点自己
+    /// 就在置顶档，直接跳过归位，便签于是永久浮在所有普通窗口之上。
+    /// </para>
     /// </remarks>
     private void PromoteForShowDesktop()
     {
@@ -483,6 +493,12 @@ public sealed class WindowManager : IWindowManager, IDisposable
             }
 
             IntPtr hwnd = new WindowInteropHelper(window).Handle;
+
+            // 已经提过的不再提：锚点只在第一次提升之前是有效的。
+            if (_promotedForShowDesktop.Contains(hwnd))
+            {
+                continue;
+            }
 
             // 趁着还没提升，先把它此刻的 z 序邻居记下来，撤退时好插回去。
             IntPtr predecessor = WindowInterop.GetZOrderPredecessor(hwnd);

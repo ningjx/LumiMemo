@@ -26,6 +26,9 @@ GetWindow
 GET_WINDOW_CMD
 // 提升与撤退之间隔着整个"显示桌面"，那个邻居可能已经被销毁，句柄还可能被复用。
 IsWindow
+// 取锚点时要跳过隐藏窗口：便签上面常压着一串不可见的 IME / MSCTFIME UI，
+// 拿它们当锚点会让便签落进"看着像在最上面"的位置，见 WindowInterop.GetZOrderPredecessor。
+IsWindowVisible
 SetForegroundWindow
 GetForegroundWindow
 AttachThreadInput
