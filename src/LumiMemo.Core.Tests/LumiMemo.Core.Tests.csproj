@@ -28,11 +28,15 @@
   <ItemGroup>
     <ProjectReference Include="..\LumiMemo.Core\LumiMemo.Core.csproj" />
     <!--
-      §21.1 的表里写的是「Core.Tests 引用 Core」，但 §21.2 要求在这里测
-      DpiMath / LayoutMath 的布局恢复算法，而那两个类按 §4.2 在 Infrastructure。
-      两者不能同时成立，结论是把 Infrastructure 也引进来。
+      这里曾经还引用了 LumiMemo.Infrastructure，理由是要在本工程里测 DpiMath / LayoutMath，
+      而 §4.2 把这两个类划给了 Infrastructure。但 §8.3 又要求坐标规则「在 LayoutService 里
+      只有一处实现」，那个 LayoutService 按 §4.3 在 Core——Core 不引用任何工程，
+      于是它调不到 Infrastructure 里的 LayoutMath，§4.2 的两行自相矛盾。
+
+      现在的结论是把 DpiMath / LayoutMath 放进 Core/Math（见 LayoutMath 的类注释），
+      两个纯函数在 Core 里没有任何依赖问题，本工程也就不再需要 Infrastructure 了。
+      需要真实文件系统的测试统一放 LumiMemo.Integration.Tests。
     -->
-    <ProjectReference Include="..\LumiMemo.Infrastructure\LumiMemo.Infrastructure.csproj" />
   </ItemGroup>
 
   <!--

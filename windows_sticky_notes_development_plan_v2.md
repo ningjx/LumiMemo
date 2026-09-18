@@ -5572,6 +5572,16 @@ ConflictViewModel 弹窗
 | `EnumDisplayMonitors` | 枚举所有显示器 | §13.8、§14.5 |
 | `GetDpiForMonitor` | 取指定显示器的 DPI | §13.8 |
 | `GetDpiForWindow` | 取窗口的 DPI | §13.8 |
+| `EnumDisplayDevices` | 从 `\\.\DISPLAY1` 取**设备接口路径**，作为 `displays` 表的键 | §8.3、§13.8 |
+
+> **`EnumDisplayDevices` 是实现阶段补进来的，原表漏了它。** §8.3 要求 `displays` 表的键是
+> `\\?\DISPLAY#GSM7754#5&3513048&0&UID4354#{e6f07b5f-...}` 这种跨会话稳定的设备接口路径，
+> §13.8 也明说 `\\.\DISPLAY1` 不该当身份用。但除它之外的五条 API 里没有一条产出得了这个路径——
+> `GetMonitorInfo` 只给得出 `\\.\DISPLAY1`（连 `MONITORINFOEXW` 变体也只是多给这个 GDI 设备名）。
+> 只有对 `\\.\DISPLAYn` 调 `EnumDisplayDevices` 并传
+> `EDD_GET_DEVICE_INTERFACE_NAME`，才能从 GDI 设备名映射到 SetupAPI 那边的设备接口路径。
+> 相应地 `MONITORINFOEXW`、`DISPLAY_DEVICEW` 两个结构体与 `EDD_GET_DEVICE_INTERFACE_NAME`、
+> `MONITORINFOF_PRIMARY` 两个常量也要一并声明。
 
 ## D.4 热键与输入
 

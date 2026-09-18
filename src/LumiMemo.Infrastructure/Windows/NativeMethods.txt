@@ -31,10 +31,27 @@ DefWindowProc
 
 // ---- D.3 显示器与 DPI ----
 MonitorFromPoint
+// 附录 D.3 只写了 GetMonitorInfo。CsWin32 把这个名字映射到 MONITORINFO 那个重载，
+// 而我们需要 MONITORINFOEXW 里的 szDevice（"\\\\.\\DISPLAY1"）才能接着问
+// EnumDisplayDevices 要稳定设备路径，所以把结构体也显式列上。
+MONITORINFOEXW
 GetMonitorInfo
 EnumDisplayMonitors
 GetDpiForMonitor
 GetDpiForWindow
+// 附录 D.3 漏了这一条，但 §8.3 的 displays 表要求键是
+// "\\?\DISPLAY#DEL41A6#...#{...}" 这种跨会话稳定的设备接口路径，
+// 而 GetMonitorInfo 只给得出 "\\.\DISPLAY1"（§13.8 明说不该用它当身份）。
+// 从物理设备名映射到设备接口路径只有这条 API 做得到。
+EnumDisplayDevices
+DISPLAY_DEVICEW
+// 上面两条 API 各带一个 0x1 的标志位：EnumDisplayDevices 靠
+// EDD_GET_DEVICE_INTERFACE_NAME 决定 DeviceID 里填的是设备接口路径还是
+// MONITOR\... 那种卷名；MONITORINFOF_PRIMARY 用来认主显示器。
+// 值都恰好是 1，手抄成 0x1 不会当场出错——正是这种「抄错了也照样跑」的常量
+// 该让 CsWin32 从元数据里给，而不是自己敲。
+EDD_GET_DEVICE_INTERFACE_NAME
+MONITORINFOF_PRIMARY
 
 // ---- D.4 热键与输入 ----
 RegisterHotKey
