@@ -54,27 +54,44 @@ public static class WindowInterop
         && PInvoke.SetWindowPos(new HWND(hwnd), HwndTopMost, 0, 0, 0, 0, MoveNothing);
 
     /// <summary>
-    /// 取 z 序里紧挨着这个窗口<strong>上面</strong>的那个<em>可见</em>窗口，也就是此刻盖住它的那个。
+    /// 取 z 序里紧挨着这个窗口<strong>上面</strong>的那个窗口，也就是用户眼里此刻盖住它的那个。
     /// </summary>
     /// <param name="hwnd">目标窗口句柄。</param>
     /// <returns>
-    /// 上一个可见窗口；往上全是隐藏窗口、已到 z 序顶端，或句柄无效时返回 <see cref="IntPtr.Zero"/>。
+    /// 上一个"算数的"窗口；往上没有这样的窗口、已到 z 序顶端，或句柄无效时返回
+    /// <see cref="IntPtr.Zero"/>。
     /// </returns>
     /// <remarks>
     /// <para>
     /// 临时置顶<strong>之前</strong>调用，把结果留给 <see cref="PlaceBehind"/>，
-    /// 就是"从哪儿来回哪儿去"里的那个"哪儿"。提升之后再问就没有意义了——
-    /// 那时它紧挨着的是桌面窗口。
+    /// 就是"从哪儿来回哪儿去"里的那个"哪儿"。
     /// </para>
     /// <para>
-    /// <strong>必须跳过隐藏窗口，不能只问一次 <c>GW_HWNDPREV</c>。</strong>
-    /// 便签上面常挤着一串不可见的辅助窗口——每个有过输入焦点的线程都挂着一个
-    /// <c>IME</c> 与 <c>MSCTFIME UI</c>，实测一张便签上面能连着压五六个。它们是
-    /// 可见序列里的透明人：用户看不见，却实实在在占着 z 序。拿它们当锚点，便签会落进
-    /// 一个"看着像在最上面"的位置——排到 Chrome 之上、却排在这些幽灵之下，用户看到的
-    /// 就是"便签浮在所有窗口之上"。锚点的意义是"用户眼里盖住便签的那个窗口"，
-    /// 所以只能落在可见窗口上。
+    /// <strong>它只返回 <see cref="PlaceBehind"/> 会接受的锚点</strong>，三种窗口一律跳过，
+    /// 于是"取回来的锚点用不了"这件事在源头就不存在了：
     /// </para>
+    /// <list type="bullet">
+    ///   <item>
+    ///     <strong>隐藏窗口。</strong>便签上面常挤着一串不可见的辅助窗口——每个有过输入焦点的
+    ///     线程都挂着一个 <c>IME</c> 与 <c>MSCTFIME UI</c>，实测一张便签上面能连着压五六个。
+    ///     它们是可见序列里的透明人：用户看不见，却实实在在占着 z 序。拿它们当锚点，便签会落进
+    ///     一个"看着像在最上面"的位置——排到浏览器之上、却排在这些幽灵之下。
+    ///   </item>
+    ///   <item>
+    ///     <strong>桌面窗口（<c>Progman</c>）。</strong>这条是实测出来的，而且它才是
+    ///     "便签还原后跑到最底下"的元凶：本方法是在<em>前台已经变成桌面之后</em>才被调用的
+    ///     （<c>WINEVENT_OUTOFCONTEXT</c> 的回调走消息队列，而"显示桌面"早就把桌面窗口抬到
+    ///     普通窗口之上了）。于是从便签往上第一个可见窗口正是被抬起来的桌面，便签被插到它后面
+    ///     ——桌面本来就是普通档最底下那个，插到它后面就是全屏幕最底下。锚点的意义是
+    ///     "用户眼里盖住便签的那个窗口"，而桌面是背景板，从来不是"盖住"它的东西。
+    ///   </item>
+    ///   <item>
+    ///     <strong>置顶档的窗口。</strong>把便签插到置顶窗口后面会连带把它也提拔进置顶档，
+    ///     而这次错误的提拔再也撤不掉，见 <see cref="PlaceBehind"/>。跳过它们并不会丢失
+    ///     精确度：便签本来就不可能排在置顶窗口之下，跳过之后要么找到一个更靠下的正经锚点，
+    ///     要么走到顶端返回 <see cref="IntPtr.Zero"/>，让便签留在普通档最上面——那正是它该待的地方。
+    ///   </item>
+    /// </list>
     /// </remarks>
     public static IntPtr GetZOrderPredecessor(IntPtr hwnd)
     {
@@ -83,9 +100,12 @@ public static class WindowInterop
             return IntPtr.Zero;
         }
 
+        IntPtr shell = PInvoke.GetShellWindow();
+
         IntPtr current = PInvoke.GetWindow(new HWND(hwnd), GET_WINDOW_CMD.GW_HWNDPREV);
 
-        while (current != IntPtr.Zero && !PInvoke.IsWindowVisible(new HWND(current)))
+        while (current != IntPtr.Zero
+            && (!PInvoke.IsWindowVisible(new HWND(current)) || current == shell || IsTopMost(current)))
         {
             current = PInvoke.GetWindow(new HWND(current), GET_WINDOW_CMD.GW_HWNDPREV);
         }
