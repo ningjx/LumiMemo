@@ -1,0 +1,15 @@
+<Application x:Class="LumiMemo.App.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             ShutdownMode="OnExplicitShutdown">
+  <!--
+    ShutdownMode 必须是 OnExplicitShutdown（§17.4）。
+
+    默认的 OnLastWindowClose 在这里是错的：便签窗口可以被全部关闭而程序继续驻留托盘，
+    管理器窗口也可以被收进托盘。退出时机由 §17.4 的退出序列显式决定，
+    不能交给「最后一个窗口关闭」这个隐式规则。
+
+    这里没有 StartupUri —— 启动由 App.xaml.cs 的 OnStartup 显式控制，
+    顺序按 §17.1，不能交给 XAML 的隐式约定（§24.1 原则 9）。
+  -->
+</Application>

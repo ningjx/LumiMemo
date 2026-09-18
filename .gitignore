@@ -1,0 +1,53 @@
+# ---- 构建产物 ----
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+artifacts/
+publish/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# ---- Visual Studio / Rider / VS Code ----
+.vs/
+.idea/
+.vscode/
+*.rsuser
+
+# ---- 测试与覆盖率 ----
+[Tt]est[Rr]esult*/
+TestResults/
+*.coverage
+*.coveragexml
+coverage*.json
+coverage*.xml
+
+# ---- NuGet ----
+*.nupkg
+*.snupkg
+packages/
+!packages/build/
+.nuget/
+
+# ---- 本程序的运行时数据（正常在 %LOCALAPPDATA%，防止误设在仓库内）----
+settings.json
+layout.json
+recovery/
+.lumimemo/
+
+# ---- 便签数据与本程序无关，但避免误提交笔记目录 ----
+notes/
+attachments/
+
+# ---- Windows ----
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# ---- 崩溃转储 ----
+*.dmp
+*.mdmp

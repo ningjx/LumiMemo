@@ -1,0 +1,48 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- xunit.v3 的测试工程本身就是可执行文件，没有 Exe 它会在还原阶段直接报错 -->
+    <OutputType>Exe</OutputType>
+    <RootNamespace>LumiMemo.Core.Tests</RootNamespace>
+    <AssemblyName>LumiMemo.Core.Tests</AssemblyName>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+
+    <!--
+      这里刻意不写 TestingPlatformDotnetTestSupport。
+      仓库根 global.json 声明了 "test": { "runner": "Microsoft.Testing.Platform" }，
+      .NET 10 SDK 因此直接走 MTP 原生模式（要求 MTP ≥ 1.7，当前解析到 2.4.0），
+      该模式下这个属性和参数分隔符都不再需要，加回来只会让工程卡在两种模式之间。
+
+      另一个真正会咬人的坑记在这里，免得以后再查一遍：
+      调用 dotnet test 时不要加 &#45;&#45;nologo。MTP 模式下它会让整个运行以
+      「运行了零个测试」+ 退出码 5 失败，而且没有任何输出指向它。原因是该选项
+      只定义在 VSTest 风味的 test 命令上，MTP 风味没有定义，于是它作为未匹配 token
+      被原样转发给每个测试程序；MTP 的等价选项叫 &#45;&#45;no-banner，所以程序在
+      发现任何测试之前就以 InvalidCommandLine(5) 退出。见 dotnet/sdk#55309。
+
+      （上面两个短横线写成 &#45;&#45; 是因为 XML 注释里不允许出现连续两个短横线。）
+    -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\LumiMemo.Core\LumiMemo.Core.csproj" />
+    <!--
+      §21.1 的表里写的是「Core.Tests 引用 Core」，但 §21.2 要求在这里测
+      DpiMath / LayoutMath 的布局恢复算法，而那两个类按 §4.2 在 Infrastructure。
+      两者不能同时成立，结论是把 Infrastructure 也引进来。
+    -->
+    <ProjectReference Include="..\LumiMemo.Infrastructure\LumiMemo.Infrastructure.csproj" />
+  </ItemGroup>
+
+  <!--
+    刻意不引 Microsoft.NET.Test.Sdk 与 xunit.runner.visualstudio。
+    那两个是 VSTest 路径的组件，而 .NET 10 SDK 已经不支持用 VSTest 跑
+    Microsoft.Testing.Platform 的测试；同时引进来只会让工程卡在两者之间的半吊子状态。
+    xunit.v3 自带 MTP 运行器，测试工程本身就是可执行文件，直接运行也行。
+  -->
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" />
+  </ItemGroup>
+
+</Project>

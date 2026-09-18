@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!--
+      必须带 -windows 并且开 UseWPF：App 层引用了 WindowsDesktop 框架，
+      测试进程要把 LumiMemo.App.dll 载进来就必须有同一套框架。
+      这不影响 §21.1 的前提——ViewModel 依然不依赖 WPF 的具体类型，
+      只是测试宿主的 TFM 得对上。
+    -->
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+
+    <OutputType>Exe</OutputType>
+    <RootNamespace>LumiMemo.App.Tests</RootNamespace>
+    <AssemblyName>LumiMemo.App.Tests</AssemblyName>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+
+    <!-- 刻意不开 TestingPlatformDotnetTestSupport（原生 MTP 模式不需要），
+         以及调用 dotnet test 时不要加 &#45;&#45;nologo。
+         两者理由见 LumiMemo.Core.Tests.csproj 里的注释。 -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\LumiMemo.Core\LumiMemo.Core.csproj" />
+    <ProjectReference Include="..\LumiMemo.App\LumiMemo.App.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <!--
+    LumiMemo 的界面文案表（§24.2）。
+
+    规则：代码里不出现任何面向用户的字面量，一律引用这里的键。
+    一期只有中文，但抽取的成本在写代码时几乎为零，回头补的成本是整个 App 层。
+  -->
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+
+  <!-- 应用名 -->
+  <data name="AppName" xml:space="preserve">
+    <value>LumiMemo</value>
+  </data>
+  <data name="AppNameWithDescription" xml:space="preserve">
+    <value>LumiMemo — Markdown 桌面便签</value>
+  </data>
+
+  <!-- 标题降级（§5.4）。与 Core 的 TitleDeriver.EmptyTitle 是同一个值，
+       这里放一份是为了让界面层不必依赖 Core 的常量来做兜底显示。 -->
+  <data name="Note_Untitled" xml:space="preserve">
+    <value>无标题</value>
+  </data>
+
+  <!-- 通用按钮 -->
+  <data name="Common_Confirm" xml:space="preserve">
+    <value>确定</value>
+  </data>
+  <data name="Common_Cancel" xml:space="preserve">
+    <value>取消</value>
+  </data>
+  <data name="Common_Delete" xml:space="preserve">
+    <value>删除</value>
+  </data>
+</root>

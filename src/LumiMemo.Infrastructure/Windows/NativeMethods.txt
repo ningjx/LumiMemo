@@ -1,0 +1,45 @@
+// CsWin32 的输入清单：一行一个 API / 类型 / 常量。
+// 内容与文档附录 D「Win32 API 清单」对应，加 API 前请先改那里的表格。
+//
+// 为什么用 CsWin32 而不是手写 [DllImport]：手写签名的错误是这个项目最容易出、
+// 也最难查的一类 bug（SetWindowLongPtr 在 32 位下不存在、DwmSetWindowAttribute
+// 的参数类型等）。CsWin32 从元数据生成，类型安全（§2.2）。
+//
+// 注意：这里只列**函数**。WM_* 消息常量与 MONITORINFO 之类的结构体会在
+// CsWin32 生成上述函数时按需自动带出；真到了写 WndProc 的时候发现缺哪个再往这里加。
+
+// ---- D.1 窗口外观与 DWM ----
+DwmSetWindowAttribute
+DwmExtendFrameIntoClientArea
+// 附录 D.1 写的是 GetWindowLongPtr / SetWindowLongPtr（不带后缀）。CsWin32 的元数据里
+// 只有 GetWindowLongPtrW / GetWindowLongPtrA 这一对，它的友好名表没有收录这两个，
+// 直接写不带后缀的名字会报 PInvoke001。本项目只做 Unicode，因此固定用 W 版本。
+GetWindowLongPtrW
+SetWindowLongPtrW
+SetWindowPos
+GetWindowRect
+SetForegroundWindow
+GetForegroundWindow
+AttachThreadInput
+GetWindowThreadProcessId
+GetCurrentThreadId
+ShowWindow
+
+// ---- D.2 消息处理 ----
+// WM_NCHITTEST 命中时先取系统判定结果（§13.3）
+DefWindowProc
+
+// ---- D.3 显示器与 DPI ----
+MonitorFromPoint
+GetMonitorInfo
+EnumDisplayMonitors
+GetDpiForMonitor
+GetDpiForWindow
+
+// ---- D.4 热键与输入 ----
+RegisterHotKey
+UnregisterHotKey
+
+// ---- D.7 明确不使用的 API ----
+// SetParent、UpdateLayeredWindow、RegisterShellHookWindow、SetWindowsHookEx、
+// SHChangeNotifyRegister —— 理由见附录 D.7，不要因为"用起来更方便"就加进来。

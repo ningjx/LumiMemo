@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<assembly manifestVersion="1.0" xmlns="urn:schemas-microsoft-com:asm.v1">
+  <assemblyIdentity version="1.0.0.0" name="LumiMemo.App" />
+
+  <!--
+    支持的操作系统（§1.4：Windows 10 1809+ / Windows 11）。
+    这个 GUID 是 Windows 10/11 的 supportedOS 标识。
+  -->
+  <compatibility xmlns="urn:schemas-microsoft-com:asm.v1">
+    <application>
+      <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}" />
+    </application>
+  </compatibility>
+
+  <application xmlns="urn:schemas-microsoft-com:asm.v3">
+    <windowsSettings>
+      <!--
+        必须声明 PerMonitorV2（§13.8）。
+        WPF 自身对 Per-Monitor V2 的支持要求 .NET Core 3.0 以上，本项目无此顾虑。
+        不声明的话，把便签从 100% 屏拖到 200% 屏会得到模糊的内容或错误的坐标。
+      -->
+      <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">PerMonitorV2</dpiAwareness>
+      <!-- 兼容旧系统的写法，保持一致的语义 -->
+      <dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">true/pm</dpiAware>
+      <!--
+        长路径支持（§5.10）。
+        用户把笔记目录设在深层 Obsidian vault 里时很容易超过 260 字符。
+      -->
+      <longPathAware xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">true</longPathAware>
+    </windowsSettings>
+  </application>
+
+  <!--
+    普通用户权限即可运行（§17.7）。
+    开机自启走 HKCU 而不是 HKLM，也是为了不需要管理员权限。
+  -->
+  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v2">
+    <security>
+      <requestedPrivileges xmlns="urn:schemas-microsoft-com:asm.v3">
+        <requestedExecutionLevel level="asInvoker" uiAccess="false" />
+      </requestedPrivileges>
+    </security>
+  </trustInfo>
+</assembly>

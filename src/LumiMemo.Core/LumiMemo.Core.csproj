@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>LumiMemo.Core</RootNamespace>
+    <AssemblyName>LumiMemo.Core</AssemblyName>
+  </PropertyGroup>
+
+  <!--
+    §4.1 规则 1：Core 不引用 WPF、不引用 Win32、不引用任何具体存储实现，
+    也不引入任何第三方包。它只有模型、内存状态、业务规则和抽象接口。
+    因此本文件刻意没有 PackageReference —— 加任何一条之前请先改设计文档。
+  -->
+
+  <!--
+    刻意没有 InternalsVisibleTo。
+
+    Core 的公共 API 就是它的全部契约，测试工程只通过公共 API 验证行为。
+    一旦为了「让测试够得着某个 internal 成员」而打开内部可见性，
+    通常是设计问题（不变量泄漏到调用方）而不是测试问题——
+    之前为了让测试替身模仿 note.InvalidateTitle() 而开过一次，
+    正确的修法是把缓存失效收回 Note.Content 的 setter。
+  -->
+
+</Project>

@@ -1,0 +1,47 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <RootNamespace>LumiMemo.App</RootNamespace>
+    <AssemblyName>LumiMemo.App</AssemblyName>
+
+    <!-- 必须声明 PerMonitorV2，否则混合 DPI 多显示器下的坐标全是错的（§13.8） -->
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+
+    <!-- 明确不用 WinForms。托盘图标走 H.NotifyIcon.Wpf，不引入第二套 UI 框架（§2.2） -->
+    <UseWindowsForms>false</UseWindowsForms>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\LumiMemo.Core\LumiMemo.Core.csproj" />
+    <ProjectReference Include="..\LumiMemo.Infrastructure\LumiMemo.Infrastructure.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- §2.2：ObservableObject / [ObservableProperty] / [RelayCommand] / WeakReferenceMessenger -->
+    <PackageReference Include="CommunityToolkit.Mvvm" />
+    <!-- §2.2：WPF 没有原生托盘控件；备选的 WinForms 方案会把第二套 UI 框架拖进来 -->
+    <PackageReference Include="H.NotifyIcon.Wpf" />
+    <!-- §2.2：服务组装。只用它注册与解析根对象，不用 Generic Host（§4.3） -->
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+    <PackageReference Include="Microsoft.Extensions.Logging" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      §24.2：所有界面文案进资源文件，代码里只引用资源键。
+      三期加语言包时才不用回头全文扫字符串，所以从第一天就建好。
+
+      这里刻意先不生成强类型访问类：SDK 的 GenerateResource 在命令行构建下
+      不会自动产出 Designer.cs（那是 VS 的 ResXFileCodeGenerator 干的活），
+      硬配 StronglyTypedFileName 会产出一个落在 obj\ 里、又被默认 Compile 通配排除掉的文件。
+      等到真正有界面文案要引用时，再一并决定是用 ResXFileCodeGenerator
+      还是走 ResourceManager 包装类。此刻 .resx 已经作为 EmbeddedResource 进包，
+      换访问方式不影响资源本身。
+    -->
+    <EmbeddedResource Update="Resources\Strings.resx" />
+  </ItemGroup>
+
+</Project>

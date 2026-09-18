@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>LumiMemo.Infrastructure</RootNamespace>
+    <AssemblyName>LumiMemo.Infrastructure</AssemblyName>
+
+    <!--
+      CsWin32 生成的 P/Invoke 声明里有函数指针与指针参数（DefWindowProc、EnumDisplayMonitors、
+      AttachThreadInput 等），因此本工程必须放开 unsafe。这是全解决方案唯一的例外——
+      Directory.Build.props 里默认是 false。
+    -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\LumiMemo.Core\LumiMemo.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- §2.2：Markdown 解析（只需要解析，不需要渲染） -->
+    <PackageReference Include="Markdig" />
+    <!-- §2.2：Front Matter 解析，必须容忍格式瑕疵并按 §5.10 降级 -->
+    <PackageReference Include="YamlDotNet" />
+    <!-- §2.2：从 Windows 元数据生成 P/Invoke，避免手写签名的 32/64 位陷阱 -->
+    <PackageReference Include="Microsoft.Windows.CsWin32" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- CsWin32 的输入清单，内容与文档附录 D 对应 -->
+    <AdditionalFiles Include="Windows\NativeMethods.txt" />
+  </ItemGroup>
+
+</Project>

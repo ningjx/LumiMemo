@@ -1,0 +1,99 @@
+using LumiMemo.Core.Abstractions;
+using LumiMemo.Core.Models;
+
+namespace LumiMemo.App.Tests.TestDoubles;
+
+/// <summary>
+/// <see cref="INoteService"/> 的记录型替身（§21.1：App.Tests 要测 ViewModel 与 AutoSaveService 的调度，
+/// 就必须能注入一个假的 <c>INoteService</c>）。
+/// </summary>
+/// <remarks>
+/// 它是「哑」的：不做任何业务规则，只记录被调用了什么。
+/// 真正的业务规则由 Core.Tests 与 Integration.Tests 覆盖，这里只关心
+/// <strong>ViewModel 有没有在对的时候发出对的调用</strong>。
+/// </remarks>
+public sealed class FakeNoteService : INoteService
+{
+    /// <summary>所有 <see cref="ApplyLocalEdit"/> 调用，按发生顺序。</summary>
+    public List<(Guid NoteId, string Content)> LocalEdits { get; } = [];
+
+    /// <summary>所有 <see cref="SaveNoteAsync"/> 的便签 id，按发生顺序。</summary>
+    public List<Guid> SavedNoteIds { get; } = [];
+
+    /// <summary>所有的 <see cref="MarkNoteClosed"/> 调用。</summary>
+    public List<Guid> MarkedClosed { get; } = [];
+
+    /// <summary>所有的 <see cref="DeleteNoteAsync"/> 调用。</summary>
+    public List<Guid> DeletedNoteIds { get; } = [];
+
+    /// <summary><see cref="OpenNote"/> 的返回值来源。缺省时返回 <c>null</c>（便签不存在）。</summary>
+    public Func<Guid, NoteOpenRequest?>? OpenNoteHandler { get; set; }
+
+    /// <summary><see cref="OpenAll"/> 的返回值。</summary>
+    public List<NoteOpenRequest> OpenAllResult { get; } = [];
+
+    /// <summary><see cref="LoadAllAsync"/> 是否被调用过，以及调用次数。</summary>
+    public int LoadAllCallCount { get; private set; }
+
+    /// <inheritdoc />
+    public Task LoadAllAsync(CancellationToken ct = default)
+    {
+        LoadAllCallCount++;
+
+        return Task.CompletedTask;
+    }
+
+    /// <inheritdoc />
+    public void ApplyExternalChange(string path, NoteReadResult readResult) =>
+        LocalEdits.Add((Guid.Empty, $"外部变更:{path}"));
+
+    /// <inheritdoc />
+    public void ApplyLocalEdit(Note note, string content)
+    {
+        ArgumentNullException.ThrowIfNull(note);
+
+        // 复刻 NoteService.ApplyLocalEdit 里与本替身相关的那一步：写回正文。
+        // 标题缓存的失效是 Note.Content setter 自己的事，这里不需要（也不该）插手。
+        note.Content = content;
+
+        LocalEdits.Add((note.Id, content));
+    }
+
+    /// <inheritdoc />
+    public Task SaveNoteAsync(Guid noteId)
+    {
+        SavedNoteIds.Add(noteId);
+
+        return Task.CompletedTask;
+    }
+
+    /// <inheritdoc />
+    public Task SaveAllAsync(CancellationToken ct = default) => Task.CompletedTask;
+
+    /// <inheritdoc />
+    public Task<Note> CreateNoteAsync(NoteColor? color = null, string? targetFolder = null) =>
+        throw new NotSupportedException("本替身不覆盖新建便签，需要时再补。");
+
+    /// <inheritdoc />
+    public Task MoveNoteAsync(Guid noteId, string targetFolder) => Task.CompletedTask;
+
+    /// <inheritdoc />
+    public Task DeleteNoteAsync(Guid noteId)
+    {
+        DeletedNoteIds.Add(noteId);
+
+        return Task.CompletedTask;
+    }
+
+    /// <inheritdoc />
+    public Task RestoreFromTrashAsync(Guid noteId, string? targetPath) => Task.CompletedTask;
+
+    /// <inheritdoc />
+    public NoteOpenRequest? OpenNote(Guid noteId) => OpenNoteHandler?.Invoke(noteId);
+
+    /// <inheritdoc />
+    public IReadOnlyList<NoteOpenRequest> OpenAll() => OpenAllResult;
+
+    /// <inheritdoc />
+    public void MarkNoteClosed(Guid noteId) => MarkedClosed.Add(noteId);
+}

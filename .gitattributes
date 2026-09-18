@@ -1,0 +1,23 @@
+# 行尾与编码的仓库级约定。
+#
+# 为什么需要这个文件：本程序最核心的不变量之一是「用户笔记的换行符原样保留」（§5.9）。
+# 仓库自己如果不能稳定住行尾，就没法用 diff 判断某次改动是不是真的动了换行符——
+# 「实现里改坏了行尾」和「git 检出时改坏了行尾」这两种情况会分不清。
+#
+# 与 .editorconfig 保持一致：那边写的是 end_of_line = crlf，这边就固定 eol=crlf。
+# 注意这只影响仓库里的文件，与用户笔记目录无关——那是运行时数据，不归 git 管。
+
+* text=auto eol=crlf
+
+# 二进制资源不做任何转换
+*.png binary
+*.jpg binary
+*.ico binary
+*.gif binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.zip binary
+
+# 解决方案文件由 Visual Studio 维护，固定 CRLF 免得每次打开都被改写
+*.sln text eol=crlf

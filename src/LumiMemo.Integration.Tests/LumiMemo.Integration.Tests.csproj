@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!--
+      刻意保持 net10.0，不带 -windows、不开 UseWPF。
+
+      本工程的被测对象是真实文件系统（存储、监视、回收站、冲突判定），
+      引用的是 Core 与 Infrastructure，那两个工程本身都是 net10.0。
+      挂上 WindowsDesktop 框架只会让它变重变慢，还会让 ImplicitUsings 失效——
+      之前写成 net10.0-windows 时，System.IO 不再是隐式 using，
+      于是冒出一堆「找不到 Directory / IOException」的编译错误，那正是根因。
+    -->
+    <TargetFramework>net10.0</TargetFramework>
+
+    <OutputType>Exe</OutputType>
+    <RootNamespace>LumiMemo.Integration.Tests</RootNamespace>
+    <AssemblyName>LumiMemo.Integration.Tests</AssemblyName>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+
+    <!-- 刻意不开 TestingPlatformDotnetTestSupport（原生 MTP 模式不需要），
+         以及调用 dotnet test 时不要加 &#45;&#45;nologo。
+         两者理由见 LumiMemo.Core.Tests.csproj 里的注释。 -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\LumiMemo.Core\LumiMemo.Core.csproj" />
+    <ProjectReference Include="..\LumiMemo.Infrastructure\LumiMemo.Infrastructure.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" />
+  </ItemGroup>
+
+</Project>

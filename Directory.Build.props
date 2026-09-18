@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  全解决方案共享的编译设置。
+  依据文档 §2.1（.NET 10 LTS + C# 14）、§24.2（可空引用类型开启、警告视为错误）。
+
+  显式写出所有关键设置，不依赖 SDK 默认值——默认值会随 SDK 版本变化，
+  写死了才是契约（§24.1 原则 9）。
+-->
+<Project>
+
+  <PropertyGroup>
+    <!-- 目标框架。LumiMemo.App 会覆盖为 net10.0-windows。 -->
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>14.0</LangVersion>
+
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+
+    <!-- §24.2：警告视为错误 -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+
+    <!-- 可复现构建 -->
+    <Deterministic>true</Deterministic>
+    <ContinuousIntegrationBuild Condition="'$(CI)' == 'true'">true</ContinuousIntegrationBuild>
+
+    <!-- 本项目是 Windows 专用桌面程序，不需要跨平台中立语言规则集警告 -->
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <NoWarn>$(NoWarn);CA1416</NoWarn>
+
+    <!-- 与 §19 的安全要求配合：不使用不安全的编译开关 -->
+    <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
+
+    <!--
+      必须指定具体架构，不能用 AnyCPU。
+
+      GetWindowLongPtrW / SetWindowLongPtrW 在 32 位 Windows 上根本不是导出函数
+      （它是宏，转发到 *LongW），因此 CsWin32 拒绝为 AnyCPU 生成这两个声明，
+      直接报 PInvoke005。既然 §1.4 定的就是「x64 优先」，这里明确写出来。
+
+      条件判断是为了给 §23.1 的 win-arm64 发布留路：带 RuntimeIdentifier 发布时
+      SDK 会自己从 RID 推出 PlatformTarget，此时不要再覆盖它。
+    -->
+    <PlatformTarget Condition="'$(RuntimeIdentifier)' == ''">x64</PlatformTarget>
+  </PropertyGroup>
+
+  <!-- 版本信息（§23.3）。发布时由打包流程覆盖。 -->
+  <PropertyGroup>
+    <VersionPrefix>0.1.0</VersionPrefix>
+    <Product>LumiMemo</Product>
+    <Description>轻量桌面便签：Markdown 为唯一真实数据源</Description>
+    <NeutralLanguage>zh-Hans</NeutralLanguage>
+  </PropertyGroup>
+
+</Project>
