@@ -1,0 +1,157 @@
+<Window x:Class="LumiMemo.App.Views.NoteWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="便签"
+        Width="360"
+        Height="420"
+        MinWidth="240"
+        MinHeight="120"
+        WindowStyle="None"
+        ResizeMode="CanResize"
+        WindowStartupLocation="Manual"
+        ShowInTaskbar="False"
+        AllowsTransparency="False"
+        Background="#FFFDF3C4"
+        FontFamily="Microsoft YaHei UI"
+        FontSize="14"
+        Closing="OnClosing">
+
+  <!--
+    自绘标题栏 + WindowChrome（§15.2）。
+
+    WindowStyle=None 之后窗口没有系统边框，但 WindowChrome 的两个属性把它补回来：
+      · CaptionHeight=0    标题栏区域交给我们自己画，于是拖动要靠 DragMove()
+      · ResizeBorderThickness=6  窗口边缘留出 6 DIP 的调整大小热区
+    没有第二项的话，无边框窗口是**不能**从边缘拖拽改变大小的——
+    位置记忆承诺了尺寸也要记住，用户却根本没法改尺寸，那就成了空话。
+
+    CornerRadius 必须写成字面量 0：做成资源（sys:Double）会在附加属性上类型转换失败。
+    圆角走 DWM（§15.2），不用 WPF 这边画。
+
+    AllowsTransparency 保持 False：一旦打开它，DWM 的圆角与阴影会一并丢掉，
+    换来的只是「窗口背景能半透明」，不划算（§15.2 的取舍）。
+  -->
+  <WindowChrome.WindowChrome>
+    <WindowChrome CaptionHeight="0"
+                  ResizeBorderThickness="6"
+                  CornerRadius="0"
+                  GlassFrameThickness="0"
+                  UseAeroCaptionButtons="False" />
+  </WindowChrome.WindowChrome>
+
+  <Window.Resources>
+    <!-- 标题栏上的小按钮：无边框，靠字色变化给反馈，免得静态时抢标题的视觉重量 -->
+    <Style x:Key="TitleBarButton" TargetType="ButtonBase">
+      <Setter Property="Width" Value="28" />
+      <Setter Property="Height" Value="24" />
+      <Setter Property="Margin" Value="2,0,0,0" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="Foreground" Value="#FF6B5A00" />
+      <Setter Property="Cursor" Value="Hand" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="ButtonBase">
+            <Border x:Name="Chrome"
+                    Background="{TemplateBinding Background}"
+                    CornerRadius="4">
+              <ContentPresenter HorizontalAlignment="Center"
+                                VerticalAlignment="Center"
+                                TextElement.Foreground="{TemplateBinding Foreground}" />
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="Chrome" Property="Opacity" Value="0.7" />
+                <Setter Property="Foreground" Value="#FF3A3000" />
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <!--
+      置顶按钮比上面多一条「按下」的视觉：它的 IsChecked 是个持久状态，
+      而 ButtonBase 上没有这个属性，因此触发器只能写在派生类型的 Style 里。
+      高亮走 Background 而不是上面的 Foreground——两者各用一种通道，
+      鼠标悬停时就不会把选中色盖掉。
+    -->
+    <Style x:Key="TitleBarToggleButton"
+           TargetType="ToggleButton"
+           BasedOn="{StaticResource TitleBarButton}">
+      <Style.Triggers>
+        <Trigger Property="IsChecked" Value="True">
+          <Setter Property="Background" Value="#FFB58900" />
+          <Setter Property="Foreground" Value="#FFFFFFFF" />
+        </Trigger>
+      </Style.Triggers>
+    </Style>
+  </Window.Resources>
+
+  <Grid>
+    <Grid.RowDefinitions>
+      <!-- §15.1 的尺寸常量：标题条 36 DIP -->
+      <RowDefinition Height="36" />
+      <RowDefinition Height="*" />
+      <!-- 状态条 24 DIP -->
+      <RowDefinition Height="24" />
+    </Grid.RowDefinitions>
+
+    <!-- 标题栏（§15.2）：左标题，右侧操作按钮 -->
+    <Border Grid.Row="0"
+            Background="#FFF7E9A0"
+            MouseLeftButtonDown="OnTitleBarMouseDown">
+      <Grid Margin="10,0,4,0">
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="*" />
+          <ColumnDefinition Width="Auto" />
+        </Grid.ColumnDefinitions>
+
+        <TextBlock Grid.Column="0"
+                   Text="{Binding Title}"
+                   VerticalAlignment="Center"
+                   FontWeight="SemiBold"
+                   TextTrimming="CharacterEllipsis" />
+
+        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+          <ToggleButton Style="{StaticResource TitleBarToggleButton}"
+                        IsChecked="{Binding IsTopMost, Mode=TwoWay}"
+                        ToolTip="置顶"
+                        Content="⬆" />
+          <Button Style="{StaticResource TitleBarButton}"
+                  Click="OnCloseClick"
+                  ToolTip="关闭"
+                  Content="✕" />
+        </StackPanel>
+      </Grid>
+    </Border>
+
+    <!-- 编辑区（本轮只做编辑态，预览态随后接上 §15.6） -->
+    <TextBox Grid.Row="1"
+             Text="{Binding Content, UpdateSourceTrigger=PropertyChanged}"
+             AcceptsReturn="True"
+             TextWrapping="Wrap"
+             VerticalScrollBarVisibility="Auto"
+             BorderThickness="0"
+             Background="Transparent"
+             Padding="10,8"
+             CaretBrush="#FF6B5A00"
+             SelectionBrush="#FFB58900"
+             SpellCheck.IsEnabled="False" />
+
+    <!-- 状态条（§15.2）：左保存状态，右字数 -->
+    <Border Grid.Row="2" Background="#FFF7E9A0" Padding="10,0">
+      <Grid>
+        <TextBlock Text="{Binding StatusText}"
+                   VerticalAlignment="Center"
+                   FontSize="12"
+                   Opacity="0.75" />
+        <TextBlock Text="{Binding CharacterCount, StringFormat={}{0} 字}"
+                   HorizontalAlignment="Right"
+                   VerticalAlignment="Center"
+                   FontSize="12"
+                   Opacity="0.75" />
+      </Grid>
+    </Border>
+  </Grid>
+</Window>

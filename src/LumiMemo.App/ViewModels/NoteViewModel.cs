@@ -1,6 +1,7 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Messaging;
 using LumiMemo.App.Abstractions;
+using LumiMemo.App.Services;
 using LumiMemo.Core.Abstractions;
 using LumiMemo.Core.Models;
 
@@ -33,6 +34,7 @@ namespace LumiMemo.App.ViewModels;
 public sealed partial class NoteViewModel : ObservableObject, IDisposable
 {
     private readonly INoteService _noteService;
+    private readonly AutoSaveService _autoSaveService;
     private readonly IDispatcher _dispatcher;
     private readonly IDialogService _dialogService;
     private readonly IWindowManager _windowManager;
@@ -52,6 +54,7 @@ public sealed partial class NoteViewModel : ObservableObject, IDisposable
         Note note,
         NoteLayout layout,
         INoteService noteService,
+        AutoSaveService autoSaveService,
         IDispatcher dispatcher,
         IDialogService dialogService,
         IWindowManager windowManager,
@@ -63,6 +66,7 @@ public sealed partial class NoteViewModel : ObservableObject, IDisposable
         Note = note;
         Layout = layout;
         _noteService = noteService;
+        _autoSaveService = autoSaveService;
         _dispatcher = dispatcher;
         _dialogService = dialogService;
         _windowManager = windowManager;
@@ -96,6 +100,29 @@ public sealed partial class NoteViewModel : ObservableObject, IDisposable
     /// </remarks>
     public string Title => Note.Title;
 
+    /// <summary>正文长度，状态条上那个「N 字」。</summary>
+    /// <remarks>
+    /// 派生值、不存储。挂在 <see cref="Content"/> 的 <c>[NotifyPropertyChangedFor]</c> 上，
+    /// 于是它不需要自己的通知逻辑，也不会出现「字数与内容对不上」的状态。
+    /// </remarks>
+    public int CharacterCount => Content.Length;
+
+    /// <summary>保存状态的中文说明，状态条显示用。</summary>
+    /// <remarks>
+    /// 文案暂时写死在这里而不是资源文件：状态条这一处的文案在 §24.2 的清单里，
+    /// 等资源机制（<c>Strings</c> 包装类 + resx）接上时一并搬过去。
+    /// 现在就建资源文件的话，<c>Strings.resx</c> 里会只有四个键、却要拖进一整套
+    /// 生成与查找机制，反而看不清哪些文案是真的要本地化的。
+    /// </remarks>
+    public string StatusText => SaveStatus switch
+    {
+        SaveStatus.Saved => "已保存",
+        SaveStatus.Pending => "未保存",
+        SaveStatus.Saving => "保存中…",
+        SaveStatus.Failed => "保存失败",
+        _ => string.Empty,
+    };
+
     // ------------------------------------------------------------------
     // 第一类：属于 Note，落盘到 Markdown
     // ------------------------------------------------------------------
@@ -103,6 +130,7 @@ public sealed partial class NoteViewModel : ObservableObject, IDisposable
     /// <summary>Markdown 正文。绑定到 <c>TextBox</c>，<c>UpdateSourceTrigger=PropertyChanged</c>（流 1）。</summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(Title))]
+    [NotifyPropertyChangedFor(nameof(CharacterCount))]
     private string _content;
 
     /// <summary>便签颜色。写入 Front Matter 的 <c>color</c>（§5.3）。</summary>
@@ -135,6 +163,7 @@ public sealed partial class NoteViewModel : ObservableObject, IDisposable
 
     /// <summary>保存状态，用于界面上的「已保存 / 保存中 / 失败」提示。</summary>
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(StatusText))]
     private SaveStatus _saveStatus = SaveStatus.Saved;
 
     /// <summary>是否正在输入法组字中。组字期间绝不去抖保存，否则会存下半截拼音（§15.6）。</summary>
@@ -152,15 +181,22 @@ public sealed partial class NoteViewModel : ObservableObject, IDisposable
     private int _caretIndex;
 
     /// <summary>
-    /// 内容变化时把新值推给业务层，由它去抖后落盘（流 1）。
+    /// 内容变化时把新值推给业务层，并排一次去抖保存（流 1）。
     /// </summary>
     /// <remarks>
-    /// 这里只调 <c>ApplyLocalEdit</c>（内存），不直接调 <c>SaveNoteAsync</c>（磁盘）。
-    /// 500ms 去抖、合并连续输入、组字期间跳过一次，都是 <c>AutoSaveService</c> 的职责（§11.3）。
+    /// <para>
+    /// 两步是分开的：<c>ApplyLocalEdit</c> 只改内存，回到它之后内容就已经是新的了；
+    /// 真正的落盘由 <see cref="AutoSaveService"/> 在 <c>autoSaveDelayMs</c> 之后发起。
+    /// 顺序不能反——先排保存再改内存的话，那次保存写出去的会是旧内容。
+    /// </para>
+    /// <para>
+    /// 500ms 去抖、合并连续输入、组字期间跳过一次，全是 <see cref="AutoSaveService"/> 的职责（§11.3）。
+    /// </para>
     /// </remarks>
     partial void OnContentChanged(string value)
     {
         _noteService.ApplyLocalEdit(Note, value);
+        _autoSaveService.ScheduleSave(Note.Id);
     }
 
     /// <summary>实现 <see cref="IDisposable"/>，且必须幂等（§18.3）。</summary>
@@ -183,7 +219,11 @@ public sealed partial class NoteViewModel : ObservableObject, IDisposable
 
         _messenger.UnregisterAll(this);
 
-        // 待补：_autoSave.CancelScheduledSave(Id) —— AutoSaveService 就位后接上（§18.3）
+        // 取消等待中的那一轮保存：窗口关了之后定时器还会到期，而那时本对象已经释放。
+        // 注意这里**不**调 SaveNowAsync——关窗口不该顺带写盘（§17.3 的关闭语义是
+        // 「窗口没了，便签还在」），内容早已通过去抖落过盘，最近一次改动由
+        // 调用方在 Closing 时显式保存。
+        _autoSaveService.CancelScheduledSave(Id);
 
         _isDisposed = true;
     }

@@ -1,0 +1,152 @@
+<Window x:Class="LumiMemo.App.Views.ManagerWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="LumiMemo"
+        Width="720"
+        Height="520"
+        MinWidth="480"
+        MinHeight="360"
+        WindowStartupLocation="CenterScreen"
+        Background="#FFFDFBF3"
+        FontFamily="Microsoft YaHei UI"
+        FontSize="14">
+
+  <!--
+    管理器用**标准窗口 chrome**（§15.8 的裁决）：它是个普通的列表窗口，
+    没有无边框的必要，也就用不上 WindowChrome / Win32 那一整套。
+    便签窗口走的是完全不同的一条路（自绘标题条 + Aero Snap 热区），
+    两者的窗口层代码刻意不共享——共同点只有「都是 Window」这一句废话。
+  -->
+  <Window.Resources>
+    <Style x:Key="ToolButton" TargetType="Button">
+      <Setter Property="Padding" Value="12,6" />
+      <Setter Property="Margin" Value="0,0,8,0" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderBrush" Value="#FFD9D2B8" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="Cursor" Value="Hand" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="Chrome"
+                    Background="{TemplateBinding Background}"
+                    BorderBrush="{TemplateBinding BorderBrush}"
+                    BorderThickness="{TemplateBinding BorderThickness}"
+                    CornerRadius="4">
+              <ContentPresenter Margin="{TemplateBinding Padding}"
+                                HorizontalAlignment="Center"
+                                VerticalAlignment="Center" />
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="Chrome" Property="Background" Value="#FFF7E9A0" />
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+  </Window.Resources>
+
+  <Grid>
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="*" />
+      <RowDefinition Height="Auto" />
+    </Grid.RowDefinitions>
+
+    <!-- 工具条 -->
+    <Border Grid.Row="0" Background="#FFF7E9A0" Padding="12,10">
+      <Grid>
+        <TextBlock Text="{Binding Title}"
+                   VerticalAlignment="Center"
+                   FontSize="16"
+                   FontWeight="SemiBold" />
+
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+          <Button Style="{StaticResource ToolButton}"
+                  Content="刷新"
+                  Command="{Binding RefreshCommand}" />
+          <Button Style="{StaticResource ToolButton}"
+                  Content="显示全部"
+                  Command="{Binding ShowAllCommand}" />
+          <Button Style="{StaticResource ToolButton}"
+                  Content="隐藏全部"
+                  Command="{Binding HideAllCommand}" />
+        </StackPanel>
+      </Grid>
+    </Border>
+
+    <!-- 便签列表 -->
+    <ListBox x:Name="NoteList"
+             Grid.Row="1"
+             ItemsSource="{Binding Notes}"
+             SelectedItem="{Binding SelectedNote, Mode=TwoWay}"
+             MouseDoubleClick="OnListMouseDoubleClick"
+             HorizontalContentAlignment="Stretch"
+             BorderThickness="0"
+             Background="Transparent"
+             ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+      <ListBox.ItemTemplate>
+        <DataTemplate>
+          <Grid Margin="8,7">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*" />
+              <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+              <RowDefinition Height="Auto" />
+              <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <TextBlock Grid.Row="0"
+                       Grid.Column="0"
+                       Text="{Binding Title}"
+                       FontWeight="SemiBold"
+                       TextTrimming="CharacterEllipsis" />
+
+            <TextBlock Grid.Row="0"
+                       Grid.Column="1"
+                       Text="{Binding Subtitle}"
+                       FontSize="12"
+                       Opacity="0.55"
+                       Margin="12,0,0,0" />
+
+            <TextBlock Grid.Row="1"
+                       Grid.Column="0"
+                       Grid.ColumnSpan="2"
+                       Text="{Binding Preview}"
+                       FontSize="12"
+                       Opacity="0.6"
+                       Margin="0,3,0,0"
+                       TextTrimming="CharacterEllipsis" />
+          </Grid>
+        </DataTemplate>
+      </ListBox.ItemTemplate>
+    </ListBox>
+
+    <!-- 空列表提示与计数。两者都在同一行，靠可见性切换 -->
+    <TextBlock Grid.Row="1"
+               Text="{Binding EmptyHint}"
+               HorizontalAlignment="Center"
+               VerticalAlignment="Center"
+               Opacity="0.5"
+               IsHitTestVisible="False">
+      <TextBlock.Style>
+        <Style TargetType="TextBlock">
+          <Setter Property="Visibility" Value="Collapsed" />
+          <Style.Triggers>
+            <DataTrigger Binding="{Binding Notes.Count}" Value="0">
+              <Setter Property="Visibility" Value="Visible" />
+            </DataTrigger>
+          </Style.Triggers>
+        </Style>
+      </TextBlock.Style>
+    </TextBlock>
+
+    <!-- 状态栏 -->
+    <Border Grid.Row="2" Background="#FFF2EDDC" Padding="12,6">
+      <TextBlock Text="{Binding CountText}" FontSize="12" Opacity="0.7" />
+    </Border>
+  </Grid>
+</Window>

@@ -1,7 +1,9 @@
 using CommunityToolkit.Mvvm.Messaging;
+using LumiMemo.App.Services;
 using LumiMemo.App.Tests.TestDoubles;
 using LumiMemo.App.ViewModels;
 using LumiMemo.Core.Models;
+using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
 namespace LumiMemo.App.Tests.ViewModels;
@@ -178,11 +180,13 @@ public sealed class NoteViewModelTests
     private static NoteViewModel CreateViewModel(
         Note note,
         NoteLayout? layout = null,
-        FakeNoteService? noteService = null) =>
+        FakeNoteService? noteService = null,
+        AutoSaveService? autoSaveService = null) =>
         new(
             note,
             layout ?? CreateLayout(),
             noteService ?? new FakeNoteService(),
+            autoSaveService ?? CreateAutoSaveService(),
             new ImmediateDispatcher(),
             new RecordingDialogService(),
             new RecordingWindowManager(),
@@ -190,6 +194,10 @@ public sealed class NoteViewModelTests
             // 每个 ViewModel 配一条全新的总线。用 WeakReferenceMessenger.Default 的话，
             // 同一个测试进程里的用例会共用它，并行执行时注册/注销互相干扰（§21.1）。
             new WeakReferenceMessenger());
+
+    /// <summary>造一个用替身定时器的自动保存服务。需要检查定时器的用例自己造。</summary>
+    private static AutoSaveService CreateAutoSaveService() =>
+        new(new FakeNoteService(), new RecordingUiTimerFactory(), NullLogger<AutoSaveService>.Instance);
 
     private static Note CreateNote(string content, NoteColor color = NoteColor.Yellow) =>
         new()

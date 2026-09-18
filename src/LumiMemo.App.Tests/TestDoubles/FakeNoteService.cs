@@ -59,10 +59,18 @@ public sealed class FakeNoteService : INoteService
         LocalEdits.Add((note.Id, content));
     }
 
+    /// <summary>设成非 null 后，<see cref="SaveNoteAsync"/> 会抛出它。用于验证失败路径。</summary>
+    public Exception? SaveException { get; set; }
+
     /// <inheritdoc />
     public Task SaveNoteAsync(Guid noteId)
     {
         SavedNoteIds.Add(noteId);
+
+        if (SaveException is not null)
+        {
+            throw SaveException;
+        }
 
         return Task.CompletedTask;
     }

@@ -419,16 +419,96 @@ public sealed class LayoutMathTests
     [Fact]
     public void 保存DPI为零_按九十六处理而不是产生无穷大()
     {
-        NoteLayout saved = NewLayout(x: 100, y: 100, width: 360, height: 420, dpi: 0);
+        // Dpi 为 0 同时还会让这张便签走上「从未放置过」那条分支（见下面三条测试），
+        // 于是这里用一台 150% 的显示器把它和另一个语义一起钉住：
+        // 0 要按 96 处理，缩放比才是 144/96 = 1.5 而不是 144/0。
+        NoteLayout saved = NewLayout(x: 0, y: 0, width: 360, height: 420, dpi: 0);
 
         WindowPlacement placement = LayoutMath.Restore(
             saved,
-            [Displays.Create(PrimaryId, dpi: 96)],
+            [Displays.Create(PrimaryId, dpi: 144)],
             cascadeIndex: 0,
             showStatusBar: true);
 
-        Assert.Equal(360, placement.Bounds.Width);
+        Assert.Equal(540, placement.Bounds.Width);
         Assert.False(double.IsNaN(placement.Bounds.Width));
+    }
+
+    // ---- 从未放置过的便签：Dpi 为 0 是唯一的标志 ----
+
+    [Fact]
+    public void 从未放置过的便签_按层叠摆放而不是落在左上角()
+    {
+        // JsonLayoutStore.GetOrCreate 造出来的新条目不设 (x, y)，留的是 0。
+        // 直接照搬过去的结果是每张新便签都叠在屏幕左上角——
+        // 那个坐标不是用户摆的，压根不该被当成用户的选择。
+        NoteLayout saved = NewLayout(x: 0, y: 0, width: 360, height: 420, dpi: 0);
+
+        WindowPlacement placement = LayoutMath.Restore(
+            saved,
+            [Displays.Create(PrimaryId)],
+            cascadeIndex: 0,
+            showStatusBar: true);
+
+        Assert.Equal(new PixelRect(24, 24, 360, 420), placement.Bounds);
+        Assert.Equal(PrimaryId, placement.DisplayId);
+    }
+
+    [Fact]
+    public void 从未放置过的便签_后一张比前一张错开一个步长()
+    {
+        NoteLayout saved = NewLayout(x: 0, y: 0, width: 360, height: 420, dpi: 0);
+        List<DisplaySnapshot> displays = [Displays.Create(PrimaryId)];
+
+        WindowPlacement first = LayoutMath.Restore(saved, displays, cascadeIndex: 0, showStatusBar: true);
+        WindowPlacement second = LayoutMath.Restore(saved, displays, cascadeIndex: 1, showStatusBar: true);
+
+        Assert.Equal(new PixelRect(24, 24, 360, 420), first.Bounds);
+        Assert.Equal(new PixelRect(52, 52, 360, 420), second.Bounds);
+    }
+
+    [Fact]
+    public void 从未放置过的便签_落主屏而不是包住原点的那台()
+    {
+        // 新便签没有「原来在哪台」可言，所以不能拿 (0,0) 去反查显示器——
+        // 那台副屏可能压根不是用户此刻在看的屏幕。这里刻意把原点让给副屏，
+        // 让「包含原点」与「是主屏」分属两台机器，落错就立刻暴露。
+        List<DisplaySnapshot> displays =
+        [
+            Displays.Create(
+                SecondaryId,
+                new PixelRect(-1920, 0, 1920, 1080),
+                workArea: new PixelRect(-1920, 0, 1920, 1080)),
+            Displays.Create(
+                PrimaryId,
+                new PixelRect(0, 0, 1920, 1080),
+                isPrimary: true,
+                workArea: new PixelRect(0, 0, 1920, 1080)),
+        ];
+
+        NoteLayout saved = NewLayout(x: 0, y: 0, width: 360, height: 420, dpi: 0);
+
+        WindowPlacement placement = LayoutMath.Restore(saved, displays, cascadeIndex: 0, showStatusBar: true);
+
+        Assert.Equal(PrimaryId, placement.DisplayId);
+        Assert.Equal(new PixelRect(24, 24, 360, 420), placement.Bounds);
+    }
+
+    [Fact]
+    public void 放置过的便签_不受层叠影响仍按保存坐标恢复()
+    {
+        // 与上面三条配对：判定依据必须是 Dpi 而不是「坐标是 (0,0)」。
+        // 用户真把便签拖到屏幕左上角是有可能的，那一次必须原样恢复。
+        NoteLayout saved = NewLayout(x: 0, y: 0, width: 360, height: 420, dpi: 96);
+
+        WindowPlacement placement = LayoutMath.Restore(
+            saved,
+            [Displays.Create(PrimaryId)],
+            cascadeIndex: 0,
+            showStatusBar: true);
+
+        Assert.Equal(new PixelRect(0, 0, 360, 420), placement.Bounds);
+        Assert.False(placement.WasAdjusted);
     }
 
     [Fact]

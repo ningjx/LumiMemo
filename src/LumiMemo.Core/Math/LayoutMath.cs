@@ -252,6 +252,11 @@ public static class LayoutMath
 
         DisplaySnapshot primary = displays.FirstOrDefault(display => display.IsPrimary) ?? displays[0];
 
+        // 「从未被放置过」的标志是 Dpi 为 0。可靠的理由在 §14.4：
+        // CaptureGeometry 的回写永远是 96 × 缩放矩阵，只要它写过一次就绝不是 0。
+        // 这种便签的 (x, y) 不是用户摆的，只是 NoteLayout 的默认值。
+        bool neverPlaced = saved.Dpi == 0;
+
         // §13.8 第 1 步：拿保存矩形的「中心点」去问它在哪台显示器上。
         // 用 Height 而不是 ExpandedHeight：折叠态的窗口真的只有一条高，
         // 拿展开高度算中心点会把一条贴在屏幕下沿的便签判到下面那台显示器去。
@@ -260,10 +265,16 @@ public static class LayoutMath
             saved.X + (saved.Width / 2),
             saved.Y + (saved.Height / 2));
 
-        if (target is null)
+        // 两种原因走到这里，处置相同——都是「此刻保存的坐标不该被信任」：
+        //   1. 原显示器已拔掉。坐标多半落在虚拟屏幕的「空洞」处，照搬过去的结果是
+        //      窗口存在但看不见，用户只会觉得「便签丢了」。
+        //   2. 这张便签从未被打开过，坐标还是 NoteLayout 的默认 (0,0)。
+        //      照搬过去就是每张新便签都叠在屏幕左上角。
+        //
+        // 第 2 条的落点选主屏而不是「包含 (0,0) 的那台」：新便签没有「原来在哪台」
+        // 可言，而主屏是唯一一个用户一定看得见的地方。
+        if (neverPlaced || target is null)
         {
-            // 原显示器已拔掉。坐标此刻多半落在虚拟屏幕的「空洞」处，
-            // 照搬过去的结果是窗口存在但看不见，用户只会觉得「便签丢了」。
             (double minWidth, double minHeight) = MinimumSizeInPixels(saved, primary.Dpi, showStatusBar);
             double cascadeWidth = saved.Width * DpiMath.Scale(saved.Dpi, primary.Dpi);
             double cascadeHeight = HeightInPixels(saved, primary.Dpi, showStatusBar);
