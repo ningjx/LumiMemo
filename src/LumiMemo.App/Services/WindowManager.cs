@@ -65,6 +65,17 @@ public sealed class WindowManager : IWindowManager, IDisposable
     private readonly HashSet<IntPtr> _promotedForShowDesktop = [];
 
     /// <summary>
+    /// 每张被临时提升的便签<strong>提升之前</strong>的那个 z 序邻居，也就是当时盖住它的窗口。
+    /// </summary>
+    /// <remarks>
+    /// 撤退时靠它"从哪儿来回哪儿去"。<strong>不拿"撤退那一刻的前台窗口"当锚点</strong>：
+    /// 两条入口的前台序列不一样（见 <see cref="OnForegroundChanged"/>），Win+D 会把前台
+    /// 还给原来那个窗口，而点任务栏按钮时前台停在任务栏上——那是个置顶窗口，拿它当锚点
+    /// 会把便签一并提拔进置顶档。
+    /// </remarks>
+    private readonly Dictionary<IntPtr, IntPtr> _predecessorBeforePromotion = [];
+
+    /// <summary>
     /// 本次会话中已经层叠了几张。
     /// </summary>
     /// <remarks>
@@ -415,23 +426,23 @@ public sealed class WindowManager : IWindowManager, IDisposable
     /// 只有置顶档（<c>WS_EX_TOPMOST</c>）压得住。
     /// </para>
     /// <para>
-    /// <strong>撤退时为什么不能一律把便签排到新前台之后。</strong>「显示桌面」结束
-    /// 不是一瞬间的事：系统先把被它掀掉的那批窗口逐个还原（管理器就在其中），
-    /// 之后才把前台还给原来那个窗口。还原过程中我们会先收到一次
-    /// 「前台 = 管理器」——如果据此就把便签插到管理器后面，等系统把前台还给便签时，
-    /// 便签就成了一张<em>名义上是前台、实际被盖住</em>的窗口（实测复现）。
-    /// 判据是「新前台是不是本进程的窗口」：是，说明这是系统在还原我们自己的窗口，
-    /// 不是用户点了别处，便签只清标志、不动 z 序；否，才是用户真的切走了。
+    /// <strong>撤退时插回的锚点记在提升之前，与当前前台无关。</strong>这里只判断一件事：
+    /// 新前台是不是桌面窗口。是就提升，不是就撤退——<em>不去分辨</em>前台是本进程的窗口
+    /// 还是别人的窗口，也不拿它当撤退的锚点。
     /// </para>
     /// <para>
-    /// <strong>「显示桌面」有两条入口，前台窗口不一样。</strong>按 Win+D 时前台直接变成
-    /// <c>Progman</c>；点任务栏右下角那个按钮时，前台先经过<strong>置顶的</strong>
-    /// <c>Shell_TrayWnd</c>（实测 60～110ms 之后才落到 <c>Progman</c>，比 Win+D 慢得多）。
-    /// 经过任务栏这一次在前台序列里什么都不用做——它不等于桌面窗口，走的是撤退分支，
-    /// 而彼时 <see cref="_promotedForShowDesktop"/> 还是空的，撤退也是空转。
-    /// 真正的坑在<em>撤退</em>那一步：那时前台正是这个置顶的任务栏，
-    /// 拿它当锚点会把便签一并提拔进置顶档，理由见
-    /// <see cref="WindowInterop.ClearTopMost"/>。
+    /// 两个原因，都实测踩过。其一，「显示桌面」有<strong>两条入口</strong>：按 Win+D 时
+    /// 前台直接变成 <c>Progman</c>；点任务栏右下角那个按钮时，前台先在<strong>置顶档的</strong>
+    /// <c>Shell_TrayWnd</c> 上停 60～110ms（Win+D 只要 15～30ms）才落到 <c>Progman</c>，
+    /// 而<em>还原</em>时它压根不去别处，就停在任务栏上。其二，Win+D 还原时系统会先把被掀掉的
+    /// 那批窗口逐个还原（管理器就在其中），之后才把前台还给原来那个窗口，于是"撤退那一刻的
+    /// 前台"是一张一直在变的牌。拿这样一张牌当锚点，要么把便签插到一个置顶窗口后面而被
+    /// 一并提拔（见 <see cref="WindowInterop.PlaceBehind"/>），要么让它落进「名义上是前台、
+    /// 实际被盖住」的非自然位置（实测复现）。
+    /// </para>
+    /// <para>
+    /// 所以锚点取自 <see cref="_predecessorBeforePromotion"/>——提升<em>之前</em>就记下的
+    /// 那个邻居。便签于是回到原本的层级：本来被某个窗口盖着，还原后照样被它盖着。
     /// </para>
     /// <para>
     /// 这就是 <see cref="RestoreAfterShowDesktop"/> 的落点：关掉它，本方法直接撤退，
@@ -442,7 +453,7 @@ public sealed class WindowManager : IWindowManager, IDisposable
     {
         if (!RestoreAfterShowDesktop)
         {
-            ReleaseTemporaryTopMost(IntPtr.Zero);
+            ReleaseTemporaryTopMost();
 
             return;
         }
@@ -454,8 +465,7 @@ public sealed class WindowManager : IWindowManager, IDisposable
             return;
         }
 
-        ReleaseTemporaryTopMost(
-            WindowInterop.BelongsToCurrentProcess(foreground) ? IntPtr.Zero : foreground);
+        ReleaseTemporaryTopMost();
     }
 
     /// <summary>把所有可见的、非置顶的便签临时提到置顶档。</summary>
@@ -474,18 +484,26 @@ public sealed class WindowManager : IWindowManager, IDisposable
 
             IntPtr hwnd = new WindowInteropHelper(window).Handle;
 
+            // 趁着还没提升，先把它此刻的 z 序邻居记下来，撤退时好插回去。
+            IntPtr predecessor = WindowInterop.GetZOrderPredecessor(hwnd);
+
             if (WindowInterop.MakeTopMost(hwnd))
             {
                 _promotedForShowDesktop.Add(hwnd);
+                _predecessorBeforePromotion[hwnd] = predecessor;
             }
         }
     }
 
-    /// <summary>撤回 <see cref="PromoteForShowDesktop"/> 提升过的窗口。</summary>
-    /// <param name="foreground">
-    /// 用户刚切过去的窗口，用来把便签排到它后面；<see cref="IntPtr.Zero"/> 表示不动 z 序。
-    /// </param>
-    private void ReleaseTemporaryTopMost(IntPtr foreground)
+    /// <summary>撤回 <see cref="PromoteForShowDesktop"/> 提升过的窗口，归位到提升前的 z 序。</summary>
+    /// <remarks>
+    /// <strong>必须分两轮，不能"清一张、归位一张"地穿插着做。</strong>给 A 归位时若 B 还挂在
+    /// 置顶档上，而 A 提升前恰好排在 B 下面（两张便签在屏幕上叠着），<c>SetWindowPos</c>
+    /// 会连带把 A 也提拔进置顶档——这恰恰是 <see cref="WindowInterop.PlaceBehind"/> 要挡的
+    /// 情况。先把所有窗口都退出置顶档，再统一归位，相互牵连就不存在了。
+    /// 两轮之间不返回消息循环，用户看不到中间态。
+    /// </remarks>
+    private void ReleaseTemporaryTopMost()
     {
         if (_promotedForShowDesktop.Count == 0)
         {
@@ -494,10 +512,16 @@ public sealed class WindowManager : IWindowManager, IDisposable
 
         foreach (IntPtr hwnd in _promotedForShowDesktop)
         {
-            WindowInterop.ClearTopMost(hwnd, foreground);
+            WindowInterop.ClearTopMost(hwnd);
+        }
+
+        foreach (IntPtr hwnd in _promotedForShowDesktop)
+        {
+            WindowInterop.PlaceBehind(hwnd, _predecessorBeforePromotion.GetValueOrDefault(hwnd));
         }
 
         _promotedForShowDesktop.Clear();
+        _predecessorBeforePromotion.Clear();
     }
 
     private void OnGeometryChanged(Guid noteId)
@@ -561,9 +585,12 @@ public sealed class WindowManager : IWindowManager, IDisposable
             return;
         }
 
-        // 句柄会随窗口一起失效，留在提升记录里的话，下次撤退时就是在往一个
+        // 句柄会随窗口一起失效，留在两份记录里的话，下次撤退时就是在往一个
         // 已经销毁的句柄上调 SetWindowPos。句柄还可能被系统复用。
-        _promotedForShowDesktop.Remove(new WindowInteropHelper(window).Handle);
+        IntPtr hwnd = new WindowInteropHelper(window).Handle;
+
+        _promotedForShowDesktop.Remove(hwnd);
+        _predecessorBeforePromotion.Remove(hwnd);
 
         _noteService.MarkNoteClosed(noteId);
     }
@@ -574,6 +601,7 @@ public sealed class WindowManager : IWindowManager, IDisposable
         _foreground.ForegroundChanged -= OnForegroundChanged;
         _foreground.Dispose();
         _promotedForShowDesktop.Clear();
+        _predecessorBeforePromotion.Clear();
     }
 
     /// <summary>窗口当前的 DIP → 物理像素缩放系数（1.0 = 100%，1.5 = 150%）。</summary>

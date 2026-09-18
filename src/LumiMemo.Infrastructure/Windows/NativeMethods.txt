@@ -16,10 +16,16 @@ DwmExtendFrameIntoClientArea
 // 直接写不带后缀的名字会报 PInvoke001。本项目只做 Unicode，因此固定用 W 版本。
 GetWindowLongPtrW
 SetWindowLongPtrW
-// 用它的 WS_EX_TOPMOST 判断某个窗口是不是在置顶档，见 WindowInterop.ClearTopMost。
+// 用它的 WS_EX_TOPMOST 判断某个窗口是不是在置顶档，见 WindowInterop.PlaceBehind。
 WINDOW_EX_STYLE
 SetWindowPos
 GetWindowRect
+// 临时置顶**之前**记下当时盖住便签的是谁，撤退时插回它后面，就是"从哪儿来回哪儿去"
+// （WindowInterop.GetZOrderPredecessor）。GW_HWNDPREV 是 GET_WINDOW_CMD 的成员。
+GetWindow
+GET_WINDOW_CMD
+// 提升与撤退之间隔着整个"显示桌面"，那个邻居可能已经被销毁，句柄还可能被复用。
+IsWindow
 SetForegroundWindow
 GetForegroundWindow
 AttachThreadInput

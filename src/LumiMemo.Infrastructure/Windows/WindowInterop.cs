@@ -28,29 +28,8 @@ public static class WindowInterop
     private const SET_WINDOW_POS_FLAGS MoveNothing =
         SET_WINDOW_POS_FLAGS.SWP_NOMOVE | SET_WINDOW_POS_FLAGS.SWP_NOSIZE | SET_WINDOW_POS_FLAGS.SWP_NOACTIVATE;
 
-    /// <summary>桌面窗口（<c>Progman</c>）。「显示桌面」时前台就是它。</summary>
+    /// <summary>桌面窗口（<c>Progman</c>）。「显示桌面」期间它就是前台。</summary>
     public static IntPtr GetShellWindowHandle() => PInvoke.GetShellWindow();
-
-    /// <summary>
-    /// 窗口是否属于本进程。
-    /// </summary>
-    /// <param name="hwnd">目标窗口句柄。</param>
-    /// <returns>属于本进程返回 <see langword="true"/>；句柄为空或已失效返回 <see langword="false"/>。</returns>
-    /// <remarks>
-    /// 用来把「用户点了别处」和「系统自己在还原窗口」区分开，见
-    /// <c>WindowManager.OnForegroundChanged</c>。
-    /// </remarks>
-    public static bool BelongsToCurrentProcess(IntPtr hwnd)
-    {
-        if (hwnd == IntPtr.Zero)
-        {
-            return false;
-        }
-
-        PInvoke.GetWindowThreadProcessId(new HWND(hwnd), out uint processId);
-
-        return processId == (uint)Environment.ProcessId;
-    }
 
     /// <summary>
     /// 把窗口临时提到置顶档。
@@ -75,69 +54,88 @@ public static class WindowInterop
         && PInvoke.SetWindowPos(new HWND(hwnd), HwndTopMost, 0, 0, 0, 0, MoveNothing);
 
     /// <summary>
-    /// 撤销 <see cref="MakeTopMost"/>，并让窗口排在 <paramref name="foregroundAnchor"/> 之后。
+    /// 取 z 序里紧挨着这个窗口<strong>上面</strong>的那个窗口，也就是此刻盖住它的那个。
     /// </summary>
     /// <param name="hwnd">目标窗口句柄。</param>
-    /// <param name="foregroundAnchor">
-    /// 用户刚刚切过去的那个前台窗口；传 <see cref="IntPtr.Zero"/> 表示"不动 z 序"。
-    /// </param>
-    /// <returns>两步是否都成功。</returns>
+    /// <returns>
+    /// 上一个窗口；窗口已在 z 序最顶、或句柄无效时返回 <see cref="IntPtr.Zero"/>。
+    /// </returns>
+    /// <remarks>
+    /// 临时置顶<strong>之前</strong>调用，把结果留给 <see cref="PlaceBehind"/>，
+    /// 就是"从哪儿来回哪儿去"里的那个"哪儿"。提升之后再问就没有意义了——
+    /// 那时它紧挨着的是桌面窗口。
+    /// </remarks>
+    public static IntPtr GetZOrderPredecessor(IntPtr hwnd) =>
+        hwnd == IntPtr.Zero ? IntPtr.Zero : PInvoke.GetWindow(new HWND(hwnd), GET_WINDOW_CMD.GW_HWNDPREV);
+
+    /// <summary>
+    /// 撤掉临时置顶：清 <c>WS_EX_TOPMOST</c>，不动 z 序。
+    /// </summary>
+    /// <param name="hwnd">目标窗口句柄。</param>
+    /// <returns>调用是否成功。</returns>
     /// <remarks>
     /// <para>
-    /// <strong>为什么必须是两步。</strong><c>HWND_NOTOPMOST</c> 是唯一能清掉
-    /// <c>WS_EX_TOPMOST</c> 的手段，可它的语义是"放到<em>所有</em>非置顶窗口之上"
-    /// ——单用它，便签会在用户刚点开某个窗口的瞬间反过来盖住那个窗口（实测复现）。
-    /// 所以清完之后必须立刻把它插到那个窗口后面。两步之间不返回消息循环，
-    /// 用户看不到中间态。
+    /// <c>HWND_NOTOPMOST</c> 是唯一能清掉 <c>WS_EX_TOPMOST</c> 的手段，可它的语义是
+    /// "放到<em>所有</em>非置顶窗口之上"——单用它，便签虽然退出了置顶档，却会浮到
+    /// 一切普通窗口的最上面。要让它落回原位，得紧接着
+    /// <see cref="PlaceBehind"/> 插回提升前那个邻居后面。
     /// </para>
     /// <para>
     /// <strong><c>SWP_NOZORDER</c> 是死路，别试。</strong>用它配 <c>HWND_NOTOPMOST</c>
     /// 想"只清标志位、不动 z 序"，实测调用返回成功而 <c>WS_EX_TOPMOST</c> 纹丝不动
     /// ——标记位和 z 序是一体的，绕不开。
     /// </para>
-    /// <para>
-    /// <strong>锚点自己就在置顶档时，第二步必须跳过。</strong>把便签插到一个置顶窗口
-    /// 后面，<c>SetWindowPos</c> 会连带把便签也提拔进置顶档。实测路径是任务栏：点右下角
-    /// 的「显示桌面」按钮时前台是置顶的 <c>Shell_TrayWnd</c>（不像 Win+D 那样前台是
-    /// <c>Progman</c>），于是撤掉临时置顶 3ms 后便签又变回 <c>WS_EX_TOPMOST</c>。
-    /// 更糟的是这个错误的置顶再也撤不掉：<c>PromoteForShowDesktop</c> 会跳过已经置顶的
-    /// 窗口，而 <c>ReleaseTemporaryTopMost</c> 只处理自己提升过的那些。
-    /// 这时只做第一步就够了——<c>HWND_NOTOPMOST</c> 的语义本来就包含
-    /// 「放到所有非置顶窗口之上」，比插到锚点后面更接近我们想要的落点。
-    /// </para>
-    /// <para>
-    /// <paramref name="foregroundAnchor"/> 等于 <paramref name="hwnd"/> 时只做第一步：
-    /// 用户点的就是这张便签，它本来就该在最上面，把"自己插到自己后面"没有意义。
-    /// </para>
     /// </remarks>
-    public static bool ClearTopMost(IntPtr hwnd, IntPtr foregroundAnchor)
+    public static bool ClearTopMost(IntPtr hwnd) =>
+        hwnd != IntPtr.Zero
+        && PInvoke.SetWindowPos(new HWND(hwnd), HwndNoTopMost, 0, 0, 0, 0, MoveNothing);
+
+    /// <summary>
+    /// 把窗口插到 <paramref name="after"/> 的后面，也就是排到它的<strong>下面</strong>去。
+    /// </summary>
+    /// <param name="hwnd">目标窗口句柄。</param>
+    /// <param name="after">
+    /// 要排在它后面的那个窗口；<see cref="IntPtr.Zero"/> 表示不动 z 序。
+    /// </param>
+    /// <returns>是否成功；下面几种"跳过"也算成功。</returns>
+    /// <remarks>
+    /// <para>
+    /// 以下情况只清过标志、不插 z 序：
+    /// </para>
+    /// <list type="bullet">
+    ///   <item>
+    ///     <paramref name="after"/> 为空——窗口提升前本来就在 z 序最顶，没有"下面"可插，
+    ///     而它此刻的位置（普通档最上面）正是原位。
+    ///   </item>
+    ///   <item>
+    ///     <strong><paramref name="after"/> 自己就在置顶档</strong>——把窗口插到一个置顶窗口
+    ///     后面，<c>SetWindowPos</c> 会连带把它也提拔进置顶档，而且这次错误的提拔
+    ///     <em>再也撤不掉</em>（<c>PromoteForShowDesktop</c> 会跳过已置顶的窗口，
+    ///     而撤退只处理自己提升过的那些）。
+    ///   </item>
+    ///   <item>
+    ///     <paramref name="after"/> 已经失效——提升与撤退之间隔着整个"显示桌面"，
+    ///     期间系统可能已经把那个窗口销毁了，句柄还可能被复用。
+    ///   </item>
+    ///   <item>
+    ///     <paramref name="after"/> 就是自己——窗口会落进"已激活却排在别人之下"的
+    ///     非自然状态，之后再也提不上去（实测复现）。
+    ///   </item>
+    /// </list>
+    /// </remarks>
+    public static bool PlaceBehind(IntPtr hwnd, IntPtr after)
     {
-        if (hwnd == IntPtr.Zero)
+        if (hwnd == IntPtr.Zero || after == IntPtr.Zero || after == hwnd)
         {
-            return false;
+            return true;
         }
 
-        bool cleared = PInvoke.SetWindowPos(new HWND(hwnd), HwndNoTopMost, 0, 0, 0, 0, MoveNothing);
-
-        if (foregroundAnchor == IntPtr.Zero || foregroundAnchor == hwnd)
+        if (!PInvoke.IsWindow(new HWND(after)) || IsTopMost(after))
         {
-            return cleared;
+            return true;
         }
 
-        // 桌面窗口（Progman）不作为锚点：它一旦离开前台就会自己降下去，
-        // 把自己排在它后面等于把便签丢到所有窗口底下。
-        if (foregroundAnchor == GetShellWindowHandle())
-        {
-            return cleared;
-        }
-
-        if (IsTopMost(foregroundAnchor))
-        {
-            return cleared;
-        }
-
-        return PInvoke.SetWindowPos(new HWND(hwnd), new HWND(foregroundAnchor), 0, 0, 0, 0, MoveNothing)
-            && cleared;
+        return PInvoke.SetWindowPos(new HWND(hwnd), new HWND(after), 0, 0, 0, 0, MoveNothing);
     }
 
     /// <summary>窗口是否在置顶档（带 <c>WS_EX_TOPMOST</c>）。</summary>
