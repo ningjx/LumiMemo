@@ -3,19 +3,17 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.0.31903.59
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{827E0CD3-B72D-47B6-A68D-7590B98EB39B}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LumiMemo.Core", "LumiMemo.Core\LumiMemo.Core.csproj", "{3D737DD1-1102-4151-BBE0-E5B965F70E11}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LumiMemo.Core", "src\LumiMemo.Core\LumiMemo.Core.csproj", "{3D737DD1-1102-4151-BBE0-E5B965F70E11}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LumiMemo.Infrastructure", "LumiMemo.Infrastructure\LumiMemo.Infrastructure.csproj", "{E6AE3EEE-A703-4439-97F5-BFB12AE35B8B}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LumiMemo.Infrastructure", "src\LumiMemo.Infrastructure\LumiMemo.Infrastructure.csproj", "{E6AE3EEE-A703-4439-97F5-BFB12AE35B8B}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LumiMemo.App", "LumiMemo.App\LumiMemo.App.csproj", "{CDDDA2F9-E10D-49C4-93D3-690618285F4A}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LumiMemo.App", "src\LumiMemo.App\LumiMemo.App.csproj", "{CDDDA2F9-E10D-49C4-93D3-690618285F4A}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LumiMemo.Core.Tests", "LumiMemo.Core.Tests\LumiMemo.Core.Tests.csproj", "{7902836A-3474-4070-82C0-006EE6B5E1AA}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LumiMemo.Core.Tests", "src\LumiMemo.Core.Tests\LumiMemo.Core.Tests.csproj", "{7902836A-3474-4070-82C0-006EE6B5E1AA}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LumiMemo.App.Tests", "LumiMemo.App.Tests\LumiMemo.App.Tests.csproj", "{16BDB93D-65B1-4B87-9486-D29DFFFD199B}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LumiMemo.App.Tests", "src\LumiMemo.App.Tests\LumiMemo.App.Tests.csproj", "{16BDB93D-65B1-4B87-9486-D29DFFFD199B}"
-EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LumiMemo.Integration.Tests", "src\LumiMemo.Integration.Tests\LumiMemo.Integration.Tests.csproj", "{AFC5874C-2CD4-4C70-9254-7DD611DB1CF6}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LumiMemo.Integration.Tests", "LumiMemo.Integration.Tests\LumiMemo.Integration.Tests.csproj", "{AFC5874C-2CD4-4C70-9254-7DD611DB1CF6}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -102,13 +100,5 @@ Global
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
-	EndGlobalSection
-	GlobalSection(NestedProjects) = preSolution
-		{3D737DD1-1102-4151-BBE0-E5B965F70E11} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
-		{E6AE3EEE-A703-4439-97F5-BFB12AE35B8B} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
-		{CDDDA2F9-E10D-49C4-93D3-690618285F4A} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
-		{7902836A-3474-4070-82C0-006EE6B5E1AA} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
-		{16BDB93D-65B1-4B87-9486-D29DFFFD199B} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
-		{AFC5874C-2CD4-4C70-9254-7DD611DB1CF6} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 	EndGlobalSection
 EndGlobal
