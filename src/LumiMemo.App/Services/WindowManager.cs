@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Interop;
+using System.Windows.Threading;
 using LumiMemo.App.Abstractions;
 using LumiMemo.App.ViewModels;
 using LumiMemo.App.Views;
@@ -74,6 +75,64 @@ public sealed class WindowManager : IWindowManager, IDisposable
     /// 会把便签一并提拔进置顶档。
     /// </remarks>
     private readonly Dictionary<IntPtr, IntPtr> _predecessorBeforePromotion = [];
+
+    /// <summary>
+    /// 每张便签在<strong>最近一次「桌面没有升起来」的时候</strong>的 z 序邻居。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <see cref="PromoteForShowDesktop"/> 的锚点取自这里，<strong>而不是当场去问一次
+    /// <see cref="WindowInterop.GetZOrderPredecessor"/></strong>。
+    /// </para>
+    /// <para>
+    /// <strong>当场问一定是错的，只是错得时好时坏。</strong>提升发生在「前台已经变成桌面」
+    /// 之后，而那一刻「显示桌面」<em>已经把盖住便签的那批普通窗口藏起来了</em>——
+    /// 于是往上走时它们全被判成"不可见窗口"跳过，问到的要么是别的便签窗口，要么直接
+    /// 走到顶端拿到 <see cref="IntPtr.Zero"/>。撤退时插到这样一个锚点后面，便签自然回不到原位：
+    /// 用户看到的就是"便签跑到最底下，再按显示桌面就跟着别的窗口一起消失/恢复"。
+    /// </para>
+    /// <para>
+    /// <strong>而这个"藏起来"与"我们的回调"是个赛跑</strong>，所以症状是时好时坏——
+    /// 藏得慢的那几次，当场问恰好还能问到对的窗口，看着就像修好了。这也正是它被误判成
+    /// "跟谁启动有关"的原因：同一个实例往往连着复现同一种结果。在这里持续采样，
+    /// 结果就与那一瞬间的先后顺序无关了。
+    /// </para>
+    /// <para>
+    /// 采样点见 <see cref="RememberPredecessors"/>。只在"正常桌面"下采：
+    /// 便签正被我们临时提着的时候问到的邻居是置顶区的，没有任何意义。
+    /// </para>
+    /// </remarks>
+    private readonly Dictionary<IntPtr, IntPtr> _lastKnownPredecessor = [];
+
+    /// <summary>
+    /// 已经退出置顶档、但<strong>位置还没落定</strong>的便签：句柄 → 提升前的那个 z 序邻居。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 归位不是一次 <c>SetWindowPos</c> 就能了事的。<see cref="ReleaseTemporaryTopMost"/> 由
+    /// 「前台不再是桌面」触发，而那一刻「显示桌面」<em>还在把窗口一张张恢复上来</em>——
+    /// 每恢复一张就把它抬到顶上，于是刚插好的位置立刻被顶下去。实测轨迹：还原后 +45ms
+    /// 便签已经落在正确的邻居后面，+91ms 就掉到最底下，此后纹丝不动。
+    /// </para>
+    /// <para>
+    /// 所以归位得<strong>盯着做</strong>：见 <see cref="SettleRestoredWindows"/>，隔一小段复查一次，
+    /// 谁的邻居还不是锚点就再插一次，一直管到窗口期跑完——中途"这会儿是对的"并不算数，
+    /// 恢复洪流可能还在后头（实测点任务栏按钮时就是这样：+1ms 已就位，+150ms 又被顶下去）。
+    /// </para>
+    /// </remarks>
+    private readonly Dictionary<IntPtr, IntPtr> _restorePending = [];
+
+    /// <summary>归位复查定时器，第一次需要复查时才建（见 <see cref="EnsureRestoreTimer"/>）。</summary>
+    private DispatcherTimer? _restoreTimer;
+
+    /// <summary>本轮归位复查已经跑了几拍。</summary>
+    private int _restoreTicks;
+
+    /// <summary>归位复查的间隔。够短，看不出便签在动。</summary>
+    private static readonly TimeSpan RestoreSettleInterval = TimeSpan.FromMilliseconds(60);
+
+    /// <summary>归位复查最多跑多少拍，约合 1 秒——「显示桌面」的恢复早已结束。</summary>
+    private const int RestoreSettleMaxTicks = 16;
 
     /// <summary>
     /// 本次会话中已经层叠了几张。
@@ -158,6 +217,10 @@ public sealed class WindowManager : IWindowManager, IDisposable
         // 若此时 layout 里还是默认值，下次启动它就会跳回默认位置。
         CaptureGeometry(viewModel.Id, layout);
         _layout.MarkDirtyAndScheduleFlush();
+
+        // 新开的窗口此刻的邻居就是它的原位。此时不记，用户开完便签直接按 Win+D，
+        // 这张便签就没有任何锚点可用。
+        RememberPredecessors();
     }
 
     /// <inheritdoc />
@@ -445,6 +508,13 @@ public sealed class WindowManager : IWindowManager, IDisposable
     /// 那个邻居。便签于是回到原本的层级：本来被某个窗口盖着，还原后照样被它盖着。
     /// </para>
     /// <para>
+    /// <strong>而"提升之前"必须早到桌面还没升起来的时候。</strong>本方法收到桌面成为前台
+    /// 的通知时，「显示桌面」已经把盖住便签的窗口藏好了，那一刻去问"上面是谁"只会问到
+    /// 别的便签窗口或 <see cref="IntPtr.Zero"/>。<see cref="RememberPredecessors"/> 因此
+    /// 在每次<em>正常</em>的前台切换之后顺手采一遍（见 <see cref="_lastKnownPredecessor"/>），
+    /// 提升时直接用采到的值。
+    /// </para>
+    /// <para>
     /// 这就是 <see cref="RestoreAfterShowDesktop"/> 的落点：关掉它，本方法直接撤退，
     /// 便签与普通窗口无异。
     /// </para>
@@ -460,12 +530,54 @@ public sealed class WindowManager : IWindowManager, IDisposable
 
         if (foreground == WindowInterop.GetShellWindowHandle())
         {
+            // 桌面又升起来了：上一轮的归位复查到此为止——便签马上要重新进置顶档，
+            // 这时再去把它们往普通档里插，是在和 PromoteForShowDesktop 对着干。
+            CancelRestoreSettle();
             PromoteForShowDesktop();
 
             return;
         }
 
+        // 顺序不能颠倒：先把临时置顶撤干净（此时便签已经回到普通档），
+        // 采到的才是它们在正常 z 序里的位置。反过来的话，问到的是置顶区的邻居。
         ReleaseTemporaryTopMost();
+
+        // 刚释放过的话，这个采样点正落在「显示桌面」的恢复洪流里，采到的邻居不可信。
+        // 交给 SettleRestoredWindows 在落定之后再采。
+        if (_restorePending.Count == 0)
+        {
+            RememberPredecessors();
+        }
+    }
+
+    /// <summary>
+    /// 记下每张可见便签此刻盖着它的那个窗口，供 <see cref="PromoteForShowDesktop"/> 取锚点。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>必须在"桌面没有升起来"的时候调用</strong>，理由见
+    /// <see cref="_lastKnownPredecessor"/>：桌面一升起来，盖住便签的窗口就全被藏了，
+    /// 那时再问就晚了。所以本方法的调用点全是"正常桌面"下的时机——前台换到某个窗口、
+    /// 便签刚开出来、便签被拖动或缩放。
+    /// </para>
+    /// <para>
+    /// 用户主动置顶的便签也照记不误：它们在 <see cref="PromoteForShowDesktop"/> 里
+    /// 一律跳过，记下的值用不到，但"跳过"这件事让这里不必再判一次。
+    /// </para>
+    /// </remarks>
+    private void RememberPredecessors()
+    {
+        foreach (NoteWindow window in _windows.Values)
+        {
+            if (!window.IsVisible)
+            {
+                continue;
+            }
+
+            IntPtr hwnd = new WindowInteropHelper(window).Handle;
+
+            _lastKnownPredecessor[hwnd] = WindowInterop.GetZOrderPredecessor(hwnd);
+        }
     }
 
     /// <summary>把所有可见的、非置顶的便签临时提到置顶档。</summary>
@@ -500,8 +612,12 @@ public sealed class WindowManager : IWindowManager, IDisposable
                 continue;
             }
 
-            // 趁着还没提升，先把它此刻的 z 序邻居记下来，撤退时好插回去。
-            IntPtr predecessor = WindowInterop.GetZOrderPredecessor(hwnd);
+            // 锚点用之前正常状态下采到的那个，不能在这里当场问一次——见 _lastKnownPredecessor，
+            // 此刻盖住便签的窗口已经被「显示桌面」藏起来了，问出来的不是它。
+            // 实在没采到（比如便签开出来之后一次前台切换都没发生过）才退回当场问。
+            IntPtr predecessor = _lastKnownPredecessor.TryGetValue(hwnd, out IntPtr remembered)
+                ? remembered
+                : WindowInterop.GetZOrderPredecessor(hwnd);
 
             if (WindowInterop.MakeTopMost(hwnd))
             {
@@ -513,16 +629,28 @@ public sealed class WindowManager : IWindowManager, IDisposable
 
     /// <summary>撤回 <see cref="PromoteForShowDesktop"/> 提升过的窗口，归位到提升前的 z 序。</summary>
     /// <remarks>
+    /// <para>
     /// <strong>必须分两轮，不能"清一张、归位一张"地穿插着做。</strong>给 A 归位时若 B 还挂在
     /// 置顶档上，而 A 提升前恰好排在 B 下面（两张便签在屏幕上叠着），<c>SetWindowPos</c>
     /// 会连带把 A 也提拔进置顶档——这恰恰是 <see cref="WindowInterop.PlaceBehind"/> 要挡的
     /// 情况。先把所有窗口都退出置顶档，再统一归位，相互牵连就不存在了。
     /// 两轮之间不返回消息循环，用户看不到中间态。
+    /// </para>
+    /// <para>
+    /// <strong>但这两轮插位只是把便签先摆个大概，落定要靠
+    /// <see cref="SettleRestoredWindows"/>。</strong>原因见 <see cref="_restorePending"/>：
+    /// 此刻「显示桌面」还在恢复窗口，插好的位置马上会被顶掉。这里如实记录待归位的清单、
+    /// 启动复查，不要在这里就认为完事了。
+    /// </para>
     /// </remarks>
     private void ReleaseTemporaryTopMost()
     {
         if (_promotedForShowDesktop.Count == 0)
         {
+            // 这次前台切换跟「还原桌面」无关，是用户自己切到别的窗口上去了。
+            // 上一轮的归位复查就此收手。
+            CancelRestoreSettle();
+
             return;
         }
 
@@ -531,13 +659,101 @@ public sealed class WindowManager : IWindowManager, IDisposable
             WindowInterop.ClearTopMost(hwnd);
         }
 
+        _restorePending.Clear();
+
         foreach (IntPtr hwnd in _promotedForShowDesktop)
         {
-            WindowInterop.PlaceBehind(hwnd, _predecessorBeforePromotion.GetValueOrDefault(hwnd));
+            IntPtr anchor = _predecessorBeforePromotion.GetValueOrDefault(hwnd);
+
+            WindowInterop.PlaceBehind(hwnd, anchor);
+
+            // 锚点为零说明提升前就没问到邻居，PlaceBehind 会直接跳过——没有可复位的目标，
+            // 放进复查清单只会让它空转到超时。
+            if (anchor != IntPtr.Zero)
+            {
+                _restorePending[hwnd] = anchor;
+            }
         }
 
         _promotedForShowDesktop.Clear();
         _predecessorBeforePromotion.Clear();
+
+        if (_restorePending.Count > 0)
+        {
+            _restoreTicks = 0;
+            EnsureRestoreTimer().Start();
+        }
+    }
+
+    /// <summary>
+    /// 复查便签有没有真的回到 <see cref="_restorePending"/> 记下的邻居后面，没回去就再插一次。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>只要"当下是对的"就收手是不够的——会漏掉后面还有的恢复。</strong>实测点任务栏
+    /// 右下角那个按钮：还原那一瞬便签就已经落在正确位置，第一拍复查（+60ms）看到的正是"对的"，
+    /// 于是收手；可恢复洪流在 +150ms、+200ms 又把它推到 z 序第 4、第 7 位，此后无人过问，
+    /// 便签就停在最底下。而按 Win+D 时第一拍看到的恰好是错的，继续插，反倒正常——
+    /// 用户于是以为"Win+D 行、按钮不行"，其实差别只在复查第一拍撞上了哪一种。
+    /// </para>
+    /// <para>
+    /// 所以判据是<strong>看满整个窗口期</strong>：每一拍都重新比一次，谁的前驱还不是锚点就再插一次，
+    /// 一直管到 <see cref="RestoreSettleMaxTicks"/> 用完为止，中途不因为"这会儿对了"而退出。
+    /// 窗口期只比实测涨落时长（约 250ms）大四倍，成本是十几次指针比较。
+    /// </para>
+    /// <para>
+    /// 一直管着会不会跟用户抢位置？不会。用户随后点到前台的窗口总是抬到锚点<em>之上</em>，
+    /// 便签仍在锚点之后，前驱不变，于是这里什么都不做；而用户要是点回便签本身，前台就换了，
+    /// 那次 <see cref="OnForegroundChanged"/> 已经把复查叫停（见 <see cref="ReleaseTemporaryTopMost"/>）。
+    /// </para>
+    /// <para>
+    /// 收工时补采一次邻居：落定之后的这一刻才是「正常桌面」，此时采到的锚点下一次提升才用得上。
+    /// </para>
+    /// </remarks>
+    private void SettleRestoredWindows()
+    {
+        // 桌面在复查期间又升起来了：便签正/即将挂在置顶档上，此时既不该插位、也不该采样。
+        if (_promotedForShowDesktop.Count > 0)
+        {
+            CancelRestoreSettle();
+
+            return;
+        }
+
+        foreach ((IntPtr hwnd, IntPtr anchor) in _restorePending)
+        {
+            if (WindowInterop.GetZOrderPredecessor(hwnd) != anchor)
+            {
+                WindowInterop.PlaceBehind(hwnd, anchor);
+            }
+        }
+
+        if (++_restoreTicks < RestoreSettleMaxTicks)
+        {
+            return;
+        }
+
+        _restoreTimer?.Stop();
+        _restorePending.Clear();
+        RememberPredecessors();
+    }
+
+    /// <summary>停掉归位复查并忘掉待归位清单。</summary>
+    private void CancelRestoreSettle()
+    {
+        _restoreTimer?.Stop();
+        _restorePending.Clear();
+    }
+
+    private DispatcherTimer EnsureRestoreTimer()
+    {
+        if (_restoreTimer is null)
+        {
+            _restoreTimer = new DispatcherTimer { Interval = RestoreSettleInterval };
+            _restoreTimer.Tick += (_, _) => SettleRestoredWindows();
+        }
+
+        return _restoreTimer;
     }
 
     private void OnGeometryChanged(Guid noteId)
@@ -549,6 +765,9 @@ public sealed class WindowManager : IWindowManager, IDisposable
 
         CaptureGeometry(noteId, window.ViewModel.Layout);
         _layout.MarkDirtyAndScheduleFlush();
+
+        // 挪个位置就可能换了一个"盖住它的窗口"，锚点跟着更新。
+        RememberPredecessors();
     }
 
     /// <summary>
@@ -607,6 +826,8 @@ public sealed class WindowManager : IWindowManager, IDisposable
 
         _promotedForShowDesktop.Remove(hwnd);
         _predecessorBeforePromotion.Remove(hwnd);
+        _lastKnownPredecessor.Remove(hwnd);
+        _restorePending.Remove(hwnd);
 
         _noteService.MarkNoteClosed(noteId);
     }
@@ -616,8 +837,10 @@ public sealed class WindowManager : IWindowManager, IDisposable
     {
         _foreground.ForegroundChanged -= OnForegroundChanged;
         _foreground.Dispose();
+        CancelRestoreSettle();
         _promotedForShowDesktop.Clear();
         _predecessorBeforePromotion.Clear();
+        _lastKnownPredecessor.Clear();
     }
 
     /// <summary>窗口当前的 DIP → 物理像素缩放系数（1.0 = 100%，1.5 = 150%）。</summary>
