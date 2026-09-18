@@ -37,6 +37,10 @@ public sealed class JsonSettingsStoreTests
         Assert.Equal(150, settings.SearchDebounceMs);
         Assert.Equal(NoteColor.Yellow, settings.DefaultColor);
 
+        // 「显示桌面后把便签拉回来」默认开（§13.6）：用户按 Win+D 想要的是桌面，
+        // 不是「便签消失了」，所以新装默认就是开着的。
+        Assert.True(settings.RestoreAfterShowDesktop);
+
         // 「首次运行」不是需要惊动用户的事，也不是「读不出来」。
         Assert.Null(store.LastProblem);
 
@@ -63,6 +67,7 @@ public sealed class JsonSettingsStoreTests
             DefaultHeight = 500.25,
             DefaultContentScale = 1.3,
             ShowStatusBar = false,
+            RestoreAfterShowDesktop = false,
             StartWithWindows = true,
             MinimizeToTrayOnClose = false,
             ShowTrayIcon = false,
@@ -88,6 +93,7 @@ public sealed class JsonSettingsStoreTests
         Assert.Equal(saved.DefaultHeight, loaded.DefaultHeight);
         Assert.Equal(saved.DefaultContentScale, loaded.DefaultContentScale);
         Assert.Equal(saved.ShowStatusBar, loaded.ShowStatusBar);
+        Assert.Equal(saved.RestoreAfterShowDesktop, loaded.RestoreAfterShowDesktop);
         Assert.Equal(saved.StartWithWindows, loaded.StartWithWindows);
         Assert.Equal(saved.MinimizeToTrayOnClose, loaded.MinimizeToTrayOnClose);
         Assert.Equal(saved.ShowTrayIcon, loaded.ShowTrayIcon);

@@ -1,4 +1,5 @@
 using System.Windows;
+using System.Windows.Interop;
 using LumiMemo.App.Abstractions;
 using LumiMemo.App.ViewModels;
 using LumiMemo.App.Views;
@@ -6,6 +7,8 @@ using LumiMemo.Core.Abstractions;
 using LumiMemo.Core.Math;
 using LumiMemo.Core.Models;
 using LumiMemo.Core.Services;
+using LumiMemo.Infrastructure.Windows;
+using Microsoft.Extensions.Logging;
 
 namespace LumiMemo.App.Services;
 
@@ -41,14 +44,25 @@ namespace LumiMemo.App.Services;
 /// <see cref="INoteService.MarkNoteClosed"/>。
 /// </para>
 /// </remarks>
-public sealed class WindowManager : IWindowManager
+public sealed class WindowManager : IWindowManager, IDisposable
 {
     private readonly LayoutService _layout;
     private readonly INoteService _noteService;
     private readonly AutoSaveService _autoSaveService;
     private readonly IDisplayProvider _displays;
+    private readonly ILogger<WindowManager> _logger;
+    private readonly ShellForegroundWatcher _foreground = new();
 
     private readonly Dictionary<Guid, NoteWindow> _windows = [];
+
+    /// <summary>
+    /// 因为「显示桌面」而被临时提到置顶档的窗口句柄。
+    /// </summary>
+    /// <remarks>
+    /// 只撤退我们提升过的那些。没有这份记录就只能靠 <c>WS_EX_TOPMOST</c> 反查，
+    /// 那会把用户**主动置顶**的便签一起降下来。
+    /// </remarks>
+    private readonly HashSet<IntPtr> _promotedForShowDesktop = [];
 
     /// <summary>
     /// 本次会话中已经层叠了几张。
@@ -61,21 +75,45 @@ public sealed class WindowManager : IWindowManager
     /// </remarks>
     private int _cascadeIndex;
 
+    /// <summary>
+    /// 「显示桌面」（Win+D）之后，是否让不置顶的便签仍然留在桌面上（§13.6）。
+    /// 由 <c>StartupSequence</c> 从设置推入，默认开。
+    /// </summary>
+    /// <remarks>
+    /// 关掉它，不置顶的便签就和普通窗口一样被升起的桌面盖住；置顶那一档不受影响，
+    /// 系统本来就不动置顶窗口。
+    /// </remarks>
+    public bool RestoreAfterShowDesktop { get; set; } = true;
+
     public WindowManager(
         LayoutService layout,
         INoteService noteService,
         AutoSaveService autoSaveService,
-        IDisplayProvider displays)
+        IDisplayProvider displays,
+        ILogger<WindowManager> logger)
     {
         ArgumentNullException.ThrowIfNull(layout);
         ArgumentNullException.ThrowIfNull(noteService);
         ArgumentNullException.ThrowIfNull(autoSaveService);
         ArgumentNullException.ThrowIfNull(displays);
+        ArgumentNullException.ThrowIfNull(logger);
 
         _layout = layout;
         _noteService = noteService;
         _autoSaveService = autoSaveService;
         _displays = displays;
+        _logger = logger;
+
+        // 构造发生在 UI 线程（组合根在 App.OnStartup 里同步解析），这一点是硬要求：
+        // WINEVENT_OUTOFCONTEXT 的回调投递到注册线程的消息队列上，在别的线程装钩子等于装了个哑巴。
+        _foreground.ForegroundChanged += OnForegroundChanged;
+
+        if (!_foreground.Start())
+        {
+            // 装不上不是致命错误：唯一的后果是「显示桌面」后不置顶的便签会被盖住，
+            // 也就是退回到普通窗口的行为。但这必须留痕，否则就成了功能静默失效。
+            _logger.LogWarning("前台事件钩子安装失败，「显示桌面」后便签将保持不住。");
+        }
     }
 
     /// <inheritdoc />
@@ -245,7 +283,18 @@ public sealed class WindowManager : IWindowManager
         _layout.MarkDirtyAndScheduleFlush();
     }
 
-    /// <inheritdoc />
+    /// <summary>
+    /// 切换置顶。
+    /// </summary>
+    /// <param name="noteId">目标便签。</param>
+    /// <param name="topMost">是否置顶。</param>
+    /// <remarks>
+    /// <strong>这是用户自己设的那一档</strong>，与「显示桌面」期间的临时置顶（见
+    /// <see cref="PromoteForShowDesktop"/>）是两回事：置顶的便签永远跳过临时提升与撤退，
+    /// 所以这里的设置不会被那套机制改回去。
+    /// <strong>不要试图改用 owner / 桌面层来豁免</strong>：那条路实测会让窗口整片渲染成黑色，
+    /// 且并没有真的设上 owner（附录 D.7）。
+    /// </remarks>
     public void ApplyTopMost(Guid noteId, bool topMost)
     {
         if (!_windows.TryGetValue(noteId, out NoteWindow? window))
@@ -344,6 +393,103 @@ public sealed class WindowManager : IWindowManager
         viewModel.PropertyChanged += (_, e) => OnViewModelPropertyChanged(viewModel.Id, e.PropertyName);
     }
 
+    /// <summary>
+    /// 前台窗口换了：桌面升上来就把不置顶的便签临时提到置顶档，桌面下去就撤回来。
+    /// </summary>
+    /// <param name="foreground">新的前台窗口句柄。</param>
+    /// <remarks>
+    /// <para>
+    /// <strong>为什么便签需要这一套。</strong>「显示桌面」并不最小化便签——便签窗口
+    /// <c>ShowInTaskbar="False"</c>，WPF 因此给它挂了个 Hidden Window 当 owner，
+    /// 而桌面**跳过一切有 owner 的窗口**（实测：按完 Win+D，管理器的
+    /// <c>IsIconic</c> 为真，三张便签全为假且 <c>IsWindowVisible</c> 全程为真）。
+    /// 用户看到的「便签没了」其实是被升起来的桌面窗口**盖住**了——点回任意窗口
+    /// 桌面就降下去，便签原样露出来。
+    /// </para>
+    /// <para>
+    /// <strong>普通 z 序那一档够不到桌面之上。</strong>实测三条路全部落空：
+    /// 事后 <c>SetWindowPos(HWND_TOP, SWP_NOACTIVATE)</c> 压不过；
+    /// 挪到「桌面刚成为前台」的那一刻调用，只在头两秒有效、之后又被盖回；
+    /// 而唯一看起来成功的那次是把前台抢回了便签（<c>focusStolen=YES</c>），
+    /// 用户正站在桌面上，抢焦点意味着接下来的按键会打进便签里。
+    /// 只有置顶档（<c>WS_EX_TOPMOST</c>）压得住。
+    /// </para>
+    /// <para>
+    /// <strong>撤退时为什么不能一律把便签排到新前台之后。</strong>「显示桌面」结束
+    /// 不是一瞬间的事：系统先把被它掀掉的那批窗口逐个还原（管理器就在其中），
+    /// 之后才把前台还给原来那个窗口。还原过程中我们会先收到一次
+    /// 「前台 = 管理器」——如果据此就把便签插到管理器后面，等系统把前台还给便签时，
+    /// 便签就成了一张<em>名义上是前台、实际被盖住</em>的窗口（实测复现）。
+    /// 判据是「新前台是不是本进程的窗口」：是，说明这是系统在还原我们自己的窗口，
+    /// 不是用户点了别处，便签只清标志、不动 z 序；否，才是用户真的切走了。
+    /// </para>
+    /// <para>
+    /// 这就是 <see cref="RestoreAfterShowDesktop"/> 的落点：关掉它，本方法直接撤退，
+    /// 便签与普通窗口无异。
+    /// </para>
+    /// </remarks>
+    private void OnForegroundChanged(IntPtr foreground)
+    {
+        if (!RestoreAfterShowDesktop)
+        {
+            ReleaseTemporaryTopMost(IntPtr.Zero);
+
+            return;
+        }
+
+        if (foreground == WindowInterop.GetShellWindowHandle())
+        {
+            PromoteForShowDesktop();
+
+            return;
+        }
+
+        ReleaseTemporaryTopMost(
+            WindowInterop.BelongsToCurrentProcess(foreground) ? IntPtr.Zero : foreground);
+    }
+
+    /// <summary>把所有可见的、非置顶的便签临时提到置顶档。</summary>
+    /// <remarks>
+    /// 用户主动置顶的便签跳过：它们本来就在置顶档，再动一次只会在撤退时多一份
+    /// "这张是不是我们提的" 的歧义。
+    /// </remarks>
+    private void PromoteForShowDesktop()
+    {
+        foreach (NoteWindow window in _windows.Values)
+        {
+            if (!window.IsVisible || window.ViewModel.Layout.IsTopMost)
+            {
+                continue;
+            }
+
+            IntPtr hwnd = new WindowInteropHelper(window).Handle;
+
+            if (WindowInterop.MakeTopMost(hwnd))
+            {
+                _promotedForShowDesktop.Add(hwnd);
+            }
+        }
+    }
+
+    /// <summary>撤回 <see cref="PromoteForShowDesktop"/> 提升过的窗口。</summary>
+    /// <param name="foreground">
+    /// 用户刚切过去的窗口，用来把便签排到它后面；<see cref="IntPtr.Zero"/> 表示不动 z 序。
+    /// </param>
+    private void ReleaseTemporaryTopMost(IntPtr foreground)
+    {
+        if (_promotedForShowDesktop.Count == 0)
+        {
+            return;
+        }
+
+        foreach (IntPtr hwnd in _promotedForShowDesktop)
+        {
+            WindowInterop.ClearTopMost(hwnd, foreground);
+        }
+
+        _promotedForShowDesktop.Clear();
+    }
+
     private void OnGeometryChanged(Guid noteId)
     {
         if (!_windows.TryGetValue(noteId, out NoteWindow? window))
@@ -400,12 +546,24 @@ public sealed class WindowManager : IWindowManager
     /// </remarks>
     private void OnNoteWindowClosed(Guid noteId)
     {
-        if (!_windows.Remove(noteId))
+        if (!_windows.Remove(noteId, out NoteWindow? window))
         {
             return;
         }
 
+        // 句柄会随窗口一起失效，留在提升记录里的话，下次撤退时就是在往一个
+        // 已经销毁的句柄上调 SetWindowPos。句柄还可能被系统复用。
+        _promotedForShowDesktop.Remove(new WindowInteropHelper(window).Handle);
+
         _noteService.MarkNoteClosed(noteId);
+    }
+
+    /// <inheritdoc />
+    public void Dispose()
+    {
+        _foreground.ForegroundChanged -= OnForegroundChanged;
+        _foreground.Dispose();
+        _promotedForShowDesktop.Clear();
     }
 
     /// <summary>窗口当前的 DIP → 物理像素缩放系数（1.0 = 100%，1.5 = 150%）。</summary>

@@ -38,7 +38,7 @@ v1 → v2 的逐节对照见 [附录 A](#附录-a-v1--v2-章节对照)，评审�
 | **便签窗口** | NoteWindow | 桌面上显示某个便签的那个窗口。一张便签最多有一个便签窗口 |
 | **笔记目录** | NotesFolder | 用户在设置里指定的、存放全部便签 Markdown 文件的目录 |
 | **关闭便签** | Close | 销毁便签窗口（窗口对象可回池复用），便签数据保留在同一位置。**不等于删除**。见 §17.3 |
-| **隐藏便签** | Hide | 保持便签窗口实例存在但不可见（如被 Win+D 最小化）。v1 曾把"关闭"和"隐藏"混为一谈，v2 只用"关闭"表达用户意图，不提供"隐藏"这个操作 |
+| **隐藏便签** | Hide | 保持便签窗口实例存在但不可见（托盘菜单的"隐藏全部便签"用的就是这个）。v1 曾把"关闭"和"隐藏"混为一谈，v2 只用"关闭"表达用户意图，不提供"隐藏"这个用户操作 |
 | **删除便签** | Delete | 把 Markdown 文件移到回收站目录 |
 | **回收站** | Trash | 笔记目录下的 `.lumimemo/trash/` 目录 |
 | **管理器** | ManagerWindow | 用来搜索、浏览、整理的普通应用窗口（见 §15.8） |
@@ -92,7 +92,7 @@ v1 → v2 的逐节对照见 [附录 A](#附录-a-v1--v2-章节对照)，评审�
 | 浏览器插件 | 同上，且需要服务端接口 |
 | 便签之间的磁吸/互相吸附对齐 | 需要一套便签间的几何约束求解，而"贴到屏幕边缘"由系统通过 Aero Snap 免费提供（§13.3）。收益不抵复杂度 |
 | 插件系统、扩展 API | 无需求 |
-| 移动端、AI 功能、协作/分享、便签加密、主题商店、自动更新、全局置顶、任务栏按钮开关、Win+D 豁免 | 本表只列**影响架构选型**的几项；功能层面的其余项见 §22.5，各项理由见该表引用的章节 |
+| 移动端、AI 功能、协作/分享、便签加密、主题商店、自动更新、全局置顶、任务栏按钮开关 | 本表只列**影响架构选型**的几项；功能层面的其余项见 §22.5，各项理由见该表引用的章节 |
 | 便携模式（portable 部署） | **本表不收**——它属于"v2 不做但架构上预留"（`IAppPaths`），见 §8.1、§22.5、§23.2 |
 
 ### 有意与 PinSlip 不同
@@ -100,7 +100,7 @@ v1 → v2 的逐节对照见 [附录 A](#附录-a-v1--v2-章节对照)，评审�
 | 项 | PinSlip | 本项目 | 理由 |
 |---|---|---|---|
 | 是否显示任务栏按钮 | 每张便签都有 | **都显示，且不提供开关** | 便签是用户要反复切换过去的窗口，Alt+Tab 能找到比"任务栏干净"更重要（§13.4） |
-| Win+D 时便签的行为 | 保留（Electron 窗口的默认行为） | **跟随系统一起最小化**，用托盘/热键一键找回 | 系统不提供受支持的豁免方式，详见 §13.6 |
+| Win+D 时便签的行为 | 保留（Electron 窗口的默认行为） | **未置顶的照样留在屏幕上**（`restoreAfterShowDesktop`，默认开）；置顶的系统根本不动它 | 便签有 owner，"显示桌面"本就不会最小化它，只是被升起的桌面盖住；盖住它的那张桌面在置顶档上，所以便签也得临时上到同一档才压得住——"豁免"仍然只有 `WS_EX_TOPMOST` 一条路。详见 §13.6 |
 | 笔记目录层级 | `notes/` 子目录 | 便签直接放在笔记目录下 | 用户选择 Obsidian vault 时层级更自然（§5.7） |
 | 标题 | 从正文第一行派生 | 同左（v2 采纳） | 与 Obsidian 一致，无需同步两处（§5.4） |
 | 快捷捕捉键 | `Ctrl+Shift+N` | **`Ctrl+Shift+N`（与 PinSlip 相同，可改）** | 与 PinSlip 保持一致的肌肉记忆；显示全部的键用 `Ctrl+Alt+N`（§17.6） |
@@ -141,9 +141,9 @@ v2 已把 v1 中的悬置项全部定死。以下是**仅剩的四项**，每项
 
 - 每张便签一个独立桌面窗口，各自记忆位置、尺寸、折叠与缩放状态
 - 任务栏与 Alt+Tab 中都能找到打开的便签（见 §13.4 的取舍说明）
-- `Win + D` 显示桌面时便签**跟随系统一起最小化**；用托盘菜单或 `Ctrl+Alt+N` 一键全部找回（见 §13.6，系统不提供受支持的豁免方式）
+- `Win + D` 显示桌面时**未置顶的便签照样留在屏幕上**：便签有 owner，系统本就不会把它最小化，只是被升起的桌面盖住；桌面升到置顶档的同时便签也被临时提到那一档，桌面退下去时再撤回（设置项 `restoreAfterShowDesktop` 默认开）；托盘菜单与 `Ctrl+Alt+N` 作为兜底（见 §13.6）
 - 普通应用窗口可以覆盖便签，默认不永久置顶
-- 提供可选"始终置顶"
+- 提供可选"始终置顶"——z 序上盖住普通窗口，而且"显示桌面"全程不去碰它，因此是**唯一不被打扰**的那一档（见 §13.6）
 - 多显示器、显示器增减、DPI 缩放变化下位置与尺寸都保持合理（§13.8）
 
 **工程**
@@ -1397,6 +1397,7 @@ public interface IAppPaths
   "defaultHeight": 420,
   "defaultContentScale": 1.0,
   "showStatusBar": true,
+  "restoreAfterShowDesktop": true,
   "startWithWindows": true,
   "minimizeToTrayOnClose": true,
   "showTrayIcon": true,
@@ -1422,6 +1423,7 @@ public interface IAppPaths
 | `attachmentsFolderName` | 相对的目录名，**不含路径分隔符**（校验见 §19.4） |
 | `theme` | `system` / `light` / `dark`。默认跟随系统（§15.3） |
 | `showStatusBar` | 便签底部的"已保存 / 字数 / 缩放"状态条是否显示（§15.2） |
+| `restoreAfterShowDesktop` | 「显示桌面」（Win+D）期间是否把不置顶的便签临时提到置顶档，让它们不被升起的桌面盖住，**默认 `true`**。关掉则便签被桌面盖住后就不再管，要等用户点回别的窗口才露出来。机制见 §13.6 |
 | `minimizeToTrayOnClose` | 关闭**管理器窗口**时的行为：true = 收进托盘，false = 退出应用。**只影响管理器窗口**，便签窗口的关闭语义固定（§17.3） |
 | `singleClickTrayAction` | 托盘图标的单击行为：`toggleManager` / `newNote` / `showAllNotes` |
 | `globalQuickCaptureHotkey` | 速记浮窗的全局热键，默认 `Ctrl+Shift+N`（§15.7、§17.6） |
@@ -1433,7 +1435,7 @@ public interface IAppPaths
 
 | 删掉的字段 | 原因 |
 |---|---|
-| `keepNotesVisibleOnShowDesktop` | 系统不提供受支持的 Win+D 豁免方式，这个开关无法真实生效（§13.6） |
+| `keepNotesVisibleOnShowDesktop` | v1 这个开关想靠未公开手段让便签"豁免"Win+D。v2 删掉它时（§13.6 实测之前）的结论是"豁免只有置顶一条路，没有可切的"。**后来 §13.6 实测出第二条路**——「显示桌面」期间把便签临时提到置顶档——这个诉求于是以 `restoreAfterShowDesktop` 这个名字回来了。两者机制完全不同：**不要照 v1 的名字把它加回去**，那个名字描述的是"豁免"，而新字段描述的是"显示桌面期间的临时处理" |
 | `hideNotesFromSystemWindowList` | 任务栏与 Alt+Tab 由同一个 `WS_EX_TOOLWINDOW` 控制，且 v2 决定便签**始终显示**，没有可切换的东西（§13.4） |
 | `snapDistancePx`、`snapToScreenEdges`、`snapBetweenNotes` | v2 不做便签之间的磁吸；贴屏幕边缘由系统 Aero Snap 免费提供，没有可配置项（§0.3、§13.3） |
 
@@ -1862,6 +1864,7 @@ public sealed class AppSettings
     [JsonPropertyName("defaultHeight")]        public double DefaultHeight { get; set; } = 420;
     [JsonPropertyName("defaultContentScale")]  public double DefaultContentScale { get; set; } = 1.0;
     [JsonPropertyName("showStatusBar")]        public bool ShowStatusBar { get; set; } = true;
+    [JsonPropertyName("restoreAfterShowDesktop")] public bool RestoreAfterShowDesktop { get; set; } = true;
 
     [JsonPropertyName("startWithWindows")]     public bool StartWithWindows { get; set; }
     [JsonPropertyName("minimizeToTrayOnClose")] public bool MinimizeToTrayOnClose { get; set; } = true;
@@ -2794,27 +2797,102 @@ _vm.IsTopMost = true;   // 绑定到 Window.TopMost
 
 ## 13.6 Win+D 与"显示桌面"
 
-**这是一个 v1 完全没有讨论、但用户一定会遇到的冲突：按 Win+D 时便签会跟着一起最小化。**
+**这是一个 v1 完全没有讨论、但用户一定会遇到的冲突：按 Win+D 时便签会跟着一起消失。**
 
-### 事实澄清
+### 事实澄清：Win+D 没有最小化便签，只是把它盖住了
 
-Windows **不提供**任何受支持的 API 让某个窗口豁免"显示桌面"。这是系统级行为，`WS_EX_TOOLWINDOW`、Owner 关系、`TopMost` 都不能豁免。
+本节的早期版本先后给过两个**都不成立**的解释：先是"Win+D 把便签隐藏了"（据此断言 `IsIconic` 查不到），后来又改成"Win+D 走 `ShowWindow(SW_MINIMIZE)`，`WindowState` 会变成 `Minimized`"。第二个说法比第一个接近真相，但它描述的是**普通窗口**（比如管理器窗口）的命运，被错误地套到了便签头上。
 
-而另一个常被提及的规避手段——用 `SetParent` 把窗口挂到桌面窗口（`Progman`）上变成子窗口——虽然确实能不被最小化，但这会让窗口**永远位于 z 序最底层**（被所有其他窗口盖住），也就失去了"浮在桌面上"这个便签最核心的价值。Rainmeter 这类桌面挂件用这个方法，是因为它们本来就要求待在桌面层。
+便签不是普通窗口。它 `ShowInTaskbar="False"`，WPF 因此给它挂了一个 `Hidden Window` 当 **owner**；而"显示桌面"**跳过一切有 owner 的窗口**。同一时刻两类窗口的实测对比：
 
-### 结论：浮在最上层 与 豁免 Win+D 不可兼得
+| 观测 | 管理器窗口（普通窗口） | 便签窗口（有 owner） |
+|---|---|---|
+| `IsIconic` | `False` → **`True`** | **全程 `False`** |
+| `IsWindowVisible` | `True` | **全程 `True`** |
+| `GetWindowRect` | 被移到 `-32000,-32000` | **`1887,417` 一动不动** |
+| `GetForegroundWindow` | **`Progman`**（正是 `GetShellWindow()` 的返回值） | 同左 |
 
-v2 明确选择**浮在最上层**，接受 Win+D 会最小化便签。这与所有主流便签软件（包括 PinSlip 的 Electron 窗口）的行为一致。
+**便签从头到尾没被最小化过，位置也没动过。** 用户看到的"消失"是它被升到一切之上的桌面窗口（`Progman` / `FolderView`）**盖住**了——点回任意一个别的窗口，桌面就降下去，便签原样露出来。
+
+这条修正也解释了另一个曾经把排查带偏的现象：Win+D 之后用 `EnumWindows` 加「`IsWindowVisible` 且尺寸 > 300×300」这个条件去枚举，**一个便签窗口都找不到**。当时据此推断"它们被隐藏了"，其实是**管理器**被最小化之后 `GetWindowRect` 给的成了 `199x34`，两个数都小于 300。尺寸条件筛掉的是管理器，不是便签。
+
+**于是整件事的性质变了**：既然便签没有被最小化，就没有"还原"可言——旧方案里那条 `ShowWindow(SW_SHOWNOACTIVATE)` 是打在一个从未离开过原位的窗口上的。真正要解决的是 **z 序**问题：怎么让便签重新出现在升起的桌面**之上**。
+
+**本机环境的两个附带观察**（可能会随系统版本变化，记录备查）：`GetShellWindow()` 拿到的 `Progman` 扩展样式是 `0x00200080` = `WS_EX_TOOLWINDOW | WS_EX_NOREDIRECTIONBITMAP`；枚举得到 8 个 `WorkerW` 顶层窗口，**没有一个含 `SHELLDLL_DefView`**。后者意味着网上那些"挑不带 `SHELLDLL_DefView` 的 `WorkerW` 挂上去"的教程在这版系统上直接选不出目标。
+
+而另一个常被提及的规避手段——用 `SetParent` 把窗口挂到桌面窗口（`Progman`）上变成子窗口，让"贴住壁纸"成为窗口的固有属性——**本项目实测走不通**，见下一节。
+
+### 实测：`SetParent` 挂桌面层在 WPF 上不可用
+
+本项目一度按这个思路实现过一版：不置顶时 `SetParent(hwnd, GetShellWindow())`，置顶时再摘掉。真机验收的结果是**两头落空**：
+
+| 观测项 | 置顶 | 不置顶（挂过桌面层） |
+|---|---|---|
+| `PrintWindow` 像素采样 | `#FDF3C4` 80.7% + `#F7E9A0` 13.6%（正常） | **`#000000` 100%（整片纯黑）** |
+| `GetWindow(GW_OWNER)` | WPF 自己的 `Hidden Window` | **同样是那个 `Hidden Window`** |
+
+同一张便签切一次置顶就能复现，切回来立刻恢复正常。也就是说：
+
+1. **owner 根本没设上**——期望的 `Progman` 从未出现在 `GW_OWNER` 里，挂载没有产生任何它该产生的效果；
+2. **代价却是实打实的**——窗口整片渲染成黑色，便签彻底不可用。
+
+官方文档给了这条路的定性：`SetParent` 的 MSDN 页面对**跨进程**调用明确写着 "Unexpected behavior or errors may occur"，并把跨进程情形列为会触发子窗口所在进程 DPI 感知被**强制重置**的场景。
+
+不过这里要如实记一笔：**实测并没有观察到 DPI 感知被重置**（进程仍是 `PER_MONITOR_AWARE`），所以变黑的确切机制并未定位。这本身就是"不受支持"的典型表现——它确实坏了，但坏在哪一步无法从文档推出来，也就无从修。社区在这个话题上的共识是同一句话：不要建立跨进程的父子/所有者窗口关系。
+
+**结论：不要重新尝试这条路。** `src/LumiMemo.Infrastructure/Windows/NativeMethods.txt` 的 D.8 段里记着这次实测结论，`WindowManager.ApplyTopMost` 的注释里也留了警告。
+
+### 为什么普通 z 序够不到桌面之上
+
+"显示桌面"把桌面窗口抬到了**置顶档**，而普通 z 序那一档够不到置顶档。三条直觉上可行的路实测全部落空：
+
+| 尝试 | 结果 |
+|---|---|
+| 事后 `SetWindowPos(HWND_TOP, SWP_NOACTIVATE)` | **压不过**——窗口中心处 `WindowFromPoint` 拿到的仍是 `FolderView` |
+| 换到"桌面刚成为前台"的那一刻调用 | **只在头两秒有效**，之后又被盖回去 |
+| 同上，但允许抢焦点 | 唯一"看起来成功"的一次——`focusStolen=YES`，前台被抢回了便签。用户正站在桌面上，接下来的按键会打进便签里 |
+
+**结论：`WS_EX_TOPMOST` 是唯一压得住"显示桌面"的手段。**
+
+### 方案：显示桌面期间临时置顶
+
+`restoreAfterShowDesktop`（§8.2，默认开）打开时，链路两步，全部走公开受支持的 API：
+
+1. **检测**：`SetWinEventHook(EVENT_SYSTEM_FOREGROUND, …)`。桌面窗口成为前台，就是要开始盖住一切了——这时把可见的、非置顶的便签逐个 `SetWindowPos(HWND_TOPMOST, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE)` 提到置顶档。
+2. **撤销**：桌面离开前台时，把上一步提过的那些便签清回普通档。
+
+三个 `SWP_NO*` 标志一个都不能省：`SWP_NOMOVE` / `SWP_NOSIZE` 保证几何不变，`SWP_NOACTIVATE` 保证不抢前台——用户这时候正站在桌面上，抢走焦点意味着接下来的按键会打进便签里。
+
+**撤销之所以是两步。** `HWND_NOTOPMOST` 是唯一能清掉 `WS_EX_TOPMOST` 的手段，可它的语义是"排到**所有**非置顶窗口之上"——只用它清标志，便签会在用户刚点开某个窗口的瞬间反过来盖住那个窗口（实测复现）。所以清完之后要紧接着 `SetWindowPos(hwnd, 新前台, …)` 把它插到那个窗口后面。两步之间不返回消息循环，用户看不到中间态。
+
+顺带记两个把排查带偏的坑：**`HWND_NOTOPMOST` 配 `SWP_NOZORDER` 是死路**——想"只清标志位、不动 z 序"，实测调用返回成功而 `WS_EX_TOPMOST` 纹丝不动，标记位和 z 序是一体的；**把窗口自己当 `hWndInsertAfter` 也是死路**——窗口会落进"已激活却排在别人之下"的非自然状态，之后再也提不上去。
+
+**一个必须特判的例外**：新前台若是**本进程**的窗口，说明这是系统在**还原**被"显示桌面"掀掉的那批窗口（它会先把管理器之类逐个还原，再把前台还给原来那个窗口），而不是用户点了别处。这时只清标志、不动 z 序——否则便签会被插到管理器的后面，等系统把前台还给便签时，它就成了一张*名义上是前台、实际被盖住*的窗口（实测复现）。
+
+**为什么不传 `WINEVENT_SKIPOWNPROCESS`**：用户点回自家的便签时，前台同样离开了桌面，我们也得把临时置顶撤掉。滤掉本进程的事件会让便签在那种情况下永远留在最上层（实测复现）。代价只是多收几次事件，回调里只有两次指针比较。
+
+**这不属于附录 D.8 禁用的 `SetWindowsHookEx`。** 那一条禁的是往别人的消息流里插钩子（会让整个桌面卡顿、还会被安全软件盯上）；`EVENT_SYSTEM_FOREGROUND` 是系统提供的**通知**，只订阅一个事件，而且用 `WINEVENT_OUTOFCONTEXT` 注册——回调走我们自己的消息队列，不注入任何进程。唯一的硬要求是**必须在有消息泵的线程（也就是 UI 线程）上注册**，否则回调永远不会被派发。
+
+**代价**：临时置顶的那一瞬，便签会从别的置顶窗口（如果有）之下换到它们之上，撤回来时也一样。全程不动的只有用户主动置顶那一档。
+
+### 两档语义
+
+| | z 序 | 显示桌面（Win+D） |
+|---|---|---|
+| 不置顶（默认） | 会被普通窗口盖住 | 被桌面盖住，**随即被临时提到置顶档**，桌面退下去时再撤回 |
+| 置顶 | 盖住所有非置顶窗口 | **系统根本不动它**，全程不干预 |
+
+关掉 `restoreAfterShowDesktop`，不置顶那一档就退化成"被桌面盖住就不再管"，只剩置顶一条路——也就是本节早期版本描述的那个世界。
 
 ### 配套的缓解措施
 
-让用户能一键把便签找回来：
+让用户能一键把便签找回来（临时置顶被设置关掉、或某个系统版本上失效时兜底）：
 
 1. **全局热键**：`Ctrl+Alt+N` 恢复所有已打开的便签并激活
 2. **托盘菜单**：第一项就是"显示全部便签"
 3. **双击托盘图标**：等同"显示全部便签"
 
-这三条都是常规实现，成本很低，能实质性消除 Win+D 带来的困扰。
+这三条都是常规实现，成本很低。**尚未实现**——托盘与全局热键都排在当前这一轮之后。
 
 ### 不做的事
 
@@ -2822,11 +2900,14 @@ v2 明确选择**浮在最上层**，接受 Win+D 会最小化便签。这与所
 
 这个 hack 的做法是：拦截该消息，检测到窗口位置被移到 `x = -32000`（系统最小化的标志位置）时把消息标记为已处理来取消最小化。它**不属于受支持的用法**，会在以下情况出问题：
 
-- 用户合法地最小化便签时也取消不掉（需要额外区分"是 Win+D 还是用户点的"）
+- **它和上面那套"临时置顶"是两件完全不同的事，别混起来。** 后者压根不碰最小化：它不撤销系统的任何动作，也不依赖任何未文档化的约定，改的只是自己窗口的 z 序，系统那边记的还原列表从头到尾是自洽的（用户再按一次 Win+D 恢复正常时不会打架）。前者是"撤销系统刚做的动作"，一旦漏掉某种触发路径就会出现状态不一致
+- **对便签来说它更是无从下手**：便签根本不会被"显示桌面"最小化（见本节上方），窗口位置永远到不了 `x = -32000`，这条 hack 连触发条件都不存在
 - 多显示器排列变化、远程桌面切换、UAC 提权时行为不一致
-- 系统更新可能改变这个内部约定
+- 系统更新可能改变 `x == -32000` 这个内部约定——它从未被文档化
 
 **在文档里明确记录这条不做**，避免以后有人"顺手加上"。
+
+**同样不要用 `SetParent` 把便签挂到桌面窗口**——理由与实测数据见本节上方，这条也被记进了附录 D.8。
 
 ## 13.7 点击穿透
 
@@ -3013,7 +3094,8 @@ NoteStore 里的便签数量  ≠  窗口数量
 | 关闭便签窗口 | **保留** | `IsOpen=false` | 可选回收 | 释放 |
 | 删除便签（进回收站） | 移除 | **保留**（`layout` 条目不清除，§8.3） | 销毁 | 释放 |
 | 折叠 | 保留 | `IsCollapsed=true` | 保留（变矮） | 保留 |
-| 隐藏（Win+D 之后） | 保留 | `IsOpen` 不变 | 保留（最小化） | 保留 |
+| 显示桌面（Win+D） | 保留 | `IsOpen` **不变** | 被桌面盖住期间临时置顶（§13.6） | 保留 |
+| 隐藏（托盘"隐藏全部便签"） | 保留 | `IsOpen` 不变 | 保留（`Hide()`，不可见） | 保留 |
 
 **关键：关闭便签窗口 ≠ 删除便签。** 关闭只是"不在桌面上显示"，便签内容仍在文件里、仍在 NoteStore 里、仍能被搜索到。用户右键便签列表可以重新打开。这一点在 v1 中不够明确。
 
@@ -4166,7 +4248,7 @@ HKCU\Software\Microsoft\Windows\CurrentVersion\Run
 
 **用 `HKCU` 而不是 `HKLM`**：`HKLM` 需要管理员权限，便签程序不应该要求提权。
 
-**`--startup` 参数的意义**：开机启动时**不打开任何窗口**，只驻留托盘。用户开机后看到的应该是一个干净的桌面，而不是十几张便签铺满屏幕（尤其是便签本来就在关机前被 Win+D 收起了）。
+**`--startup` 参数的意义**：开机启动时**不打开任何窗口**，只驻留托盘。用户开机后看到的应该是一个干净的桌面，而不是十几张便签铺满屏幕。
 
 **另外，如果任务栏上还残留着上次的布局**，`IsOpen` 为 true 的便签在开机启动时**也不自动打开**——需要用户从托盘点一下。这是 `--startup` 与正常启动的**唯一区别**：
 
@@ -4830,7 +4912,10 @@ await WaitUntilAsync(() => store.Contains(id), timeout: TimeSpan.FromSeconds(5))
   - 拖到屏幕顶部 → 最大化
   - 双击标题条 → 最大化/还原
   - 右键标题条 → 系统菜单出现
-  - Win+D → 便签最小化（预期行为），用托盘恢复
+  - Win+D → 未置顶的便签**仍显示在桌面之上**（临时置顶），且**焦点不被抢走**（前台仍是桌面）
+  - 再按一次 Win+D → 便签的临时置顶被撤掉，且不会反过来盖住刚被还原的窗口
+  - Win+D → 置顶的便签全程纹丝不动、不受任何干预
+  - 把 settings.json 里的 restoreAfterShowDesktop 改成 false 重启 → Win+D 后未置顶的便签被桌面盖住，点回别的窗口才露出来
   - 任务栏缩略图预览正常
 
 [剪贴板]
@@ -4984,7 +5069,7 @@ await WaitUntilAsync(() => store.Contains(id), timeout: TimeSpan.FromSeconds(5))
 ✗ 自动更新（用户手动下载）
 ✗ 全局置顶（盖住全屏应用，§13.5）
 ✗ 便签显示在任务栏的开关（§13.4）
-✗ Win+D 豁免（§13.6）
+✗ Win+D 的"豁免"开关 —— 豁免只有 `WS_EX_TOPMOST` 一条路，已由置顶表达。可配置的是**显示桌面期间的临时置顶**（`restoreAfterShowDesktop`，§8.2、§13.6），那是另一回事，不要把它当豁免开关来理解
 ```
 
 **以上是"不做、且架构上不为它留口子"的清单**——列在这里的意思是：将来若要做，是新增功能，不是"把预留的开关打开"。写代码时不要为它们设计抽象层。
@@ -5327,7 +5412,7 @@ v1 共 122 节，v2 重组为 24 章 + 4 个附录。本节用于迁移：在 v1
 | B7 | 移动便签导致附件路径断裂 | §6.3（移动时重写链接） |
 | B8 | Front Matter `id` 冲突与缺失未定义 | §5.5（生成、补给、冲突处理） |
 | B9 | 未指定 DPI 模式与坐标单位 | §13.8（PerMonitorV2 + 物理像素 + DPI） |
-| B10 | Show Desktop 方案有失败模式 | §13.6（明确不豁免，给缓解措施） |
+| B10 | Show Desktop 方案有失败模式 | §13.6（只有 `WS_EX_TOPMOST` 能压住升起的桌面；不置顶的靠临时上到这一档，另有托盘与热键兜底） |
 | B11 | watcher 事件在非 UI 线程 | §10.6（封送到 UI 线程，含优先级选择） |
 | B12 | `WS_EX_TOOLWINDOW` 生效时机 | §13.4（在 `SourceInitialized` 中设置） |
 | B13 | 托盘图标需指定具体实现 | §15.9（`H.NotifyIcon.Wpf`） |
@@ -5548,8 +5633,7 @@ ConflictViewModel 弹窗
 | `GetWindowRect` | 读取窗口物理像素矩形 | §14.4 |
 | `SetForegroundWindow` / `GetForegroundWindow` | 激活窗口（速记浮窗） | §15.7 |
 | `AttachThreadInput` | 绕过前台锁定，为浮窗抢焦点 | §15.7 |
-| `GetWindowThreadProcessId` / `GetCurrentThreadId` | 配合 `AttachThreadInput` | §15.7 |
-| `ShowWindow` | 恢复最小化的窗口 | §14.3 |
+| `GetWindowThreadProcessId` / `GetCurrentThreadId` | 配合 `AttachThreadInput`；另用于判断某个窗口是否属于本进程 | §15.7、§13.6 |
 
 ## D.2 消息处理
 
@@ -5591,7 +5675,27 @@ ConflictViewModel 弹窗
 | `HwndSource`（非 P/Invoke） | 消息专用窗口，接收 `WM_HOTKEY` | §17.6 |
 | `SetWindowLongPtr(GWLP_HWNDPARENT)` | （备选）设置 Owner，仅在需要时 | §13.10 |
 
-## D.5 进程与单实例
+## D.5 「显示桌面」与前台事件
+
+| API / 常量 | 用途 | 章节 |
+|---|---|---|
+| `SetWinEventHook` / `UnhookWinEvent` | 订阅前台变化，识别「显示桌面」的发生与结束 | §13.6 |
+| `EVENT_SYSTEM_FOREGROUND` | 关心的那一个事件：前台窗口换了 | §13.6 |
+| `WINEVENT_OUTOFCONTEXT` | 回调走本进程的消息队列，不注入任何进程 | §13.6 |
+| `GetShellWindow` | 取桌面窗口（`Progman`），它就是「显示桌面」时的前台 | §13.6 |
+
+> **这一节整个是实测的产物。** §13.6 的早期版本以为「显示桌面」会把便签最小化，据此选了
+> `Window.StateChanged` + `ShowWindow(SW_SHOWNOACTIVATE)` 这条路，`ShowWindow` 一度列在 D.1 里。
+> 实测推翻了那个前提：便签有 owner，系统根本不最小化它，只是被升起的桌面**盖住**。于是需要的
+> 不再是"还原"而是"临时上到置顶档"，判据也从"窗口被最小化了"换成"前台变成了桌面窗口"——
+> 后者只有 `SetWinEventHook` 收得到。
+>
+> **它不属于 D.8 禁用的 `SetWindowsHookEx`。** 那一条禁的是往别人的消息流里插钩子（会让整个桌面
+> 卡顿、还会被安全软件盯上）；`EVENT_SYSTEM_FOREGROUND` 是系统提供的**通知**，配合
+> `WINEVENT_OUTOFCONTEXT` 只订阅事件本身，不注入任何进程。**唯一的硬要求是必须在有消息泵的线程
+> （也就是 UI 线程）上注册**，否则回调永远不会被派发。
+
+## D.6 进程与单实例
 
 | API / 类型 | 用途 | 章节 |
 |---|---|---|
@@ -5600,7 +5704,7 @@ ConflictViewModel 弹窗
 | `Process`（`ProcessStartInfo` + `ShellExecute`） | 打开链接、在资源管理器中显示 | §19.3 |
 | `Microsoft.Win32.Registry`（`HKCU\...\Run`） | 开机自启 | §17.7 |
 
-## D.6 文件系统
+## D.7 文件系统
 
 | API / 类型 | 用途 | 章节 |
 |---|---|---|
@@ -5611,14 +5715,14 @@ ConflictViewModel 弹窗
 | `DriveInfo.DriveType` | 检测网络盘 | §10.5 |
 | `\\?\` 前缀 | 长路径 | §5.10、§19.4 |
 
-## D.7 明确不使用的 API
+## D.8 明确不使用的 API
 
 | API | 为什么不用 | 章节 |
 |---|---|---|
-| `SetParent`（挂到 `Progman`） | 会让窗口永远在最底层，失去便签价值 | §13.6 |
+| `SetParent`（挂到 `Progman`） | **实测**：owner 根本没设上，而窗口整片渲染成纯黑（`PrintWindow` 采样 `#000000` 100%）；跨进程调用本身也不受官方支持 | §13.6 |
 | `WS_EX_LAYERED`（无原型验证时） | 与 WPF 渲染的交互有已知风险 | §13.7 |
 | `WM_WINDOWPOSCHANGING` 取消最小化 | 未公开的内部约定，可能随系统更新失效 | §13.6 |
 | `UpdateLayeredWindow` | 走了 `AllowsTransparency=True` 的老路 | §13.1 |
 | `RegisterShellHookWindow` | 用于监听窗口创建/销毁，本项目无此需求 | — |
-| 全局钩子（`SetWindowsHookEx`） | 需要注入其他进程，杀软敏感、可能触发 UAC/AV 告警 | — |
+| 全局钩子（`SetWindowsHookEx`） | 需要注入其他进程，杀软敏感、可能触发 UAC/AV 告警。**别和 D.5 的 `SetWinEventHook` 混为一谈**：后者是订阅系统的事件通知，配合 `WINEVENT_OUTOFCONTEXT` 回调走本进程消息队列，不注入任何进程 | — |
 | `SHChangeNotifyRegister` | 监听 shell 变更，`FileSystemWatcher` 已足够 | — |

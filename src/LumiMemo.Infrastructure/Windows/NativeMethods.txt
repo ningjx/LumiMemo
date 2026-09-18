@@ -23,7 +23,6 @@ GetForegroundWindow
 AttachThreadInput
 GetWindowThreadProcessId
 GetCurrentThreadId
-ShowWindow
 
 // ---- D.2 消息处理 ----
 // WM_NCHITTEST 命中时先取系统判定结果（§13.3）
@@ -57,6 +56,34 @@ MONITORINFOF_PRIMARY
 RegisterHotKey
 UnregisterHotKey
 
-// ---- D.7 明确不使用的 API ----
+// ---- D.5 「显示桌面」与前台事件（§13.6）----
+// 这一节整体是实测的产物，加/删任何一行前请先看 WindowManager 里那段长注释。
+//
+// 「显示桌面」（Win+D）**不是**最小化：ShowInTaskbar=False 的窗口会被 WPF 挂上一个
+// Hidden Window 当 owner，而桌面**跳过有 owner 的窗口**，所以便签从来没被最小化过
+// （实测：按完 Win+D，管理器 icon=MIN，便签 icon=normal 且 IsWindowVisible 全程为真）。
+// 用户看到的"消失"是便签被升到一切之上的桌面窗口盖住了，点回别的窗口桌面就降下去。
+// 既然最小化根本不存在，原来那条用来还原的 ShowWindow 也就没有用处，已从 D.1 删掉。
+//
+// 普通 z 序够不到桌面之上（实测 SetWindowPos(HWND_TOP) 压不过，换到桌面成为前台的那
+// 一刻调用也只在头两秒有效，而且还会把前台抢回便签）。唯一有效的是临时置顶。
+// 于是这里需要一条告诉"桌面什么时候成为前台"的事件钩子。
+//
+// 它不属于下面 D.8 禁用的 SetWindowsHookEx：那一条禁的是往别人的消息流里插钩子，
+// 而 EVENT_SYSTEM_FOREGROUND + WINEVENT_OUTOFCONTEXT 是订阅系统的事件通知，
+// 回调走本进程的消息队列，不注入任何进程。硬要求是必须在 UI 线程上注册。
+SetWinEventHook
+UnhookWinEvent
+EVENT_SYSTEM_FOREGROUND
+WINEVENT_OUTOFCONTEXT
+GetShellWindow
+
+// ---- D.8 明确不使用的 API ----
 // SetParent、UpdateLayeredWindow、RegisterShellHookWindow、SetWindowsHookEx、
 // SHChangeNotifyRegister —— 理由见附录 D.7，不要因为"用起来更方便"就加进来。
+//
+// SetParent 这一条是实测过的，不是照抄方案：曾用它把不置顶的便签挂到桌面窗口
+// （GetShellWindow 拿到的 Progman）下，想让便签既豁免 Win+D 又被普通窗口盖住。
+// 结果两头落空——实测同一张便签切一次置顶就复现：置顶时渲染正常，
+// 不置顶时整片 #000000（PrintWindow 采样 100% 纯黑），而 owner 从头到尾
+// 都还是 WPF 自己那个 Hidden Window，根本没设上去。原因见附录 D.7。

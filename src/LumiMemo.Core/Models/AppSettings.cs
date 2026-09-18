@@ -55,6 +55,16 @@ public sealed class AppSettings
     [JsonPropertyName("showStatusBar")]
     public bool ShowStatusBar { get; set; } = true;
 
+    /// <summary>
+    /// 「显示桌面」（Win+D）把便签最小化之后，是否立刻把它恢复回来（§13.6）。
+    /// </summary>
+    /// <remarks>
+    /// 默认开：用户按 Win+D 想要的是桌面，而不是「便签没了」。关掉它，便签就与
+    /// 普通窗口一样被收走，只留置顶那一档不变。
+    /// </remarks>
+    [JsonPropertyName("restoreAfterShowDesktop")]
+    public bool RestoreAfterShowDesktop { get; set; } = true;
+
     [JsonPropertyName("startWithWindows")]
     public bool StartWithWindows { get; set; }
 

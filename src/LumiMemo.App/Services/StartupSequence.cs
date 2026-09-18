@@ -43,6 +43,7 @@ public sealed class StartupSequence
     private readonly MarkdownNoteRepository _repository;
     private readonly INoteService _noteService;
     private readonly AutoSaveService _autoSaveService;
+    private readonly WindowManager _windowManager;
     private readonly IFolderPicker _folderPicker;
     private readonly ManagerViewModel _manager;
     private readonly ManagerWindow _managerWindow;
@@ -56,6 +57,7 @@ public sealed class StartupSequence
         MarkdownNoteRepository repository,
         INoteService noteService,
         AutoSaveService autoSaveService,
+        WindowManager windowManager,
         IFolderPicker folderPicker,
         ManagerViewModel manager,
         ManagerWindow managerWindow,
@@ -68,6 +70,7 @@ public sealed class StartupSequence
         ArgumentNullException.ThrowIfNull(repository);
         ArgumentNullException.ThrowIfNull(noteService);
         ArgumentNullException.ThrowIfNull(autoSaveService);
+        ArgumentNullException.ThrowIfNull(windowManager);
         ArgumentNullException.ThrowIfNull(folderPicker);
         ArgumentNullException.ThrowIfNull(manager);
         ArgumentNullException.ThrowIfNull(managerWindow);
@@ -80,6 +83,7 @@ public sealed class StartupSequence
         _repository = repository;
         _noteService = noteService;
         _autoSaveService = autoSaveService;
+        _windowManager = windowManager;
         _folderPicker = folderPicker;
         _manager = manager;
         _managerWindow = managerWindow;
@@ -227,6 +231,7 @@ public sealed class StartupSequence
 
         _layoutService.ShowStatusBar = settings.ShowStatusBar;
         _autoSaveService.DelayMilliseconds = settings.AutoSaveDelayMs;
+        _windowManager.RestoreAfterShowDesktop = settings.RestoreAfterShowDesktop;
     }
 
     /// <summary><c>我的文档\LumiMemo</c>。用户取消选择目录时的退路。</summary>

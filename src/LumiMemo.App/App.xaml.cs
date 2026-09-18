@@ -183,7 +183,10 @@ public partial class App : Application
         // 用例之间不会通过全局状态互相干扰。
         services.AddSingleton<IMessenger>(WeakReferenceMessenger.Default);
 
-        services.AddSingleton<IWindowManager, WindowManager>();
+        // 同时注册具体类型与接口：StartupSequence 要往 RestoreAfterShowDesktop 上推设置值，
+        // 那是具体类型上的属性，不属于 IWindowManager（与上面几个「两个注册指向同一实例」同理）。
+        services.AddSingleton<WindowManager>();
+        services.AddSingleton<IWindowManager>(sp => sp.GetRequiredService<WindowManager>());
         services.AddSingleton<NoteViewModelFactory>();
 
         // ---- 界面 ----
