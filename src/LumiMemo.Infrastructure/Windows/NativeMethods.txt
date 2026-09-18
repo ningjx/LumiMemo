@@ -16,6 +16,8 @@ DwmExtendFrameIntoClientArea
 // 直接写不带后缀的名字会报 PInvoke001。本项目只做 Unicode，因此固定用 W 版本。
 GetWindowLongPtrW
 SetWindowLongPtrW
+// 用它的 WS_EX_TOPMOST 判断某个窗口是不是在置顶档，见 WindowInterop.ClearTopMost。
+WINDOW_EX_STYLE
 SetWindowPos
 GetWindowRect
 SetForegroundWindow

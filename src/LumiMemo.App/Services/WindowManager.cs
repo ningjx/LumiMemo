@@ -424,6 +424,16 @@ public sealed class WindowManager : IWindowManager, IDisposable
     /// 不是用户点了别处，便签只清标志、不动 z 序；否，才是用户真的切走了。
     /// </para>
     /// <para>
+    /// <strong>「显示桌面」有两条入口，前台窗口不一样。</strong>按 Win+D 时前台直接变成
+    /// <c>Progman</c>；点任务栏右下角那个按钮时，前台先经过<strong>置顶的</strong>
+    /// <c>Shell_TrayWnd</c>（实测 60～110ms 之后才落到 <c>Progman</c>，比 Win+D 慢得多）。
+    /// 经过任务栏这一次在前台序列里什么都不用做——它不等于桌面窗口，走的是撤退分支，
+    /// 而彼时 <see cref="_promotedForShowDesktop"/> 还是空的，撤退也是空转。
+    /// 真正的坑在<em>撤退</em>那一步：那时前台正是这个置顶的任务栏，
+    /// 拿它当锚点会把便签一并提拔进置顶档，理由见
+    /// <see cref="WindowInterop.ClearTopMost"/>。
+    /// </para>
+    /// <para>
     /// 这就是 <see cref="RestoreAfterShowDesktop"/> 的落点：关掉它，本方法直接撤退，
     /// 便签与普通窗口无异。
     /// </para>

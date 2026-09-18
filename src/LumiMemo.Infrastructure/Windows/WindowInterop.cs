@@ -96,6 +96,16 @@ public static class WindowInterop
     /// ——标记位和 z 序是一体的，绕不开。
     /// </para>
     /// <para>
+    /// <strong>锚点自己就在置顶档时，第二步必须跳过。</strong>把便签插到一个置顶窗口
+    /// 后面，<c>SetWindowPos</c> 会连带把便签也提拔进置顶档。实测路径是任务栏：点右下角
+    /// 的「显示桌面」按钮时前台是置顶的 <c>Shell_TrayWnd</c>（不像 Win+D 那样前台是
+    /// <c>Progman</c>），于是撤掉临时置顶 3ms 后便签又变回 <c>WS_EX_TOPMOST</c>。
+    /// 更糟的是这个错误的置顶再也撤不掉：<c>PromoteForShowDesktop</c> 会跳过已经置顶的
+    /// 窗口，而 <c>ReleaseTemporaryTopMost</c> 只处理自己提升过的那些。
+    /// 这时只做第一步就够了——<c>HWND_NOTOPMOST</c> 的语义本来就包含
+    /// 「放到所有非置顶窗口之上」，比插到锚点后面更接近我们想要的落点。
+    /// </para>
+    /// <para>
     /// <paramref name="foregroundAnchor"/> 等于 <paramref name="hwnd"/> 时只做第一步：
     /// 用户点的就是这张便签，它本来就该在最上面，把"自己插到自己后面"没有意义。
     /// </para>
@@ -121,7 +131,17 @@ public static class WindowInterop
             return cleared;
         }
 
+        if (IsTopMost(foregroundAnchor))
+        {
+            return cleared;
+        }
+
         return PInvoke.SetWindowPos(new HWND(hwnd), new HWND(foregroundAnchor), 0, 0, 0, 0, MoveNothing)
             && cleared;
     }
+
+    /// <summary>窗口是否在置顶档（带 <c>WS_EX_TOPMOST</c>）。</summary>
+    private static bool IsTopMost(IntPtr hwnd) =>
+        (PInvoke.GetWindowLongPtr(new HWND(hwnd), WINDOW_LONG_PTR_INDEX.GWL_EXSTYLE)
+            & (nint)WINDOW_EX_STYLE.WS_EX_TOPMOST) != 0;
 }
