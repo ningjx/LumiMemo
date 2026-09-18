@@ -79,6 +79,15 @@ public sealed class Note
     public bool HadBom { get; set; }
 
     /// <summary>
+    /// 结束分隔符之后、正文之前的结构形态。写回时据此逐字节还原（§5.2、§5.9）。
+    /// </summary>
+    /// <remarks>
+    /// 语义与存在理由见 <see cref="FrontMatterTail"/>。新建便签保持默认值即可，
+    /// 那正是 §5.2 定义的标准形态。
+    /// </remarks>
+    public FrontMatterTail FrontMatterTail { get; set; } = FrontMatterTail.LineBreakAndBlankLine;
+
+    /// <summary>
     /// Front Matter 中本程序不认识的键，解析时保留、写回时原样输出（§5.3）。
     /// </summary>
     /// <remarks>

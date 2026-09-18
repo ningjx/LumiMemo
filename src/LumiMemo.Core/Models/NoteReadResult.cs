@@ -25,6 +25,14 @@ public sealed class NoteReadResult
     public bool HadBom { get; init; }
 
     /// <summary>
+    /// 结束分隔符之后、正文之前的结构形态。写回时据此逐字节还原（§5.2、§5.9）。
+    /// </summary>
+    /// <remarks>
+    /// 它是「四者原样保留」中「末尾换行」的那一角，理由见 <see cref="FrontMatterTail"/>。
+    /// </remarks>
+    public FrontMatterTail FrontMatterTail { get; init; } = FrontMatterTail.LineBreakAndBlankLine;
+
+    /// <summary>
     /// Front Matter 中本程序不认识的键，解析时保留、写回时按原顺序输出（§5.3）。
     /// </summary>
     /// <remarks>

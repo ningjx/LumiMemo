@@ -23,6 +23,8 @@
     <PackageReference Include="YamlDotNet" />
     <!-- §2.2：从 Windows 元数据生成 P/Invoke，避免手写签名的 32/64 位陷阱 -->
     <PackageReference Include="Microsoft.Windows.CsWin32" PrivateAssets="all" />
+    <!-- 仓储层记录解析降级等事件。理由见 Directory.Packages.props 里的说明。 -->
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
   </ItemGroup>
 
   <ItemGroup>
