@@ -8,6 +8,7 @@ using LumiMemo.Core.Abstractions;
 using LumiMemo.Core.Services;
 using LumiMemo.Core.Stores;
 using LumiMemo.Infrastructure.Io;
+using LumiMemo.Infrastructure.Logging;
 using LumiMemo.Infrastructure.Settings;
 using LumiMemo.Infrastructure.Storage;
 using LumiMemo.Infrastructure.Trash;
@@ -209,11 +210,15 @@ public partial class App : Application
         var services = new ServiceCollection();
 
         // ---- 日志 ----
-        // 暂时不挂 provider：控制台与调试输出在用户双击 exe 时都看不见，
-        // 而写到文件需要一套带滚动的文件日志器，那是独立的一块工作。
-        // 现在挂一个半成品只会掩盖真正的启动问题。
-        // 注意：这不影响正确性——所有 ILogger 调用都照常执行，只是没人接收。
-        services.AddLogging();
+        // 落到 %LOCALAPPDATA%\LumiMemo\logs\（§20.5）。注册成容器里的 ILoggerProvider
+        // 而不是在这里直接 AddProvider(实例)：这样释放它的就是容器，而容器的释放在
+        // ShutdownAndWait 之后——退出前那几条日志因此还能被写下去。
+        //
+        // 不挂控制台/调试输出：用户双击 exe 时那两处都看不见，等于没写。
+        services.AddLogging(builder => builder.Services.AddSingleton<ILoggerProvider>(
+            sp => new FileLoggerProvider(
+                paths.LogDirectory,
+                sp.GetRequiredService<IClock>())));
 
         // ---- 环境 ----
         services.AddSingleton<IClock, SystemClock>();

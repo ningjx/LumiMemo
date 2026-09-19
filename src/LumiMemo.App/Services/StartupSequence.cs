@@ -122,6 +122,14 @@ public sealed class StartupSequence : ISettingsApplier
     /// </remarks>
     public async Task RunAsync(CancellationToken ct = default)
     {
+        // 先记下三条路径：用户来问「程序到底在用哪个目录」时，日志本身要能回答
+        // 「日志在哪、设置在哪」——否则第一条线索就没有落点。
+        _logger.LogInformation(
+            "LumiMemo 启动：设置文件 {SettingsFile}，设备状态目录 {Root}，日志目录 {LogDirectory}。",
+            _paths.SettingsFile,
+            _paths.LocalAppDataRoot,
+            _paths.LogDirectory);
+
         // §17.1 第 2 步：载入 settings.json。任何异常都已经在存储层降级成默认值了。
         AppSettings settings = await _settingsStore.LoadAsync(ct);
 
@@ -191,8 +199,15 @@ public sealed class StartupSequence : ISettingsApplier
     /// </summary>
     /// <remarks>
     /// <para>
+    /// <strong>这里是笔记目录的唯一来源</strong>（<c>MarkdownNoteRepository</c> 每次扫描都现读
+    /// <c>IAppPaths.NotesFolder</c>，别处没有任何地方能改它）。两条路都留下了一行日志：
+    /// 「程序为什么在用这个目录」这个问题，答案只可能来自这里，而它以前只存在于内存里。
+    /// </para>
+    /// <para>
     /// 「配过但目录已经不在了」（U 盘拔了、网盘离线）与「从没配过」走同一条路，
-    /// 都去问用户。区别只在传给文件夹选择框的初始位置不同。
+    /// 都去问用户。区别只在传给文件夹选择框的初始位置不同：前者尽量落在
+    /// 那个已经不存在的路径<strong>附近</strong>（最近的一个还在的祖先目录），
+    /// 后者交给系统默认。
     /// </para>
     /// <para>
     /// <strong>用户取消时的退路文档里没定义</strong>（原设计的向导有「使用默认位置」按钮）。
@@ -207,28 +222,28 @@ public sealed class StartupSequence : ISettingsApplier
         {
             _paths.SetNotesFolder(settings.NotesFolder);
 
+            _logger.LogInformation(
+                "笔记目录：设置里记的是 {Folder}，该目录存在，直接使用，settings.json 不改。",
+                settings.NotesFolder);
+
             return;
         }
 
-        string? initialDirectory = Directory.Exists(settings.NotesFolder)
-            ? settings.NotesFolder
-            : null;
+        bool recorded = !string.IsNullOrWhiteSpace(settings.NotesFolder);
 
-        if (!string.IsNullOrWhiteSpace(settings.NotesFolder))
-        {
-            _logger.LogInformation(
-                "设置里记的笔记目录 {Folder} 已不存在，重新询问。",
-                settings.NotesFolder);
-        }
+        // 初始位置取「设置里那个路径附近最近的一个还在的目录」。直接拿设置里的路径是不行的：
+        // 走到这里就说明它已经不在了，把不存在的路径交给选择框等于让它自己挑一个默认位置。
+        string? initialDirectory = NearestExistingDirectory(settings.NotesFolder);
+
+        _logger.LogInformation(
+            "笔记目录：设置里记的是 {Recorded}（{Reason}），需要重新选择；选择框初始位置 {Initial}。",
+            recorded ? settings.NotesFolder : "（空）",
+            recorded ? "该目录已不存在" : "从来没配过",
+            initialDirectory ?? "（系统默认）");
 
         string? picked = _folderPicker.PickFolder("选择存放便签的文件夹", initialDirectory);
 
         string folder = picked ?? DefaultNotesFolder();
-
-        if (picked is null)
-        {
-            _logger.LogInformation("用户取消了目录选择，改用默认目录 {Folder}。", folder);
-        }
 
         // 目录可能是刚刚手输进去的、也可能压根不存在的路径，建出来。
         Directory.CreateDirectory(folder);
@@ -238,6 +253,42 @@ public sealed class StartupSequence : ISettingsApplier
 
         // 立刻存一次：用户下次启动不该被再问一遍。
         await _settingsStore.SaveAsync(settings, ct);
+
+        // 写在 SaveAsync 之后：这一行说的是「已经写回磁盘」，先写日志后写文件就成了假话。
+        _logger.LogInformation(
+            "笔记目录：本次使用 {Folder}（来源：{Source}），已写回 settings.json。",
+            folder,
+            picked is null ? "默认位置（用户取消了选择）" : "用户选择");
+    }
+
+    /// <summary>
+    /// 从给定路径往上找第一个真实存在的目录；一个都不存在时返回 <see langword="null"/>。
+    /// </summary>
+    /// <remarks>
+    /// 只用于给文件夹选择框挑一个合理的初始位置。空值、写错的值、只剩盘符的路径
+    /// 都在预期之内——它不参与任何决策，所以任何异常输入都只需返回 <see langword="null"/>。
+    /// </remarks>
+    private static string? NearestExistingDirectory(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return null;
+        }
+
+        string? current = path;
+
+        // 有界循环：Windows 路径最多几十层，多给几倍余量即可，绝不写成 while(true)。
+        for (int depth = 0; depth < 64 && !string.IsNullOrEmpty(current); depth++)
+        {
+            if (Directory.Exists(current))
+            {
+                return current;
+            }
+
+            current = Path.GetDirectoryName(current);
+        }
+
+        return null;
     }
 
     /// <summary>
