@@ -48,10 +48,7 @@ public sealed class AppSettings
     [JsonPropertyName("defaultHeight")]
     public double DefaultHeight { get; set; } = 420;
 
-    [JsonPropertyName("defaultContentScale")]
-    public double DefaultContentScale { get; set; } = 1.0;
-
-    /// <summary>便签底部的「已保存 / 字数 / 缩放」状态条是否显示（§15.2）。</summary>
+    /// <summary>便签底部的「已保存 / 字数」状态条是否显示（§15.2）。</summary>
     [JsonPropertyName("showStatusBar")]
     public bool ShowStatusBar { get; set; } = true;
 

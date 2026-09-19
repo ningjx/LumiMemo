@@ -17,7 +17,7 @@ namespace LumiMemo.App.ViewModels;
 /// </para>
 /// <list type="bullet">
 ///   <item><c>Content</c> / <c>Color</c> / <c>Tags</c> 属于 <see cref="Note"/>，落盘到 Markdown。</item>
-///   <item><c>IsCollapsed</c> / <c>IsTopMost</c> / <c>IsLocked</c> / <c>ContentScale</c> 属于
+///   <item><c>IsCollapsed</c> / <c>IsTopMost</c> / <c>IsLocked</c> 属于
 ///   <see cref="NoteLayout"/>，落盘到 <c>layout.json</c>。</item>
 ///   <item><see cref="SaveStatus"/> / <see cref="IsComposing"/> / <see cref="IsDirty"/> /
 ///   <see cref="CaretIndex"/> 只属于本类，<strong>绝不落盘</strong>。</item>
@@ -80,7 +80,6 @@ public sealed partial class NoteViewModel : ObservableObject, IDisposable
         _isCollapsed = layout.IsCollapsed;
         _isTopMost = layout.IsTopMost;
         _isLocked = layout.IsLocked;
-        _contentScale = layout.ContentScale;
 
         // 别处（管理器的右键菜单）改了这张便签的置顶时，把镜像跟过去。
         // 少这一条的话，窗口既不真的置顶、按钮也还显示着旧状态——用户再点一下反而取消了。
@@ -171,10 +170,6 @@ public sealed partial class NoteViewModel : ObservableObject, IDisposable
     /// <summary>是否锁定（锁定后不可编辑、不可拖动）。</summary>
     [ObservableProperty]
     private bool _isLocked;
-
-    /// <summary>内容缩放比例，0.5 ~ 2.0（§15.5）。</summary>
-    [ObservableProperty]
-    private double _contentScale;
 
     // ------------------------------------------------------------------
     // 第三类：纯 UI 临时状态，绝不落盘（§18.1）

@@ -65,7 +65,6 @@ public sealed class JsonSettingsStoreTests
             DefaultColor = NoteColor.Purple,
             DefaultWidth = 400.5,
             DefaultHeight = 500.25,
-            DefaultContentScale = 1.3,
             ShowStatusBar = false,
             RestoreAfterShowDesktop = false,
             StartWithWindows = true,
@@ -91,7 +90,6 @@ public sealed class JsonSettingsStoreTests
         Assert.Equal(saved.DefaultColor, loaded.DefaultColor);
         Assert.Equal(saved.DefaultWidth, loaded.DefaultWidth);
         Assert.Equal(saved.DefaultHeight, loaded.DefaultHeight);
-        Assert.Equal(saved.DefaultContentScale, loaded.DefaultContentScale);
         Assert.Equal(saved.ShowStatusBar, loaded.ShowStatusBar);
         Assert.Equal(saved.RestoreAfterShowDesktop, loaded.RestoreAfterShowDesktop);
         Assert.Equal(saved.StartWithWindows, loaded.StartWithWindows);
@@ -332,7 +330,6 @@ public sealed class JsonSettingsStoreTests
         // §8.4：新增字段必须有默认值，老配置文件读进来后用默认值。
         Assert.Equal(360, settings.DefaultWidth);
         Assert.Equal(420, settings.DefaultHeight);
-        Assert.Equal(1.0, settings.DefaultContentScale);
         Assert.True(settings.ShowStatusBar);
         Assert.True(settings.MinimizeToTrayOnClose);
         Assert.Equal("toggleManager", settings.SingleClickTrayAction);

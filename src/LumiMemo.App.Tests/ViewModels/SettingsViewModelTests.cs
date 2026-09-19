@@ -37,7 +37,6 @@ public sealed class SettingsViewModelTests
         {
             DefaultWidth = 500,
             DefaultHeight = 600,
-            DefaultContentScale = 1.25,
             ShowStatusBar = false,
             RestoreAfterShowDesktop = false,
             AutoSaveDelayMs = 700,
@@ -49,7 +48,6 @@ public sealed class SettingsViewModelTests
 
         Assert.Equal(500d, h.Vm.DefaultWidth);
         Assert.Equal(600d, h.Vm.DefaultHeight);
-        Assert.Equal(1.25, h.Vm.ContentScale);
         Assert.False(h.Vm.ShowStatusBar);
         Assert.False(h.Vm.RestoreAfterShowDesktop);
         Assert.Equal(700, h.Vm.AutoSaveDelayMs);
@@ -104,7 +102,6 @@ public sealed class SettingsViewModelTests
 
         h.Vm.DefaultWidth = 5;
         h.Vm.DefaultHeight = 99999;
-        h.Vm.ContentScale = 12;
         h.Vm.AutoSaveDelayMs = 5000;
         h.Vm.SearchDebounceMs = 1;
 
@@ -112,7 +109,6 @@ public sealed class SettingsViewModelTests
 
         Assert.Equal(SettingsViewModel.MinDefaultSize, h.Vm.DefaultWidth);
         Assert.Equal(SettingsViewModel.MaxDefaultSize, h.Vm.DefaultHeight);
-        Assert.Equal(SettingsViewModel.MaxContentScale, h.Vm.ContentScale);
         Assert.Equal(JsonSettingsStore.MaxAutoSaveDelayMs, h.Vm.AutoSaveDelayMs);
         Assert.Equal(JsonSettingsStore.MinSearchDebounceMs, h.Vm.SearchDebounceMs);
     }

@@ -32,16 +32,15 @@ public sealed class NoteViewModelTests
     }
 
     [Fact]
-    public void 构造_折叠置顶锁定缩放取自Layout()
+    public void 构造_折叠置顶锁定取自Layout()
     {
-        var layout = CreateLayout(isCollapsed: true, isTopMost: true, isLocked: true, contentScale: 1.5);
+        var layout = CreateLayout(isCollapsed: true, isTopMost: true, isLocked: true);
 
         var vm = CreateViewModel(CreateNote("# 标题"), layout);
 
         Assert.True(vm.IsCollapsed);
         Assert.True(vm.IsTopMost);
         Assert.True(vm.IsLocked);
-        Assert.Equal(1.5, vm.ContentScale);
     }
 
     [Fact]
@@ -213,14 +212,12 @@ public sealed class NoteViewModelTests
     private static NoteLayout CreateLayout(
         bool isCollapsed = false,
         bool isTopMost = false,
-        bool isLocked = false,
-        double contentScale = 1.0) =>
+        bool isLocked = false) =>
         new()
         {
             NoteId = Guid.NewGuid(),
             IsCollapsed = isCollapsed,
             IsTopMost = isTopMost,
             IsLocked = isLocked,
-            ContentScale = contentScale,
         };
 }

@@ -139,13 +139,6 @@
               <TextBlock Text="DIP" Style="{StaticResource FieldLabel}" Margin="8,0,0,0" />
             </StackPanel>
 
-            <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
-              <TextBlock Text="内容缩放" Style="{StaticResource FieldLabel}" />
-              <TextBox Style="{StaticResource FieldBox}"
-                       Text="{Binding ContentScale, UpdateSourceTrigger=PropertyChanged}" />
-              <TextBlock Text="倍" Style="{StaticResource FieldLabel}" Margin="8,0,0,0" />
-            </StackPanel>
-
             <CheckBox Content="显示状态条"
                       IsChecked="{Binding ShowStatusBar}"
                       Margin="0,4,0,6" />

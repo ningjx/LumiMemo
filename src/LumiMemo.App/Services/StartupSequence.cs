@@ -323,7 +323,6 @@ public sealed class StartupSequence : ISettingsApplier
 
         _layoutStore.DefaultWidth = settings.DefaultWidth;
         _layoutStore.DefaultHeight = settings.DefaultHeight;
-        _layoutStore.DefaultContentScale = settings.DefaultContentScale;
 
         _repository.DefaultColor = settings.DefaultColor;
 

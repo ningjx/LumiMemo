@@ -60,9 +60,6 @@ public sealed class NoteLayout
     /// </remarks>
     public double ExpandedHeight { get; set; } = 420;
 
-    /// <summary>内容缩放比例，0.5 ~ 2.0，步进 0.1（§15.5）。每张便签独立记忆。</summary>
-    public double ContentScale { get; set; } = 1.0;
-
     public bool IsCollapsed { get; set; }
 
     public bool IsTopMost { get; set; }

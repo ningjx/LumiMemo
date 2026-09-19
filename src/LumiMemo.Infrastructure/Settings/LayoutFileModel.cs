@@ -137,9 +137,6 @@ internal sealed class NoteEntry
     [JsonPropertyName("expandedHeight")]
     public double ExpandedHeight { get; set; } = 420;
 
-    [JsonPropertyName("contentScale")]
-    public double ContentScale { get; set; } = 1.0;
-
     [JsonPropertyName("isCollapsed")]
     public bool IsCollapsed { get; set; }
 
@@ -163,7 +160,6 @@ internal sealed class NoteEntry
             Height = layout.Height,
             Dpi = layout.Dpi,
             ExpandedHeight = layout.ExpandedHeight,
-            ContentScale = layout.ContentScale,
             IsCollapsed = layout.IsCollapsed,
             IsTopMost = layout.IsTopMost,
             IsLocked = layout.IsLocked,
@@ -182,7 +178,6 @@ internal sealed class NoteEntry
         Height = Height,
         Dpi = Dpi,
         ExpandedHeight = ExpandedHeight,
-        ContentScale = ContentScale,
         IsCollapsed = IsCollapsed,
         IsTopMost = IsTopMost,
         IsLocked = IsLocked,

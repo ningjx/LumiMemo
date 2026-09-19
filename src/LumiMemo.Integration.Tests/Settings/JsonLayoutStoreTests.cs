@@ -62,14 +62,12 @@ public sealed class JsonLayoutStoreTests
 
         store.DefaultWidth = 400;
         store.DefaultHeight = 500;
-        store.DefaultContentScale = 1.25;
 
         NoteLayout layout = store.GetOrCreate(NoteId);
 
         Assert.Equal(400, layout.Width);
         Assert.Equal(500, layout.Height);
         Assert.Equal(500, layout.ExpandedHeight);
-        Assert.Equal(1.25, layout.ContentScale);
         Assert.Equal(0, layout.X);
         Assert.Equal(0, layout.Y);
 
@@ -209,8 +207,7 @@ public sealed class JsonLayoutStoreTests
         layout.Y = 0.125;
         layout.Width = 360.75;
         layout.Height = 419.375;
-        layout.ExpandedHeight = 419.375;
-        layout.ContentScale = 1.1000000000000001;
+        layout.ExpandedHeight = 419.1000000000001;
 
         await store.FlushAsync(Ct);
         var (reloaded, _) = CreateStore(local);
@@ -223,7 +220,7 @@ public sealed class JsonLayoutStoreTests
         Assert.Equal(0.125, roundTripped.Y);
         Assert.Equal(360.75, roundTripped.Width);
         Assert.Equal(419.375, roundTripped.Height);
-        Assert.Equal(1.1000000000000001, roundTripped.ContentScale);
+        Assert.Equal(419.1000000000001, roundTripped.ExpandedHeight);
     }
 
     [Fact]
@@ -396,7 +393,6 @@ public sealed class JsonLayoutStoreTests
         Assert.Equal(360, layout.Width);
         Assert.Equal(420, layout.Height);
         Assert.Equal(96u, layout.Dpi);
-        Assert.Equal(1.0, layout.ContentScale);
         Assert.True(layout.IsOpen);
     }
 

@@ -73,9 +73,6 @@ public sealed class JsonLayoutStore : ILayoutStore
     /// <inheritdoc cref="DefaultWidth" />
     public double DefaultHeight { get; set; } = 420;
 
-    /// <inheritdoc cref="DefaultWidth" />
-    public double DefaultContentScale { get; set; } = 1.0;
-
     /// <inheritdoc />
     /// <remarks>
     /// 文件不存在是<strong>正常的首发状态</strong>，不是错误：什么都不做，
@@ -157,7 +154,6 @@ public sealed class JsonLayoutStore : ILayoutStore
             Width = DefaultWidth,
             Height = DefaultHeight,
             ExpandedHeight = DefaultHeight,
-            ContentScale = DefaultContentScale,
         };
 
         _layouts[noteId] = created;

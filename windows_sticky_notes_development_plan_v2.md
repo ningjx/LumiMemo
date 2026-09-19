@@ -44,7 +44,7 @@ v1 → v2 的逐节对照见 [附录 A](#附录-a-v1--v2-章节对照)，评审�
 | **管理器** | ManagerWindow | 用来搜索、浏览、整理的普通应用窗口（见 §15.8） |
 | **速记浮窗** | QuickCaptureWindow | 全局快捷键呼出的临时输入浮窗（见 §15.7） |
 | **消息窗口** | MessageWindow | 一个 `HWND_MESSAGE` 消息专用窗口，用于接收 `WM_HOTKEY`。**不是隐藏的顶层窗口**——v2 没有宿主窗口，理由见 §13.10 |
-| **设备状态** | DeviceState | 窗口坐标、折叠、置顶、缩放比例等"只对当前这台电脑有意义"的状态 |
+| **设备状态** | DeviceState | 窗口坐标、折叠、置顶等"只对当前这台电脑有意义"的状态 |
 | **用户数据** | UserData | 便签正文、标签、颜色等"跟着用户走"的内容 |
 
 ---
@@ -68,10 +68,10 @@ v1 → v2 的逐节对照见 [附录 A](#附录-a-v1--v2-章节对照)，评审�
 | 始终置顶、锁定 | 一期 | §13.5、§13.7 |
 | 全局快捷键 + **速记浮窗** | 一期 | §15.7、§17.6 |
 | 外部文件监听 | 一期 | §10 |
-| **内容缩放（A+/A−）** | 一期 | §15.5 |
+| **内容缩放（A+/A−）** | **已剔除** | §15.5（已作废） |
 | 多显示器与 DPI 变化的正确处理 | 一期 | §13.8、§14.5 |
 | 图片附件 | 一期 | §6.1–§6.3 |
-| 深色模式跟随系统 | 一期 | §15.3 |
+| 深色模式跟随系统 | **推迟到界面重构那一轮** | §15.3 |
 | Markdown 预览 | 二期 | §16.7 |
 | 编辑器交互助手（列表延续、Tab 缩进） | 二期 | §16.2 |
 | 外部冲突的差异视图 | 二期 | §11.4 |
@@ -82,6 +82,16 @@ v1 → v2 的逐节对照见 [附录 A](#附录-a-v1--v2-章节对照)，评审�
 | 便签组（"小分队"） | 三期（可选） | §15.11、§22.4 |
 | 批量操作、列表内拖拽排序 | 三期 | §22.4 |
 | 多语言（i18n） | 三期 | §22.4 |
+
+### 本轮拍板的三项范围裁决
+
+功能开发收尾阶段逐条定下，**推翻本表与下文几处的原始写法**：
+
+| 裁决 | 内容 |
+|---|---|
+| **内容缩放整条剔除** | 「内容缩放（A+/A−）」不需要，**整个功能删掉**，不是推迟。为什么不是推迟：它已经在 `NoteLayout` / `AppSettings` / layout.json / settings.json 里占了好几个字段，而「每张便签各自记忆」这一条把它绑进了布局持久化——留着一个没有入口的字段，等于给后来的人留一个「文档说要做」的假线索。代码里对应的四处已一并删除，详见 §15.5 |
+| **退出失败提示剔除** | 保存一张便签很快，没有必要为它挡一次退出再加一个三选一对话框。退出只做 flush，失败写一条 Error 日志，详见 §11.5 |
+| **深色模式与一切样式内容推迟** | 深色模式不是独立功能，它是「界面整体改成透明毛玻璃」的一部分——配色、每色深色变体、`DynamicResource` 都取决于毛玻璃之后纸面的颜色怎么定，现在做等于白干。**所有样式相关的工作（含 §15.3 的深色变体、§15.10 的 `Colors.xaml` 深色套）统推到界面重构那一轮**，详见 §15.3 |
 
 ### 明确不做（且在架构上不预留）
 
@@ -1432,7 +1442,6 @@ public interface IAppPaths
   "defaultColor": "yellow",
   "defaultWidth": 360,
   "defaultHeight": 420,
-  "defaultContentScale": 1.0,
   "showStatusBar": true,
   "restoreAfterShowDesktop": true,
   "startWithWindows": true,
@@ -1459,7 +1468,7 @@ public interface IAppPaths
 | `notesFolder` | 空字符串表示"尚未选择"，启动时进入首次运行向导（§8.6） |
 | `attachmentsFolderName` | 相对的目录名，**不含路径分隔符**（校验见 §19.4） |
 | `theme` | `system` / `light` / `dark`。默认跟随系统（§15.3） |
-| `showStatusBar` | 便签底部的"已保存 / 字数 / 缩放"状态条是否显示（§15.2） |
+| `showStatusBar` | 便签底部的"已保存 / 字数"状态条是否显示（§15.2） |
 | `restoreAfterShowDesktop` | 「显示桌面」（Win+D）期间是否把不置顶的便签临时提到置顶档，让它们不被升起的桌面盖住，**默认 `true`**。关掉则便签被桌面盖住后就不再管，要等用户点回别的窗口才露出来。机制见 §13.6 |
 | `minimizeToTrayOnClose` | 关闭**管理器窗口**时的行为：true = 收进托盘，false = 退出应用。**只影响管理器窗口**，便签窗口的关闭语义固定（§17.3） |
 | `singleClickTrayAction` | 托盘图标的单击行为：`toggleManager` / `newNote` / `showAllNotes` |
@@ -1497,7 +1506,6 @@ public interface IAppPaths
       "width": 380,
       "height": 460,
       "expandedHeight": 460,
-      "contentScale": 1.0,
       "isCollapsed": false,
       "isTopMost": false,
       "isLocked": false
@@ -1512,7 +1520,6 @@ public interface IAppPaths
 |---|---|
 | **`isOpen`** | v1 最大的数据模型缺口：`NoteLayout` 和 `layout.json` 都没有记录"这张便签退出时是打开的"，但 v1 §45 要求启动时"恢复需要显示的窗口"、v1 §63 要求只给可见便签建窗口。**没有这个字段，会话恢复无法实现**。这是 v2 新增的最重要字段 |
 | **`expandedHeight`** | v1 只有 `Height`。折叠时如果改 `Height`，展开就不知道原高度；如果不改 `Height`，窗口真实尺寸与视觉尺寸不一致，会污染工作区夹取与显示器判定（§15.2） |
-| **`contentScale`** | 每张便签独立记忆内容缩放比例（§15.5） |
 | **`displayId` + `displays`** | 用稳定的显示器设备路径而不是 `\\.\DISPLAY1`。设备名在热插拔/重启后可能被重新分配（§13.8） |
 
 ### 坐标单位
@@ -1609,12 +1616,11 @@ v1 定义了 `SaveLayout(noteId)` 这样的按便签保存接口，但 `layout.j
   1. 窗口移动/缩放结束（WM_EXITSIZEMOVE）
   2. 折叠/展开切换完成
   3. 置顶/锁定切换
-  4. 内容缩放改变
-  5. 便签打开/关闭
-  6. 应用退出前（必须，同步执行）
+  4. 便签打开/关闭
+  5. 应用退出前（必须，同步执行）
 
 节流规则：
-  - 前 5 项触发时，设置一个 1 秒的 DispatcherTimer
+  - 前 4 项触发时，设置一个 1 秒的 DispatcherTimer
   - 定时器到期时执行一次整文件写入
   - 期间多次触发只写一次（自然合并）
   - 退出时绕过节流，立即同步写入
@@ -1839,16 +1845,13 @@ public sealed class NoteLayout
     /// <summary>展开状态下的高度。折叠时 Height 变成标题条高度，展开时恢复为此值（§15.2）。</summary>
     public double ExpandedHeight { get; set; } = 420;
 
-    /// <summary>内容缩放比例，0.5 ~ 2.0，步进 0.1（§15.5）。</summary>
-    public double ContentScale { get; set; } = 1.0;
-
     public bool IsCollapsed { get; set; }
     public bool IsTopMost { get; set; }
     public bool IsLocked { get; set; }
 }
 ```
 
-**注意与 v1 的差异**：v1 §12 用 `Collapsed` / `AlwaysOnTop` / `Locked`，v1 §93 用 `IsCollapsed` / `IsTopMost` / `IsLocked`。v2 统一为 §93 的写法（`Is` 前缀），并补齐 `IsOpen`、`Dpi`、`ExpandedHeight`、`ContentScale`、`DisplayId`。
+**注意与 v1 的差异**：v1 §12 用 `Collapsed` / `AlwaysOnTop` / `Locked`，v1 §93 用 `IsCollapsed` / `IsTopMost` / `IsLocked`。v2 统一为 §93 的写法（`Is` 前缀），并补齐 `IsOpen`、`Dpi`、`ExpandedHeight`、`DisplayId`。
 
 **`Dpi` 为什么是每便签一个而不是每显示器一个**：`layout.json` 的 `displays` 表记录的是"每台显示器**当前**的 DPI"，会随用户改缩放设置而变；而 `NoteLayout.Dpi` 记录的是"这份布局**保存时**的 DPI"，是一个历史快照，两者必须分开。窗口摆位只依赖后者（§13.8）；前者仅用于诊断与显示器识别。**不要用 `displays[displayId].dpi` 去算缩放**。
 
@@ -1899,7 +1902,6 @@ public sealed class AppSettings
     [JsonPropertyName("defaultColor")]         public NoteColor DefaultColor { get; set; } = NoteColor.Yellow;
     [JsonPropertyName("defaultWidth")]         public double DefaultWidth { get; set; } = 360;
     [JsonPropertyName("defaultHeight")]        public double DefaultHeight { get; set; } = 420;
-    [JsonPropertyName("defaultContentScale")]  public double DefaultContentScale { get; set; } = 1.0;
     [JsonPropertyName("showStatusBar")]        public bool ShowStatusBar { get; set; } = true;
     [JsonPropertyName("restoreAfterShowDesktop")] public bool RestoreAfterShowDesktop { get; set; } = true;
 
@@ -2418,7 +2420,7 @@ if (_vm.IsComposing) return;    // 组合期不安排保存
 
 | 错误 | 处理 |
 |---|---|
-| 文件只读 | 提示"文件为只读，是否移除只读属性？"，提供一键移除 |
+| 文件只读 | 提示"文件为只读，是否移除只读属性？"，提供一键移除（**这一条与本节其他几项一样尚未落地，见 §11.5 末的说明**） |
 | 目录无权限 | 提示路径与可能的解决方向；建议检查笔记目录是否可以更换 |
 | 文件被占用 | 自动重试（1s/3s/10s）。持续失败则提示"文件可能被其他程序占用" |
 | 磁盘满 | 提示"磁盘空间不足"，并在状态栏保留"未保存"直到用户处理 |
@@ -2428,18 +2430,16 @@ if (_vm.IsComposing) return;    // 组合期不安排保存
 
 ### 退出时的处理
 
-**退出前必须 flush 所有待保存内容**（§17.4）。如果 flush 时仍有保存失败：
+**退出前必须 flush 所有待保存内容**（§17.4）。**flush 失败也照退，不弹窗、不拦人。**
 
-```text
-┌─────────────────────────────────────────────┐
-│  有 2 张便签未能保存                          │
-│                                             │
-│  [ 重试 ]  [ 另存为... ]  [ 仍然退出 ]        │
-└─────────────────────────────────────────────┘
-```
+原设计在这里放了一个「有 N 张便签未能保存 / [重试] [另存为...] [仍然退出]」的三选一对话框。**已剔除**：保存一张便签是一次几毫秒的原子写，为它挡在退出的路上、再让用户读一个三选一的框，交互成本远大于它挡下的那点风险。用户按了退出就是想退出。
 
-- "另存为"把未保存的内容写到一个用户选择的位置
-- "仍然退出"要求用户明确承担丢失风险，**不做默认选项**
+失败时只做两件事：
+
+- **写一条 Error 日志**（§20.5 的日志落盘已接上），带上便签 id 与失败原因——这是事后唯一还查得到的东西
+- 那张便签的**内存内容不丢**：它的 `Note` 仍在 `NoteStore` 里，`SaveStatus` 仍是 `Failed`。也就是说，同一个会话里若之后又有一次保存成功（用户回去改了别的字，或者自动保存去抖的下一次触发），它会跟着写下去
+
+**本节其余几项仍未定**：上面那张「常见错误与针对性处理」表里的顶部警示条、只读文件的一键移除，以及状态条上那句可点的 `无法保存 · 点击查看`（§15.2 的四档文案之一）——它们是与这个对话框同一批的「保存失败要不要打扰用户」的问题，但**作废的只是退出时那一个对话框**。这几项留待后续单独裁决，现在按"保存失败只记日志、状态条照常显示 `无法保存`"实现。
 
 ## 11.6 崩溃恢复
 
@@ -2631,7 +2631,7 @@ Markdown 仍是唯一真实数据源
 
 `AllowsTransparency = True` 会把窗口变成分层窗口（layered window），WPF 转为软件渲染路径，代价是：
 
-- 渲染性能下降（尤其是多个便签 + 内容缩放时）
+- 渲染性能下降（尤其是多个便签同时重绘时）
 - 子像素抗锯齿失效，中文小字会明显发虚
 - 窗口出现时间变慢（每帧要经 `UpdateLayeredWindow`）
 - 和 DWM 效果（圆角、阴影）配合差，容易出现黑边/锯齿边缘
@@ -3020,7 +3020,7 @@ private const int WS_EX_LAYERED     = 0x00080000;
 [ ] 鼠标点击确实穿透到下层窗口
 [ ] 键盘焦点行为可接受（穿透的窗口不应抢焦点）
 [ ] 从 100% 缩放到 200% 的显示器上拖动，渲染仍正常
-[ ] 便签内容滚动、内容缩放（§15.5）时仍正常
+[ ] 便签内容滚动时仍正常
 [ ] 关闭穿透（移除扩展样式）后窗口完全恢复正常
 ```
 
@@ -3552,7 +3552,7 @@ public void CaptureGeometry(Guid noteId, NoteLayout target)
 │                                               │
 │                                               │
 ├───────────────────────────────────────────────┤
-│ 已保存 · 124 字                    缩放 100%  │  ← 状态条，24 DIP（可隐藏）
+│ 已保存 · 124 字                                │  ← 状态条，24 DIP（可隐藏）
 └───────────────────────────────────────────────┘
 ```
 
@@ -3637,7 +3637,11 @@ public enum NoteColor
 
 **深色模式下的便签颜色**：每种 `NoteColor` 需要一套深色变体（`NoteYellowBackgroundBrushDark` 等）。切换明暗时用 `DynamicResource` 而不是 `StaticResource`，这样运行时能正确刷新。
 
-**实现说明**：`App/Resources/Colors.xaml` 已落地（由 `App.xaml` 合并进来）。**上面给的只有黄色那一组三值，其余六组是自拟的**——按同样的明度关系推：背景很浅（L≈90%）、标题条中浅（L≈80%）、强调色饱和且深（L≈35%），七个颜色的强调色两两分得开。文档示例里那种"先写 `<Color>`、再让 `SolidColorBrush` 用 `StaticResource` 引它"的写法**没有照做**：眼下没有任何消费者要那个 `Color` 本身（唯一用得着的是本节末的深色变体，而那一套还没做），多一层间接只是多一处要同步的地方。深色变体与 `DynamicResource` 一并留给深色模式那一轮。
+> **本轮拍板：上面两段推迟到「界面整体改透明毛玻璃」那一轮一起做。**
+> 深色模式没法单独做完——它要定的恰恰是「纸面在暗色下是什么颜色」，而毛玻璃之后纸面本身要重新定值。此刻先推一份深色变体，等毛玻璃落地时整套得重来一遍。
+> **凡属样式的内容统归那一轮**：本节的两个深色套、§15.10 `Colors.xaml` 的深色套、`theme` 字段的界面入口（§15.9 的推迟表里那一行）。
+
+**实现说明**：`App/Resources/Colors.xaml` 已落地（由 `App.xaml` 合并进来）。**上面给的只有黄色那一组三值，其余六组是自拟的**——按同样的明度关系推：背景很浅（L≈90%）、标题条中浅（L≈80%）、强调色饱和且深（L≈35%），七个颜色的强调色两两分得开。文档示例里那种"先写 `<Color>`、再让 `SolidColorBrush` 用 `StaticResource` 引它"的写法**没有照做**：眼下没有任何消费者要那个 `Color` 本身（唯一用得着的是本节末的深色变体，而那一套还没做），多一层间接只是多一处要同步的地方。深色变体与 `DynamicResource` 一并留给**界面重构那一轮**（见上框）。
 
 **强调色在管理器里已经用起来了**：结果项右侧那个 8×8 的颜色点取的是 `{Color}AccentBrush` 而不是背景色——这么小的点上，七个浅背景色在白底上彼此分不开。转换在 `Views/Converters/NoteColorToBrushConverter.cs`。右键菜单「颜色」子菜单那七个色块引的是同一批笔刷。
 
@@ -3678,6 +3682,18 @@ public enum NoteColor
 ```
 
 ## 15.5 内容缩放
+
+> **本节整条作废，功能已从代码里删除。**
+>
+> 内容缩放（`Ctrl+=` / `Ctrl+-` / `Ctrl+0` / `Ctrl+滚轮`、状态条上那个可点的百分比）**不需要**——裁定为**删除**，不是推迟。理由见 §0.3 的裁决表：它不是一个只差界面入口的功能，而是已经在四处占了字段（`NoteLayout.ContentScale`、`AppSettings.DefaultContentScale`、layout.json 的 `contentScale`、settings.json 的 `defaultContentScale`），而「每张便签各自记忆」又把这一条绑进了布局持久化。「留着字段、以后再做」的真实代价，是给后来的人留一条「文档说要做」的假线索，外加一份永远不会有人写的配置键。
+>
+> **已删除的位置**（改这块时别再按本节加回来）：`NoteLayout.ContentScale`、`LayoutFileModel` 的 `contentScale` 与其双向映射、`JsonLayoutStore.DefaultContentScale`、`AppSettings.DefaultContentScale`、`StartupSequence` 里那一次赋值、`NoteViewModel.ContentScale`、`SettingsViewModel` 的 `ContentScale` 与两个上下限常量、`SettingsWindow.xaml` 的「内容缩放」那一行，以及四处测试里的相应断言。
+>
+> **没有连带删的**：`NoteLayout.ExpandedHeight`（折叠用，与缩放无关）、`showStatusBar`（状态条本身还在，只是不再有缩放百分比这一项）。§16.3 快捷键表里的 `Ctrl+0` / `Ctrl+=` / `Ctrl+-` / `Ctrl+滚轮` 四条一并删掉，**没有转派给别的功能**：便签里的 `Ctrl+滚轮` 回落到 `TextBox` 自己的默认行为（不缩放），不做滚轮缩放。
+>
+> 以下保留原设计原文，**仅供追溯，任何一条都不再是实现依据**。
+
+### 原设计（已作废）
 
 便签内容可以整体放大缩小，用于"贴参考信息时字太小看不清"的场景。
 
@@ -4018,13 +4034,13 @@ Keyboard.Focus(_editor);
 
 `SettingsWindow` + `SettingsViewModel`，"回收站"是它的两个页签之一。托盘菜单「设置...」与管理器工具条上的齿轮按钮是它的两个入口。
 
-**本轮只暴露"改了立刻生效"的设置项**，够用来验完这条链：默认宽高、内容缩放、显示状态条、显示桌面后恢复、自动保存延迟、搜索去抖、回收站保留期、笔记文件夹（**只读显示 + 「打开」按钮**）。
+**本轮只暴露"改了立刻生效"的设置项**，够用来验完这条链：默认宽高、显示状态条、显示桌面后恢复、自动保存延迟、搜索去抖、回收站保留期、笔记文件夹（**只读显示 + 「打开」按钮**）。（原表里还有一项「内容缩放」，已随 §15.5 整条剔除。）
 
 **明确推迟的设置项**，以及各自的卡点：
 
 | 推迟项 | 卡点 |
 |---|---|
-| 主题（亮/深） | §15.3 的七色配色表还没落地，深色套更是一行没有 |
+| 主题（亮/深） | 属样式，统归**界面重构那一轮**（§15.3 的框）：深色套取决于毛玻璃之后纸面怎么定色，现在做要重来 |
 | 开机自启动 | 属 §17.2 的启动编排，与单实例同一批 |
 | 托盘相关（单击行为、关闭时最小化） | 属阶段 9 的 `TrayService` |
 | 显示托盘图标 | 设置项本身已接上（§15.9 补充），但它**只在 `Start()` 之前改才有效**——图标建起来之后再关掉，用户就没有任何入口了。要真正可切换得先做"改完重建图标"，本轮不做 |
@@ -4047,7 +4063,7 @@ Keyboard.Focus(_editor);
 
 ```text
 Resources/
-  Colors.xaml          便签颜色（亮色 + 深色两套）
+  Colors.xaml          便签颜色（亮色一套；深色套留到界面重构那一轮，见 §15.3）
   Typography.xaml      字号、字体族、行高
   Metrics.xaml         边距、尺寸、动画时长
   Controls/
@@ -4142,9 +4158,6 @@ WPF 的 `TextBox` 不提供这些：
 | `Ctrl+Shift+N` | 速记浮窗（全局热键，§15.7） |
 | `Ctrl+L` | 便签列表面板 |
 | `Ctrl+Alt+N` | 显示全部便签（全局热键） |
-| `Ctrl+0` | 内容缩放复位到 100% |
-| `Ctrl+=` / `Ctrl+-` | 内容放大/缩小 |
-| `Ctrl+滚轮` | 内容放大/缩小 |
 | `Ctrl+B` / `Ctrl+I` | 包裹选中文本为 `**` / `*` |
 | `Ctrl+K` | 插入链接 |
 | `Ctrl+Shift+V` | 纯文本粘贴 |
@@ -4577,7 +4590,7 @@ HKCU\Software\Microsoft\Windows\CurrentVersion\Run
 | 状态 | 归属 | 是否落盘 | 落在哪 |
 |---|---|---|---|
 | `Content`、`Tags`、`Color` | `Note`（数据模型） | 是 | Markdown 文件 |
-| `IsCollapsed`、`IsTopMost`、`IsLocked`、`ContentScale`、`X/Y/W/H` | `NoteLayout`（机器状态） | 是 | layout.json |
+| `IsCollapsed`、`IsTopMost`、`IsLocked`、`X/Y/W/H` | `NoteLayout`（机器状态） | 是 | layout.json |
 | `SaveStatus`、`IsComposing`、`IsDirty`、`CaretIndex` | `NoteViewModel`（纯 UI 临时状态） | **否** | 内存 |
 
 **第三类绝不落盘。** 特别是 `CaretIndex`——有人会想"恢复光标位置多贴心"，但这会让每次光标移动都产生一次状态变化，需要额外的持久化去抖，收益远小于成本。
@@ -5352,15 +5365,13 @@ await WaitUntilAsync(() => store.Contains(id), timeout: TimeSpan.FromSeconds(5))
 
 [体验]
   - 速记浮窗（Ctrl+Shift+N）     ← C1，一期必须
-  - 内容缩放（50%–200%，每张独立） ← B18
   - 可点击任务复选框             ← 一期
   - 便签列表 + 搜索（含排序与摘要）← C3
   - 状态条（保存状态 + 字数）
-  - 深色模式跟随系统
 
 [工程]
   - 单实例、日志、诊断入口
-  - 退出时的 flush 与失败提示
+  - 退出时的 flush（失败只记 Error 日志，不弹窗，§11.5）
   - 单元测试覆盖 §21.2 的全部清单
 ```
 
@@ -5667,7 +5678,7 @@ v1 共 122 节，v2 重组为 24 章 + 4 个附录。本节用于迁移：在 v1
 | §9 settings.json 字段 | §8.2、§9.3 | v1 两处不一致，v2 以 §9.3 的 `AppSettings` 为准 |
 | §10 配置位置的讨论 | §8.1 | v2 直接拍板，不再讨论 |
 | §11 `Note` 模型 | §9.2 | v2 唯一权威定义；字段名与 v1 §87 对齐 |
-| §12 `NoteLayout` 模型 | §9.2 | 新增 `IsOpen`、`ExpandedHeight`、`ContentScale` |
+| §12 `NoteLayout` 模型 | §9.2 | 新增 `IsOpen`、`ExpandedHeight` |
 | §13–§14 存储策略 | §5.1、§5.9 | |
 | §15 SQLite/FTS5 的取舍 | §12.4 | v2 给出明确的引入触发条件 |
 | §16–§17 Markdown 解析 | §5.2、§5.10、§16.7 | 新增降级矩阵与渲染安全 |
@@ -5716,7 +5727,7 @@ v1 共 122 节，v2 重组为 24 章 + 4 个附录。本节用于迁移：在 v1
 §14.4  几何回写（含 RestoreBounds）
 §15.2  状态条
 §15.4  重命名的写回规则
-§15.5  内容缩放
+§15.5  内容缩放（**已作废**，见该节开头；章节保留只为让引用不悬空）
 §15.6  可点击任务复选框
 §15.7  速记浮窗
 §17.5  三层未处理异常
@@ -5780,7 +5791,7 @@ v1 共 122 节，v2 重组为 24 章 + 4 个附录。本节用于迁移：在 v1
 | B15 | 用 WebView2 的额外依赖与安全 | §16.7（改用 `FlowDocument`，不引入浏览器） |
 | B16 | 外部链接与文件打开的安全边界 | §19.3（协议白名单 + 绝对路径确认） |
 | B17 | 编码与行尾未定 | §5.9（保留编码、保留行尾、保留 BOM 状态） |
-| B18 | 内容缩放缺失 | §15.5（`ContentScale`，50%–200%） |
+| ~~B18~~ | ~~内容缩放缺失~~ | **已剔除**，不需要该功能（§0.3 裁决表、§15.5） |
 | B19 | 折叠后恢复原高度缺数据 | §9.2（`NoteLayout.ExpandedHeight`） |
 | B20 | 大量窗口创建的策略 | §17.1（分批打开）、§13.9（窗口池）、§15.8（结果上限） |
 
@@ -5797,7 +5808,7 @@ v1 共 122 节，v2 重组为 24 章 + 4 个附录。本节用于迁移：在 v1
 | C7 | 会话恢复内容不足 | §8.3（`IsOpen` + 几何 + 折叠 + 缩放） |
 | C8 | 笔记目录切换流程缺失 | §8.6 |
 | C9 | 多语言完全未提 | §22.4（三期）、§24.2（不硬编码文案的原则） |
-| C10 | 深色模式与配色的关系未定义 | §15.3（每色三色值 + 深色变体 + DynamicResource） |
+| C10 | 深色模式与配色的关系未定义 | §15.3（每色三色值 + 深色变体 + DynamicResource）。**推迟到界面重构那一轮**，与全部样式内容同批 |
 | C11 | 全屏应用场景未考虑 | §13.5（不做全局置顶，含理由） |
 | C12 | 缺"复制全部""打开所在文件夹" | §15.2（菜单）、§15.9（托盘菜单） |
 | C13 | 拖拽排序、批量操作 | §22.4（三期） |

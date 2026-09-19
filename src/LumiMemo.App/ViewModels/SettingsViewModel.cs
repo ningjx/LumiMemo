@@ -54,12 +54,6 @@ public sealed partial class SettingsViewModel : ObservableObject
     /// <summary>见 <see cref="MinDefaultSize"/>。</summary>
     public const double MaxDefaultSize = 1600;
 
-    /// <summary>内容缩放的允许区间（§15.7）。</summary>
-    public const double MinContentScale = 0.5;
-
-    /// <summary>见 <see cref="MinContentScale"/>。</summary>
-    public const double MaxContentScale = 3.0;
-
     private readonly ISettingsStore _settingsStore;
     private readonly AppPaths _paths;
     private readonly ISettingsApplier _applier;
@@ -136,9 +130,6 @@ public sealed partial class SettingsViewModel : ObservableObject
     private double _defaultHeight = 420;
 
     [ObservableProperty]
-    private double _contentScale = 1.0;
-
-    [ObservableProperty]
     private bool _showStatusBar = true;
 
     [ObservableProperty]
@@ -193,7 +184,6 @@ public sealed partial class SettingsViewModel : ObservableObject
 
         DefaultWidth = _settings.DefaultWidth;
         DefaultHeight = _settings.DefaultHeight;
-        ContentScale = _settings.DefaultContentScale;
         ShowStatusBar = _settings.ShowStatusBar;
         RestoreAfterShowDesktop = _settings.RestoreAfterShowDesktop;
         AutoSaveDelayMs = _settings.AutoSaveDelayMs;
@@ -236,13 +226,11 @@ public sealed partial class SettingsViewModel : ObservableObject
 
         DefaultWidth = Math.Clamp(DefaultWidth, MinDefaultSize, MaxDefaultSize);
         DefaultHeight = Math.Clamp(DefaultHeight, MinDefaultSize, MaxDefaultSize);
-        ContentScale = Math.Clamp(ContentScale, MinContentScale, MaxContentScale);
         AutoSaveDelayMs = Math.Clamp(AutoSaveDelayMs, MinAutoSaveDelayMs, MaxAutoSaveDelayMs);
         SearchDebounceMs = Math.Clamp(SearchDebounceMs, MinSearchDebounceMs, MaxSearchDebounceMs);
 
         _settings.DefaultWidth = DefaultWidth;
         _settings.DefaultHeight = DefaultHeight;
-        _settings.DefaultContentScale = ContentScale;
         _settings.ShowStatusBar = ShowStatusBar;
         _settings.RestoreAfterShowDesktop = RestoreAfterShowDesktop;
         _settings.AutoSaveDelayMs = AutoSaveDelayMs;
