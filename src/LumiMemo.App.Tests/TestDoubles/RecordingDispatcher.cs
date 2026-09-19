@@ -26,6 +26,17 @@ public sealed class RecordingDispatcher : IDispatcher
     /// <summary>每一次 <see cref="YieldAsync"/> 留下的记号，按发生顺序。</summary>
     public List<string> YieldOrder { get; } = [];
 
+    /// <summary>
+    /// 走低优先级封送进来的次数。
+    /// </summary>
+    /// <remarks>
+    /// 两个 <c>InvokeBackgroundAsync</c> 与 <see cref="InvokeAsync"/> 在本替身里行为完全一样，
+    /// 都要靠这个计数才分得出来。§10.6 要求外部变更走低优先级那一档
+    /// （<c>Normal</c> 比 <c>Render</c> 还高，一批变更会把用户的输入挤在后面），
+    /// 而这条约定漏掉时没有别的症状——界面照样对，只是卡。
+    /// </remarks>
+    public int BackgroundInvokeCount { get; private set; }
+
     /// <inheritdoc />
     public void VerifyAccess() => _inner.VerifyAccess();
 
@@ -37,6 +48,22 @@ public sealed class RecordingDispatcher : IDispatcher
 
     /// <inheritdoc />
     public Task InvokeAsync(Action action) => _inner.InvokeAsync(action);
+
+    /// <inheritdoc />
+    public Task InvokeBackgroundAsync(Action action)
+    {
+        BackgroundInvokeCount++;
+
+        return _inner.InvokeBackgroundAsync(action);
+    }
+
+    /// <inheritdoc />
+    public Task InvokeBackgroundAsync(Func<Task> action)
+    {
+        BackgroundInvokeCount++;
+
+        return _inner.InvokeBackgroundAsync(action);
+    }
 
     /// <inheritdoc />
     public Task YieldAsync()

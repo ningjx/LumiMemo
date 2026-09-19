@@ -352,7 +352,7 @@ public sealed class MarkdownNoteRepositoryTests
 
         File.WriteAllText(path, CanonicalText(SampleId, color: "blue", body: "外部改过的正文\r\n"));
 
-        Note? reloaded = await repository.ReloadAsync(path, Ct);
+        Note? reloaded = (await repository.ReloadAsync(path, Ct)).Note;
 
         Assert.NotNull(reloaded);
         Assert.Equal(SampleId, reloaded.Id);
@@ -375,7 +375,7 @@ public sealed class MarkdownNoteRepositoryTests
         // 若这里换一个新 id，主窗口那张便签就成了「被删掉 + 新增一张」。
         File.WriteAllText(path, "只剩正文了\r\n");
 
-        Note? reloaded = await repository.ReloadAsync(path, Ct);
+        Note? reloaded = (await repository.ReloadAsync(path, Ct)).Note;
 
         Assert.NotNull(reloaded);
         Assert.Equal(SampleId, reloaded.Id);
@@ -418,7 +418,7 @@ public sealed class MarkdownNoteRepositoryTests
         File.Delete(path);
 
         // null 的含义是「便签没了」，与「这一刻读不到」是两回事。
-        Assert.Null(await repository.ReloadAsync(path, Ct));
+        Assert.Null((await repository.ReloadAsync(path, Ct)).Note);
     }
 
     [Fact]
@@ -443,8 +443,228 @@ public sealed class MarkdownNoteRepositoryTests
         }
 
         // 锁一松开就能读到了，这正是「临时」这个词的含义。
-        Note? reloaded = await repository.ReloadAsync(path, Ct);
+        Note? reloaded = (await repository.ReloadAsync(path, Ct)).Note;
         Assert.Equal(original.Id, reloaded?.Id);
+    }
+
+    // ---- 自写抑制的判据（§10.3） ----
+    //
+    // DiskChanged 是「这次读到的字节，与上一次本程序读或写这个文件时的字节一不一样」。
+    // v2 原文里这一层前面还有一个 3 秒的写入抑制窗口，本轮去掉了：那个窗口会把
+    // 「保存之后 3 秒内的真外部修改」一并丢掉，而它恰恰是本工作项要防的数据丢失。
+    // 详见文档 §10.3 末的实现说明。
+
+    [Fact]
+    public async Task 自己刚扫过的文件_重新读取判为没变()
+    {
+        using var local = new TempDirectory();
+        using var notes = new TempDirectory();
+        string path = notes.Combine("便签.md");
+        File.WriteAllText(path, CanonicalText(SampleId));
+
+        MarkdownNoteRepository repository = CreateRepository(PathsFor(local, notes));
+        Assert.Single(await repository.LoadAllAsync(Ct));
+
+        // 扫描时留下了基线，此后磁盘没动过——比如监听器把一次重复通知原样报回来。
+        NoteFileSync sync = await repository.ReloadAsync(path, Ct);
+
+        Assert.False(sync.DiskChanged);
+        Assert.Equal(SampleId, sync.Note?.Id);
+    }
+
+    [Fact]
+    public async Task 自己刚保存的文件_重新读取判为没变()
+    {
+        // §5.9：这两句是「保存」这一侧的基线更新。写成功时不把新哈希记下来的话，
+        // 每一次自动保存之后紧跟而来的监听事件都会被当成外部修改涌进内存与界面——
+        // 症状是用户每打一串字，便签列表就自己抖一下，而磁盘上其实什么都没被别人改过。
+        using var local = new TempDirectory();
+        using var notes = new TempDirectory();
+        string path = notes.Combine("便签.md");
+        File.WriteAllText(path, CanonicalText(SampleId, body: "旧正文\r\n"));
+
+        MarkdownNoteRepository repository = CreateRepository(PathsFor(local, notes));
+        Note loaded = Assert.Single(await repository.LoadAllAsync(Ct));
+
+        loaded.Content = "我改过的正文\r\n";
+        await repository.SaveAsync(loaded, Ct);
+
+        NoteFileSync sync = await repository.ReloadAsync(path, Ct);
+
+        Assert.False(sync.DiskChanged);
+        Assert.Equal("我改过的正文\r\n", sync.Note?.Content);
+    }
+
+    [Fact]
+    public async Task 外部改过之后_重新读取判为变了()
+    {
+        using var local = new TempDirectory();
+        using var notes = new TempDirectory();
+        string path = notes.Combine("便签.md");
+        File.WriteAllText(path, CanonicalText(SampleId, body: "旧正文\r\n"));
+
+        MarkdownNoteRepository repository = CreateRepository(PathsFor(local, notes));
+        Assert.Single(await repository.LoadAllAsync(Ct));
+
+        File.WriteAllText(path, CanonicalText(SampleId, body: "外部改过的正文\r\n"));
+
+        NoteFileSync sync = await repository.ReloadAsync(path, Ct);
+
+        Assert.True(sync.DiskChanged);
+    }
+
+    [Fact]
+    public async Task 从头一回见到的文件_判为变了()
+    {
+        // 没有基线时不能默认成「没变」：那会让「程序启动之后外面新建的文件」
+        // 永远进不来——而监听器本来也收不到自己没有基线的事件，
+        // 它收到的每一个新路径都必然是头一回见到。默认成「没变」等于监听白做。
+        using var local = new TempDirectory();
+        using var notes = new TempDirectory();
+        string path = notes.Combine("别人的.md");
+        File.WriteAllText(path, CanonicalText(Guid.NewGuid()));
+
+        Assert.True((await CreateRepository(PathsFor(local, notes)).ReloadAsync(path, Ct)).DiskChanged);
+    }
+
+    [Fact]
+    public async Task 文件被外部删掉_判为变了()
+    {
+        // 从「有一份内容」变成「没有」本身就是变化。这条判 true 之所以安全，
+        // 是因为内存里根本没有这条路径时，上层拿到 Deleted 也不会做什么。
+        using var local = new TempDirectory();
+        using var notes = new TempDirectory();
+        string path = notes.Combine("便签.md");
+        File.WriteAllText(path, CanonicalText(SampleId));
+
+        MarkdownNoteRepository repository = CreateRepository(PathsFor(local, notes));
+        Assert.Single(await repository.LoadAllAsync(Ct));
+
+        File.Delete(path);
+
+        NoteFileSync sync = await repository.ReloadAsync(path, Ct);
+
+        Assert.True(sync.DiskChanged);
+        Assert.Null(sync.Note);
+    }
+
+    // ---- 冲突副本（§11.4） ----
+
+    [Fact]
+    public async Task 备份冲突副本_装的正是覆盖前磁盘上那一版()
+    {
+        using var local = new TempDirectory();
+        using var notes = new TempDirectory();
+        string path = notes.Combine("便签.md");
+        string diskVersion = CanonicalText(SampleId, body: "别处改出来的正文\r\n");
+        File.WriteAllText(path, diskVersion);
+
+        MarkdownNoteRepository repository = CreateRepository(PathsFor(local, notes), new FakeClock(SampleTime));
+
+        string? backup = await repository.BackupConflictCopyAsync(path, Ct);
+
+        Assert.NotNull(backup);
+
+        // 名字要能一眼看出「这是哪一张、什么时候的」，而且必须落在**同一个目录**里：
+        // 换个目录用户就再也找不到它了，那等于没留。
+        Assert.Equal("便签.conflict-20260919-100000.md", Path.GetFileName(backup));
+        Assert.Equal(notes.Path, Path.GetDirectoryName(backup), ignoreCase: true);
+
+        // 副本里装的必须是**磁盘上**那一版。装成内存里那一版的话这个备份毫无意义——
+        // 用户选「覆盖」正是为了保住内存里那一版，磁盘这一版才是要丢的那个。
+        Assert.Equal(diskVersion, File.ReadAllText(backup!));
+
+        // 而且原件一个字都没动：备份是「另存」，不是「改写」。
+        Assert.Equal(diskVersion, File.ReadAllText(path));
+    }
+
+    [Fact]
+    public async Task 备份冲突副本_原文件已经不在时返回null()
+    {
+        using var local = new TempDirectory();
+        using var notes = new TempDirectory();
+        string path = notes.Combine("便签.md");
+
+        MarkdownNoteRepository repository = CreateRepository(PathsFor(local, notes), new FakeClock(SampleTime));
+
+        // 已经没有了，不是「没能留底」。调用方据此区分「没什么可留的」与
+        // 「留底失败了，那就千万别覆盖」——后者的代价是磁盘上那一版被永久抹掉。
+        Assert.Null(await repository.BackupConflictCopyAsync(path, Ct));
+
+        // 也不该顺手在目录里造出一个空文件来。
+        Assert.Empty(Directory.GetFiles(notes.Path));
+    }
+
+    // ---- 监听器与扫描器用同一套判据（§10.1） ----
+
+    [Fact]
+    public void IsNoteFile_认笔记目录里的md_含子目录()
+    {
+        using var local = new TempDirectory();
+        using var notes = new TempDirectory();
+        string folder = notes.CreateDirectory("工作");
+
+        MarkdownNoteRepository repository = CreateRepository(PathsFor(local, notes));
+
+        Assert.True(repository.IsNoteFile(notes.Combine("便签.md")));
+        Assert.True(repository.IsNoteFile(Path.Combine(folder, "周报.md")));
+
+        // 大小写不该是判据：Windows 上用户从别处拷来的文件什么大小写都有。
+        Assert.True(repository.IsNoteFile(notes.Combine("便签.MD")));
+    }
+
+    [Fact]
+    public void IsNoteFile_拒绝点目录与附件目录里的md()
+    {
+        // 这两处必须与 EnumerateNoteFiles 一致。放宽一点，用户改一下 Obsidian 的配置
+        // 就会在便签列表里冒出一张重启后又不存在的幽灵便签（§5.7、§10.1）。
+        using var local = new TempDirectory();
+        using var notes = new TempDirectory();
+        string hidden = notes.CreateDirectory(".obsidian");
+        string attachments = notes.CreateDirectory("attachments");
+
+        MarkdownNoteRepository repository = CreateRepository(PathsFor(local, notes));
+
+        Assert.False(repository.IsNoteFile(Path.Combine(hidden, "配置.md")));
+        Assert.False(repository.IsNoteFile(Path.Combine(attachments, "截图说明.md")));
+    }
+
+    [Fact]
+    public void IsNoteFile_拒绝非md与临时文件与笔记目录之外的路径()
+    {
+        using var local = new TempDirectory();
+        using var notes = new TempDirectory();
+        using var elsewhere = new TempDirectory();
+
+        MarkdownNoteRepository repository = CreateRepository(PathsFor(local, notes));
+
+        // 非 .md：Filter 挡住了绝大部分，但 IsNoteFile 还有第二个调用方（重命名那一条），
+        // 那里拿到的是文件名而不是过滤后的结果，不能只靠 Filter。
+        Assert.False(repository.IsNoteFile(notes.Combine("说明.txt")));
+
+        // 原子写入的半成品：写到一半被监听到会读出一个残缺的文件。
+        Assert.False(repository.IsNoteFile(
+            notes.Combine("便签.md.20260919120000123-a1b2c3d4" + AtomicFileWriter.TempSuffix)));
+
+        // 笔记目录之外：监听器只盯一个根目录，但重命名事件的旧路径可能来自外面，
+        // 而且这个判据必须是按路径本身成立的，不能依赖「反正我收不到」。
+        Assert.False(repository.IsNoteFile(elsewhere.Combine("便签.md")));
+
+        Assert.False(repository.IsNoteFile(string.Empty));
+    }
+
+    [Fact]
+    public void IsNoteFile_还没选定笔记目录时一律为假()
+    {
+        // §8.6：首次运行还没走完向导。这时监听器本来也不会启动，
+        // 但判据不能因此就返回「是」——一个说「所有路径都是便签」的实现
+        // 会让监听器在目录选定之前就把整个盘的事件收进来。
+        using var local = new TempDirectory();
+        using var notes = new TempDirectory();
+
+        MarkdownNoteRepository repository = CreateRepository(new AppPaths(local.Path));
+
+        Assert.False(repository.IsNoteFile(notes.Combine("便签.md")));
     }
 
     // ---- 新建（§5.6、§3.3 流 3） ----

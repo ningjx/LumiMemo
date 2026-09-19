@@ -11,6 +11,7 @@ using LumiMemo.Core.Models;
 using LumiMemo.Core.Search;
 using LumiMemo.Core.Services;
 using LumiMemo.Core.Stores;
+using Microsoft.Extensions.Logging;
 
 namespace LumiMemo.App.ViewModels;
 
@@ -41,7 +42,7 @@ namespace LumiMemo.App.ViewModels;
 /// 它<strong>不持有窗口引用</strong>（§18.3），开窗走 <see cref="IWindowManager"/>。
 /// </para>
 /// </remarks>
-public sealed partial class ManagerViewModel : ObservableObject
+public sealed partial class ManagerViewModel : ObservableObject, IExternalChangeSink
 {
     /// <summary>单次渲染的结果上限（§15.8）。</summary>
     /// <remarks>
@@ -61,6 +62,16 @@ public sealed partial class ManagerViewModel : ObservableObject
     /// </remarks>
     private const int SubsequentBatchSize = 2;
 
+    /// <summary>
+    /// 外部变更一批最多处理多少条再松一次手（§10.6）。
+    /// </summary>
+    /// <remarks>
+    /// 一批可能有几百条（git 切分支、同步盘刷一批）。每条都要改列表、可能还要开窗，
+    /// 一口气做完会把第一帧卡住几百毫秒。与 <see cref="RestoreOpenNotesAsync"/> 同样
+    /// 用 <c>YieldAsync</c> 松手，理由见那里。
+    /// </remarks>
+    private const int ExternalChangeBatchSize = 20;
+
     private readonly NoteStore _store;
     private readonly SearchIndex _index;
     private readonly LayoutService _layoutService;
@@ -74,6 +85,7 @@ public sealed partial class ManagerViewModel : ObservableObject
     private readonly IClock _clock;
     private readonly IUiTimer _searchTimer;
     private readonly IMessenger _messenger;
+    private readonly ILogger<ManagerViewModel> _logger;
 
     /// <summary>当前查询词下命中的<strong>全部</strong>便签，未截断。见 <see cref="Notes"/>。</summary>
     private readonly List<NoteListItem> _matches = [];
@@ -91,7 +103,8 @@ public sealed partial class ManagerViewModel : ObservableObject
         IDispatcher dispatcher,
         IClock clock,
         IUiTimerFactory timers,
-        IMessenger messenger)
+        IMessenger messenger,
+        ILogger<ManagerViewModel> logger)
     {
         ArgumentNullException.ThrowIfNull(store);
         ArgumentNullException.ThrowIfNull(index);
@@ -106,6 +119,7 @@ public sealed partial class ManagerViewModel : ObservableObject
         ArgumentNullException.ThrowIfNull(clock);
         ArgumentNullException.ThrowIfNull(timers);
         ArgumentNullException.ThrowIfNull(messenger);
+        ArgumentNullException.ThrowIfNull(logger);
 
         _store = store;
         _index = index;
@@ -120,6 +134,7 @@ public sealed partial class ManagerViewModel : ObservableObject
         _clock = clock;
         _searchTimer = timers.Create();
         _messenger = messenger;
+        _logger = logger;
 
         // 自己改的（新建 / 删除 / 重扫）各方法直接调 Refresh()，不绕消息一圈。
         // 只有「别人改了便签集合、我无从知道」的那一处才需要这条线：
@@ -799,22 +814,211 @@ public sealed partial class ManagerViewModel : ObservableObject
     /// </summary>
     /// <remarks>
     /// <para>
-    /// 本轮的 <c>ApplyExternalChange</c> 还是 <c>NotSupportedException</c>——
-    /// 文件监听整体推迟了。于是「在别的编辑器里改了 .md」这件事唯一的感知方式
-    /// 就是用户自己点这一下，它<strong>不是</strong>可有可无的兜底。
+    /// 与文件监听共用同一条路（<see cref="ApplyFullRescanAsync"/>）：它们要做的事
+    /// 本来就是同一件——把内存里的一切与磁盘对齐，然后让界面跟上。
+    /// 区别只在谁发起：这里是用户点托盘菜单，那边是监听缓冲区溢出（§10.4）。
     /// </para>
     /// <para>
-    /// <strong>它不关掉已经打开的便签窗口。</strong> 重扫会重建 <c>NoteStore</c> 里的对象，
-    /// 而开着的窗口各持一份自己的 <c>Note</c> 引用——这是已经存在的取舍（§3.3 流 2
-    /// 本该怎么处理还没有定论），本轮不在这里解决。
+    /// 它<strong>仍然是必需的</strong>：网络盘上 <c>FileSystemWatcher</c> 常常收不到通知，
+    /// 而 §10.5 的检测与轮询开关本轮没做，用户手上只有这一条路。
     /// </para>
     /// </remarks>
     [RelayCommand]
-    public async Task ReloadAllAsync()
-    {
-        await _noteService.LoadAllAsync();
+    public Task ReloadAllAsync() => ApplyFullRescanAsync();
 
-        Refresh();
+    /// <inheritdoc />
+    /// <remarks>
+    /// <strong>只在 UI 线程上调用</strong>：下面每一步都要写 <c>NoteStore</c>、动
+    /// <see cref="Notes"/>、开窗。监听器负责封送，见
+    /// <see cref="IExternalChangeSink"/> 的说明。
+    /// </remarks>
+    public async Task ApplyExternalChangesAsync(IReadOnlyList<(string Path, NoteFileSync Sync)> batch)
+    {
+        ArgumentNullException.ThrowIfNull(batch);
+
+        _dispatcher.VerifyAccess();
+
+        List<ExternalChangeResult> results = new(batch.Count);
+
+        foreach ((string path, NoteFileSync sync) in batch)
+        {
+            // 顺序就是 batch 的顺序，一个路径一次。判定与合并全在 Core 里（§11.4），
+            // 这里不做第二遍判断——两处判断迟早会分家。
+            results.Add(_noteService.ApplyExternalChange(path, sync));
+        }
+
+        await ApplyResultsAsync(results);
+    }
+
+    /// <inheritdoc />
+    public async Task ApplyFullRescanAsync()
+    {
+        _dispatcher.VerifyAccess();
+
+        // 差异比对本身（磁盘有什么、内存里有什么、哪些换了身份）在 Core 里做完，
+        // 这里拿到的是一串「内存变成了什么样」的结论。
+        await ApplyResultsAsync(await _noteService.LoadAllAsync());
+    }
+
+    /// <summary>把 Core 的结论一条条落到窗口与列表上（§10.2）。</summary>
+    private async Task ApplyResultsAsync(IReadOnlyList<ExternalChangeResult> results)
+    {
+        bool changed = false;
+        int processed = 0;
+
+        foreach (ExternalChangeResult result in results)
+        {
+            await ApplyOneAsync(result);
+
+            changed |= result.Kind != ExternalChangeKind.None;
+
+            // 每 ExternalChangeBatchSize 条松一次手，让重绘与输入先跑（§10.6）。
+            if (++processed % ExternalChangeBatchSize == 0)
+            {
+                await _dispatcher.YieldAsync();
+            }
+        }
+
+        // 重扫列表而不是逐条摘补：计数、空列表提示、溢出提示全挂在 Refresh 里，
+        // 与 DeleteNoteAsync 末尾同一手法。
+        //
+        // 一条都没变时不刷：Refresh 会把 Notes 清空重建，而清空会让 ListBox
+        // 顺手把 SelectedItem 置成 null——一次自写事件就能把用户选中的那行弄丢。
+        if (changed)
+        {
+            Refresh();
+        }
+    }
+
+    /// <summary>一条结论落到界面上。</summary>
+    private async Task ApplyOneAsync(ExternalChangeResult result)
+    {
+        switch (result.Kind)
+        {
+            case ExternalChangeKind.None:
+                return;
+
+            case ExternalChangeKind.Reloaded:
+                // 内容已经在 NoteStore 里那个实例上了，但窗口绑的是 ViewModel 自己那份副本，
+                // 它不会自己知道。刷新窗口比关掉再开回来好：用户的光标与滚动位置都在里面。
+                _windowManager.RefreshNote(result.LocalNote!.Id);
+                return;
+
+            case ExternalChangeKind.Created:
+                // 「同一个路径换了身份」时，被顶掉的那一张要先关窗：它的 id 与磁盘上那张
+                // 不同，不关的话那扇窗会一直挂着一张内存里已经不存在的便签。
+                if (result.Replaced is { } replaced)
+                {
+                    _windowManager.CloseNote(replaced.Id);
+                }
+
+                // 该不该开窗的唯一判据是 layout 里已有的那一条 IsOpen（§17.1 第 11 步用的是同一条）。
+                // 外部新建的便签在 layout.json 里没有条目，于是它只出现在列表里——
+                // 不请自来地弹一扇窗比"没自动打开"更烦人。
+                NoteOpen(result.LocalNote!);
+                return;
+
+            case ExternalChangeKind.Deleted:
+                // 只关窗、从列表移除（下一句 Refresh 会做）。§11.5 那句「文件已被删除，
+                // 是否重新创建？」本轮不做，见文档 §11.5 末的实现说明。
+                _windowManager.CloseNote(result.LocalNote!.Id);
+                return;
+
+            case ExternalChangeKind.Conflict:
+                await ResolveConflictAsync(result);
+                return;
+
+            default:
+                // 枚举是 Core 的、not 是别人的，多出来的成员意味着这里漏了一条路。
+                throw new ArgumentOutOfRangeException(nameof(result), result.Kind, "未知的外部变更种类。");
+        }
+    }
+
+    /// <summary>
+    /// 真冲突：两边都改了、而且改得不一样，交给用户裁决（§11.4）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 两档：重新加载（放弃本地改动）／覆盖外部版本（保留本地改动，磁盘那一份另存为副本）。
+    /// 第三种「稍后再说」本轮不做——它要的是便签状态条上一个可点的
+    /// 「外部已修改 · 点击处理」（§15.2），那是一个独立工作项。眼下<strong>关掉对话框
+    /// 就等于是稍后再说</strong>：两侧都不动，等下一次外部改动或用户自己再碰一次。
+    /// </para>
+    /// <para>
+    /// 覆盖的那一档若备份失败，就<strong>不覆盖</strong>：那时磁盘上那一版还没留底，
+    /// 写下去会把它彻底抹掉。用户会看到一句失败提示，而内存里那份改动还在。
+    /// </para>
+    /// </remarks>
+    private async Task ResolveConflictAsync(ExternalChangeResult conflict)
+    {
+        Note local = conflict.LocalNote!;
+
+        int choice = await _dialogs.ChooseAsync(
+            "这张便签在外部被修改了",
+            $"「{local.Title}」在别的程序里被改过，而这里也有还没保存的改动。"
+                + "\n\n重新加载会放弃本程序里的改动；覆盖外部版本会把磁盘上那一份"
+                + "另存为副本，然后写回本程序的版本。",
+            ["重新加载（放弃我的改动）", "覆盖外部版本（保留我的改动）"]);
+
+        if (choice < 0)
+        {
+            // 关掉对话框 = 稍后再说。既然没有状态条可以挂，至少留下一行日志：
+            // 用户回头发现两张内容不一致时，这是唯一能说明「当时问过、他选了等一等」的线索。
+            _logger.LogInformation(
+                "外部冲突稍后处理：{NoteId}（用户关掉了对话框，两侧都没动）。",
+                local.Id);
+            return;
+        }
+
+        if (choice == 0)
+        {
+            _noteService.ResolveConflictByReload(conflict);
+
+            // 窗口里那份副本也要跟着换，否则用户继续对着磁盘上已经没有的内容打字。
+            _windowManager.RefreshNote(local.Id);
+            return;
+        }
+
+        try
+        {
+            await _noteService.ResolveConflictByOverwriteAsync(conflict);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NoteTemporarilyLockedException)
+        {
+            await _dialogs.ShowErrorAsync(
+                "覆盖外部版本失败",
+                $"没能把这一版写回去：{ex.Message}\n\n"
+                    + "磁盘上那一份没有被改动，本程序里的改动也都还在，可以稍后再试一次。");
+        }
+    }
+
+    /// <summary>按 <c>layout.json</c> 判断该不该开窗，然后开。</summary>
+    /// <remarks>
+    /// <para>
+    /// 与 <see cref="OpenNote"/> 走的是同一件事，但它不经 <c>INoteService.OpenNote</c>：
+    /// 那个方法是「用户点了这一行」的语义（它会把 <c>IsOpen</c> 置为真并落盘），
+    /// 而外部新建的便签不该因为别人建了个文件就自动开。
+    /// </para>
+    /// <para>
+    /// <strong>必须是 <see cref="LayoutService.TryGet"/> 而不是 <c>GetOrCreate</c></strong>：
+    /// <see cref="NoteLayout.IsOpen"/> 的默认值是 <see langword="true"/>（§8.3，为的是
+    /// 「上次开着、这次也开着」），所以对一个从没在 <c>layout.json</c> 里出现过的 id
+    /// 调 <c>GetOrCreate</c>，拿到的是一条<em>刚被建出来、且开着</em>的布局——
+    /// 别人在笔记目录里丢一个 <c>.md</c> 就会弹出一扇窗。它还会顺手把这一条写进
+    /// <c>layout.json</c>，给一张用户从没打开过的便签留下一条布局。
+    /// <c>TryGet</c> 既不加条目也不安排落盘，正是这里要的「只问一下」。
+    /// </para>
+    /// <para>
+    /// 与 <c>NoteService.OpenAll</c>（§17.1 第 11 步的恢复）用的是同一条判据，
+    /// 于是「上次开着」的便签搬家再搬回来，窗口会自己回来；没开过的则安静地进列表。
+    /// </para>
+    /// </remarks>
+    private void NoteOpen(Note note)
+    {
+        if (_layoutService.TryGet(note.Id) is { IsOpen: true } layout)
+        {
+            ShowNote(note, layout);
+        }
     }
 
     /// <summary>开一张便签的窗口：工厂造 ViewModel，窗口管理层开窗。</summary>

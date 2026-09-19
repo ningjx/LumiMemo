@@ -26,6 +26,17 @@ public sealed class NoteStore
     private readonly Dictionary<Guid, Note> _notes = [];
 
     /// <summary>
+    /// 文件路径 → 便签 id（§10.2）。
+    /// </summary>
+    /// <remarks>
+    /// 只为「按路径找便签」存在，而这件事只有外部文件变化才需要：文件被删掉之后磁盘上
+    /// 已经没有 id 可读了，而内存里那张还必须找出来。<see cref="Add"/>、<see cref="Update"/>、
+    /// <see cref="Remove"/>、<see cref="Clear"/> 会同步维护它，因此它不会领先于
+    /// <see cref="_notes"/> 任何一步。
+    /// </remarks>
+    private readonly Dictionary<string, Guid> _byPath = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
     /// 排序后的快照缓存（§9.1、§3.4 规则 T2）。
     /// </summary>
     /// <remarks>
@@ -36,6 +47,34 @@ public sealed class NoteStore
 
     /// <summary>取便签，不存在时返回 <c>null</c>。</summary>
     public Note? TryGet(Guid id) => _notes.GetValueOrDefault(id);
+
+    /// <summary>
+    /// 按文件路径取便签，路径上没有便签时返回 <c>null</c>（§10.2）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 外部变化只能按路径定位便签：文件被删掉之后磁盘上连 id 都没得读，
+    /// 而这个路径在内存里可能正对应着一张开着的便签（§11.4）。
+    /// </para>
+    /// <para>
+    /// 索引是在 <see cref="Add"/> / <see cref="Update"/> 那一刻按 <see cref="Note.FilePath"/>
+    /// 记下的，之后直接改写 <c>note.FilePath</c> 不会更新它。本程序里会改这个字段的只有
+    /// 移动便签（<c>MoveNoteAsync</c>，尚未接入），而且那条路会重扫一遍，
+    /// 所以这里不为此加监听。最后那句比对代价极低，留着它，索引万一落后也不会给出错误答案。
+    /// </para>
+    /// </remarks>
+    public Note? TryGetByPath(string path)
+    {
+        if (string.IsNullOrEmpty(path) || !_byPath.TryGetValue(path, out Guid id))
+        {
+            return null;
+        }
+
+        return _notes.TryGetValue(id, out Note? note)
+            && string.Equals(note.FilePath, path, StringComparison.OrdinalIgnoreCase)
+                ? note
+                : null;
+    }
 
     /// <summary>
     /// 返回全部便签的只读快照（§9.1）。
@@ -63,6 +102,8 @@ public sealed class NoteStore
     {
         ArgumentNullException.ThrowIfNull(note);
 
+        Index(note);
+
         _notes[note.Id] = note;
         _orderedCache = null;
     }
@@ -79,14 +120,17 @@ public sealed class NoteStore
     {
         ArgumentNullException.ThrowIfNull(note);
 
+        Index(note);
+
         _notes[note.Id] = note;
         _orderedCache = null;
     }
 
     public void Remove(Guid id)
     {
-        if (_notes.Remove(id))
+        if (_notes.Remove(id, out Note? removed))
         {
+            _byPath.Remove(removed.FilePath);
             _orderedCache = null;
         }
     }
@@ -94,6 +138,19 @@ public sealed class NoteStore
     public void Clear()
     {
         _notes.Clear();
+        _byPath.Clear();
         _orderedCache = null;
+    }
+
+    /// <summary>把一张便签的路径记进索引，顺手清掉它换路径时留下的旧条目。</summary>
+    private void Index(Note note)
+    {
+        if (_notes.TryGetValue(note.Id, out Note? previous)
+            && !string.Equals(previous.FilePath, note.FilePath, StringComparison.OrdinalIgnoreCase))
+        {
+            _byPath.Remove(previous.FilePath);
+        }
+
+        _byPath[note.FilePath] = note.Id;
     }
 }

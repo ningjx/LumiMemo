@@ -1265,6 +1265,263 @@ public sealed class ManagerViewModelTests
         Assert.Equal(NoteColor.Blue, item.Color);
     }
 
+    // ================= 外部变更落到界面（§10.2、§11.4） =================
+
+    [Fact]
+    public async Task 一批外部变更_逐条交给业务层判定()
+    {
+        // 管理器不做第二遍判断：什么时候算冲突、什么时候算删除全在 Core 里（§11.4）。
+        // 两处各判一遍的话，它们迟早会分家，而症状是「某一种组合下界面与内存不一致」。
+        using var h = new ManagerHarness();
+        Note first = ManagerHarness.NewNote("# 第一张");
+        Note second = ManagerHarness.NewNote("# 第二张");
+        h.NoteService.ExternalChangeResults[first.FilePath] = Reloaded(first);
+        h.NoteService.ExternalChangeResults[second.FilePath] = Reloaded(second);
+
+        await h.Vm.ApplyExternalChangesAsync(
+        [
+            (first.FilePath, new NoteFileSync(first, true)),
+            (second.FilePath, new NoteFileSync(second, true)),
+        ]);
+
+        // 顺序也要原样交出去：「同一个 id 换了个路径」那件事靠的正是批次里的先后。
+        Assert.Equal(
+            [first.FilePath, second.FilePath],
+            h.NoteService.ExternalChanges.Select(change => change.Path));
+    }
+
+    [Fact]
+    public async Task 静默重载_是刷新那扇窗而不是关掉重开()
+    {
+        // 关掉再开回来也能拿到新内容，但用户的光标、滚动位置、
+        // 以及他刚把窗口拖到的地方都会跳一下——为一次外部改动付这个代价太贵。
+        using var h = new ManagerHarness();
+        Note note = ManagerHarness.NewNote("# 内容");
+        h.Add(note);
+        h.NoteService.ExternalChangeResults[note.FilePath] = Reloaded(note);
+
+        await h.Vm.ApplyExternalChangesAsync([(note.FilePath, new NoteFileSync(note, true))]);
+
+        Assert.Equal([note.Id], h.Windows.RefreshedNotes);
+        Assert.Empty(h.Windows.ClosedNotes);
+    }
+
+    [Fact]
+    public async Task 静默重载_那扇窗里的正文也跟着换成磁盘版()
+    {
+        // 上一条只证明「调了 RefreshNote」。这一条才验到用户看得见的那一面：
+        // 窗口里的 ViewModel 有它自己一份正文副本，Store 里那个实例换了内容，
+        // 它不会自己知道——不搬的话用户会对着旧内容继续打字，而下一次自动保存
+        // 会把他打的字连同旧内容一起写出去。
+        using var h = new ManagerHarness();
+        Note note = ManagerHarness.NewNote("# 旧内容");
+        h.Add(note);
+        h.Vm.Refresh();
+
+        // 窗口得先真的开着：管理器这条路上，只有开过窗才有「窗口里那份副本」。
+        h.NoteService.OpenNoteHandler = id => new NoteOpenRequest(note, h.LayoutStore.GetOrCreate(id));
+        h.Vm.OpenNote(h.Vm.Notes[0]);
+
+        NoteViewModel shown = h.Windows.LastShownViewModel!;
+        Assert.Equal("# 旧内容", shown.Content);
+
+        // 外面把文件改了，业务层已经把新内容搬进 Store 里那个实例。
+        note.Content = "# 磁盘上的新内容";
+        h.NoteService.ExternalChangeResults[note.FilePath] = Reloaded(note);
+
+        await h.Vm.ApplyExternalChangesAsync([(note.FilePath, new NoteFileSync(note, true))]);
+
+        Assert.Equal("# 磁盘上的新内容", shown.Content);
+    }
+
+    [Fact]
+    public async Task 外部删了_关掉那扇窗并从列表里少一条()
+    {
+        using var h = new ManagerHarness();
+        Note note = ManagerHarness.NewNote("# 内容");
+        h.Add(note);
+        h.Vm.Refresh();
+
+        // 「从 Store 与索引里摘掉」是 Core 干的（NoteService.Merge → Detach），
+        // 而本替身是哑的、不碰 Store。这里手动补上那一步，
+        // 好让「列表里也少一条」这条断言真的成立——那是用户看得见的那一半。
+        h.Store.Remove(note.Id);
+        h.NoteService.ExternalChangeResults[note.FilePath] =
+            new ExternalChangeResult(ExternalChangeKind.Deleted, note, new NoteFileSync(null, true));
+
+        await h.Vm.ApplyExternalChangesAsync([(note.FilePath, new NoteFileSync(null, true))]);
+
+        Assert.Equal([note.Id], h.Windows.ClosedNotes);
+        Assert.Empty(h.Vm.Notes);
+    }
+
+    [Fact]
+    public async Task 外部新建的便签_默认只进列表不开窗()
+    {
+        // 不请自来地弹一扇窗比「没自动打开」更烦人。判据只有 layout 里那条 IsOpen，
+        // 而外面新建的文件在 layout.json 里根本没有条目（§17.1 第 11 步用的是同一条）。
+        using var h = new ManagerHarness();
+        Note fresh = ManagerHarness.NewNote("# 别人建的");
+        h.Add(fresh);
+        h.NoteService.ExternalChangeResults[fresh.FilePath] = Created(fresh);
+
+        await h.Vm.ApplyExternalChangesAsync([(fresh.FilePath, new NoteFileSync(fresh, true))]);
+
+        Assert.Empty(h.Windows.Calls);
+        Assert.Single(h.Vm.Notes);
+    }
+
+    [Fact]
+    public async Task 外部新建的便签_布局里记着开着才开窗()
+    {
+        // 这张便签本来是本程序里的，文件被搬走又搬回来之后 layout.json 里那条 IsOpen 还在。
+        using var h = new ManagerHarness();
+        Note fresh = ManagerHarness.NewNote("# 回来的一张");
+        h.Add(fresh);
+        h.LayoutStore.GetOrCreate(fresh.Id).IsOpen = true;
+        h.NoteService.ExternalChangeResults[fresh.FilePath] = Created(fresh);
+
+        await h.Vm.ApplyExternalChangesAsync([(fresh.FilePath, new NoteFileSync(fresh, true))]);
+
+        Assert.Equal($"ShowNote({fresh.Id})", Assert.Single(h.Windows.Calls));
+    }
+
+    [Fact]
+    public async Task 同一个路径换了身份_先关掉旧的再开新的()
+    {
+        using var h = new ManagerHarness();
+        Note oldNote = ManagerHarness.NewNote("# 旧身份");
+        Note newNote = ManagerHarness.NewNote("# 新身份");
+        h.Add(newNote);
+        h.LayoutStore.GetOrCreate(newNote.Id).IsOpen = true;
+        h.NoteService.ExternalChangeResults[newNote.FilePath] = new ExternalChangeResult(
+            ExternalChangeKind.Created, newNote, new NoteFileSync(newNote, true), oldNote);
+
+        await h.Vm.ApplyExternalChangesAsync([(newNote.FilePath, new NoteFileSync(newNote, true))]);
+
+        // 旧的必须先关：它挂在窗口上的那个实例已经不在内存里了，留着就是一扇对着空气的窗，
+        // 用户在里头敲的字谁也收不到。顺序反了的话，第二句开窗会先把它顶掉再关——
+        // 结果是同一个 id 上一扇刚开的窗被立刻关掉。
+        Assert.Equal([$"CloseNote({oldNote.Id})", $"ShowNote({newNote.Id})"], h.Windows.Calls);
+    }
+
+    [Fact]
+    public async Task 冲突选重新加载_交给业务层并刷新窗口()
+    {
+        using var h = new ManagerHarness();
+        Note note = ManagerHarness.NewNote("# 本地版");
+        h.Add(note);
+        h.Dialogs.ChooseResult = 0;
+        ExternalChangeResult conflict = Conflict(note);
+        h.NoteService.ExternalChangeResults[note.FilePath] = conflict;
+
+        await h.Vm.ApplyExternalChangesAsync([(note.FilePath, new NoteFileSync(conflict.Disk.Note, true))]);
+
+        Assert.Same(conflict, Assert.Single(h.NoteService.ConflictsReloaded));
+        Assert.Empty(h.NoteService.ConflictsOverwritten);
+
+        // 窗口里那份副本也要跟着换，否则用户继续对着一个磁盘上已经不存在的版本打字。
+        Assert.Equal([note.Id], h.Windows.RefreshedNotes);
+    }
+
+    [Fact]
+    public async Task 冲突选覆盖_交给业务层去备份再写回()
+    {
+        using var h = new ManagerHarness();
+        Note note = ManagerHarness.NewNote("# 本地版");
+        h.Add(note);
+        h.Dialogs.ChooseResult = 1;
+        ExternalChangeResult conflict = Conflict(note);
+        h.NoteService.ExternalChangeResults[note.FilePath] = conflict;
+
+        await h.Vm.ApplyExternalChangesAsync([(note.FilePath, new NoteFileSync(conflict.Disk.Note, true))]);
+
+        Assert.Same(conflict, Assert.Single(h.NoteService.ConflictsOverwritten));
+        Assert.Empty(h.NoteService.ConflictsReloaded);
+    }
+
+    [Fact]
+    public async Task 冲突对话框被关掉_两侧都不动()
+    {
+        // 关掉 = 「稍后再说」。本轮没有状态条可以挂（§15.2 那一档不做），
+        // 但两侧都必须原封不动：替用户默默选一边的代价是丢掉另一边的改动。
+        using var h = new ManagerHarness();
+        Note note = ManagerHarness.NewNote("# 本地版");
+        h.Add(note);
+        h.Dialogs.ChooseResult = -1;
+        ExternalChangeResult conflict = Conflict(note);
+        h.NoteService.ExternalChangeResults[note.FilePath] = conflict;
+
+        await h.Vm.ApplyExternalChangesAsync([(note.FilePath, new NoteFileSync(conflict.Disk.Note, true))]);
+
+        Assert.Empty(h.NoteService.ConflictsReloaded);
+        Assert.Empty(h.NoteService.ConflictsOverwritten);
+        Assert.Empty(h.Windows.Calls);
+        Assert.Empty(h.Dialogs.ErrorRequests);
+    }
+
+    [Fact]
+    public async Task 覆盖失败_提示用户而不是把异常抛出去()
+    {
+        // 备份写不出来（磁盘满、没有权限）时业务层会抛。异常逃出去就落到 §17.5 第一层，
+        // 而那一层只能说「程序遇到了一个问题」，说不出「你的改动还在，可以稍后再试」。
+        using var h = new ManagerHarness();
+        Note note = ManagerHarness.NewNote("# 本地版");
+        h.Add(note);
+        h.Dialogs.ChooseResult = 1;
+        h.NoteService.OverwriteException = new IOException("文件被占用");
+        ExternalChangeResult conflict = Conflict(note);
+        h.NoteService.ExternalChangeResults[note.FilePath] = conflict;
+
+        // 「不抛」是这条用例的要点：这一行本身不炸就是断言。
+        await h.Vm.ApplyExternalChangesAsync([(note.FilePath, new NoteFileSync(conflict.Disk.Note, true))]);
+
+        string error = Assert.Single(h.Dialogs.ErrorRequests);
+
+        Assert.StartsWith("覆盖外部版本失败|", error, StringComparison.Ordinal);
+        Assert.Contains("文件被占用", error, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task 一条都没变_不刷列表()
+    {
+        // 自写事件（我们刚保存完，监听器把那个事件原样报回来）落在这里：结论是 None。
+        // 若照样 Refresh 一遍，Notes 会被清空重建，ListBox 顺手把 SelectedItem 置成 null——
+        // 用户选中的那行就这么没了，而他什么都没做。
+        using var h = new ManagerHarness();
+        Note note = ManagerHarness.NewNote("# 内容");
+        h.Add(note);
+        h.Vm.Refresh();
+        NoteListItem before = h.Vm.Notes[0];
+
+        // 替身没配过的路径返回的正是「什么都没变」。
+        await h.Vm.ApplyExternalChangesAsync([(note.FilePath, new NoteFileSync(note, false))]);
+
+        Assert.Same(before, h.Vm.Notes[0]);
+    }
+
+    [Fact]
+    public async Task 一批很多条_中途松几次手()
+    {
+        // §10.6：一次性处理几百条会让重绘与用户的输入一直排在后面。
+        // 每 ExternalChangeBatchSize 条松一次手，与恢复自动打开的便签同一手法。
+        using var h = new ManagerHarness();
+        List<(string Path, NoteFileSync Sync)> batch = [];
+
+        for (int i = 0; i < 25; i++)
+        {
+            Note note = ManagerHarness.NewNote($"# 第 {i} 张");
+            h.Add(note);
+            h.NoteService.ExternalChangeResults[note.FilePath] = Reloaded(note);
+            batch.Add((note.FilePath, new NoteFileSync(note, true)));
+        }
+
+        await h.Vm.ApplyExternalChangesAsync(batch);
+
+        // 25 条、每 20 条一次 → 恰好一次。
+        Assert.Single(h.Dispatcher.YieldOrder);
+    }
+
     // ================= 别处改了便签集合 =================
 
     [Fact]
@@ -1296,4 +1553,38 @@ public sealed class ManagerViewModelTests
     /// </remarks>
     private static int ShownCount(ManagerHarness h) =>
         h.Windows.Calls.Count(call => call.StartsWith("ShowNote(", StringComparison.Ordinal));
+
+    // ---- 外部变更那几条用例的结论构造 ----
+    //
+    // 都是造假：真判定在 Core 里（NoteService.ApplyExternalChange），由 Core.Tests 覆盖（§11.4）。
+    // 这里要的只是「Core 给出这么一条结论时，管理器把界面弄成什么样」——
+    // 管理器不做第二遍判断，所以用例里也不该出现「怎么判出来的」。
+
+    /// <summary>内存里那张被磁盘版静默替换了。</summary>
+    private static ExternalChangeResult Reloaded(Note note) =>
+        new(ExternalChangeKind.Reloaded, note, new NoteFileSync(note, true));
+
+    /// <summary>磁盘上多了一张。</summary>
+    private static ExternalChangeResult Created(Note note) =>
+        new(ExternalChangeKind.Created, note, new NoteFileSync(note, true));
+
+    /// <summary>两边都改了、改得不一样。</summary>
+    /// <remarks>
+    /// 磁盘那一份刻意与本地同 id 同路径、只有正文不同：真实冲突就是这个形状
+    /// （同一个文件、同一个 id，两个内容）。用一张不相干的便签充数的话，
+    /// 「覆盖」那一档要备份的是谁就说不清了。
+    /// </remarks>
+    private static ExternalChangeResult Conflict(Note local)
+    {
+        var disk = new Note
+        {
+            Id = local.Id,
+            FilePath = local.FilePath,
+            Content = "# 磁盘上那一版",
+            CreatedAt = local.CreatedAt,
+            UpdatedAt = local.UpdatedAt,
+        };
+
+        return new ExternalChangeResult(ExternalChangeKind.Conflict, local, new NoteFileSync(disk, true));
+    }
 }

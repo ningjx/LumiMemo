@@ -37,6 +37,28 @@ public sealed class FakeNoteRepository : INoteRepository
     /// <summary><see cref="CreateAsync"/> 要抛的异常；不设时正常返回。</summary>
     public Exception? CreateException { get; set; }
 
+    /// <summary>
+    /// 逐路径指定 <see cref="ReloadAsync"/> 的结果，<strong>优先于 <see cref="NotesToLoad"/></strong>。
+    /// </summary>
+    /// <remarks>
+    /// 外部变更那套逻辑要的是一对值：「这个路径读到了什么」与「它跟上次同步的字节一不一样」。
+    /// <see cref="NotesToLoad"/> 只表达得了前一半，而「一样」恰恰是自写抑制的判据，
+    /// 也是最需要被钉住的一条（漏了它，每次保存都会把自己的写入当成外部改动）。
+    /// </remarks>
+    public Dictionary<string, NoteFileSync> ReloadResults { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary><see cref="ReloadAsync"/> 收到过的路径，按发生顺序。</summary>
+    public List<string> ReloadedPaths { get; } = [];
+
+    /// <summary>所有交给 <see cref="BackupConflictCopyAsync"/> 的路径，按发生顺序。</summary>
+    public List<string> BackedUpPaths { get; } = [];
+
+    /// <summary><see cref="BackupConflictCopyAsync"/> 要抛的异常；不设时正常返回一个副本路径。</summary>
+    /// <remarks>
+    /// 用它模拟「副本没留成」：那时覆盖必须就此停下，否则磁盘上那一版就真没了。
+    /// </remarks>
+    public Exception? BackupException { get; set; }
+
     /// <inheritdoc />
     public Task<IReadOnlyList<Note>> LoadAllAsync(CancellationToken ct = default)
     {
@@ -46,12 +68,41 @@ public sealed class FakeNoteRepository : INoteRepository
     }
 
     /// <inheritdoc />
-    public Task<Note?> ReloadAsync(string path, CancellationToken ct = default)
+    public Task<NoteFileSync> ReloadAsync(string path, CancellationToken ct = default)
     {
+        ReloadedPaths.Add(path);
+
+        if (ReloadResults.TryGetValue(path, out NoteFileSync? scripted))
+        {
+            return Task.FromResult(scripted);
+        }
+
         Note? found = NotesToLoad.Find(
             note => string.Equals(note.FilePath, path, StringComparison.OrdinalIgnoreCase));
 
-        return Task.FromResult(found);
+        // 进过 NotesToLoad 的一律当成「变过」：替身没有基线可比，
+        // 而默认成「没变」会让本该被处理的用例静默什么都不做——比报错难查得多。
+        return Task.FromResult(new NoteFileSync(found, DiskChanged: true));
+    }
+
+    /// <inheritdoc />
+    /// <remarks>本替身服务的用例只关心 .md，别的路径一律不算便签。</remarks>
+    public bool IsNoteFile(string path) =>
+        path.EndsWith(".md", StringComparison.OrdinalIgnoreCase);
+
+    /// <inheritdoc />
+    public Task<string?> BackupConflictCopyAsync(string path, CancellationToken ct = default)
+    {
+        BackedUpPaths.Add(path);
+
+        if (BackupException is { } exception)
+        {
+            return Task.FromException<string?>(exception);
+        }
+
+        // 真的仓储会把副本写进同一个目录，名字与扩展名都有讲究（§11.4）。
+        // 替身只要一个「确实做了备份」的证据，名字是什么由集成测试去钉。
+        return Task.FromResult<string?>($"{path}.conflict-backup");
     }
 
     /// <inheritdoc />

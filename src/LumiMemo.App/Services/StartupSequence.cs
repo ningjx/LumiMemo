@@ -52,6 +52,7 @@ public sealed class StartupSequence : ISettingsApplier
     private readonly ManagerWindow _managerWindow;
     private readonly TrayViewModel _tray;
     private readonly TrayService _trayService;
+    private readonly FileWatchService _fileWatchService;
     private readonly ILogger<StartupSequence> _logger;
 
     public StartupSequence(
@@ -70,6 +71,7 @@ public sealed class StartupSequence : ISettingsApplier
         ManagerWindow managerWindow,
         TrayViewModel tray,
         TrayService trayService,
+        FileWatchService fileWatchService,
         ILogger<StartupSequence> logger)
     {
         ArgumentNullException.ThrowIfNull(paths);
@@ -87,6 +89,7 @@ public sealed class StartupSequence : ISettingsApplier
         ArgumentNullException.ThrowIfNull(managerWindow);
         ArgumentNullException.ThrowIfNull(tray);
         ArgumentNullException.ThrowIfNull(trayService);
+        ArgumentNullException.ThrowIfNull(fileWatchService);
         ArgumentNullException.ThrowIfNull(logger);
 
         _paths = paths;
@@ -104,6 +107,7 @@ public sealed class StartupSequence : ISettingsApplier
         _managerWindow = managerWindow;
         _tray = tray;
         _trayService = trayService;
+        _fileWatchService = fileWatchService;
         _logger = logger;
     }
 
@@ -152,6 +156,16 @@ public sealed class StartupSequence : ISettingsApplier
         await _noteService.LoadAllAsync(ct);
 
         _manager.Refresh();
+
+        // §10.1：开始监听笔记目录。位置是有讲究的——必须排在刚才那次扫描<strong>之后</strong>。
+        // 反过来的话，扫描期间到达的事件会去比对一份还没建好的 NoteStore；
+        // 而且扫描本身要把「上次同步的字节」基线填进仓储，那正是自写抑制的判据，
+        // 基线没填之前每一个事件看起来都像外部改动。
+        //
+        // 它紧跟在扫描后面而不是排到整个启动序列末尾：从扫描结束到监听开始这段空档里，
+        // 用户改的 .md 没有任何人会看见（监听器还没跑，扫描也已经过去了）。
+        // 剩下的启动步骤（恢复上次开着的便签）可能要几百毫秒，不该白白算进这段空档。
+        _fileWatchService.Start();
 
         // 托盘必须最先建起来：关闭策略是「有图标才收得进去」，反过来的话，
         // 用户在启动那一瞬间关掉管理器就真的退出了。
@@ -218,6 +232,10 @@ public sealed class StartupSequence : ISettingsApplier
         Task.Run(async () =>
         {
             _autoSaveService.Dispose();
+
+            // 紧跟着停掉监听：再往后每多待一秒，就多一次「退出到一半、外部又改了文件」
+            // 的机会，而那时冒出来的窗口是在进程正在死的当口创建的。
+            _fileWatchService.Dispose();
 
             await _noteService.SaveAllAsync().ConfigureAwait(false);
             await _layoutService.FlushNowAsync().ConfigureAwait(false);

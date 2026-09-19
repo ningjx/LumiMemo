@@ -29,11 +29,67 @@ public interface INoteRepository
     Task<IReadOnlyList<Note>> LoadAllAsync(CancellationToken ct = default);
 
     /// <summary>重新读取单个文件，用于外部修改后同步（§3.3 流 2）。</summary>
-    /// <returns>文件已被外部删除时返回 <c>null</c>。</returns>
-    Task<Note?> ReloadAsync(string path, CancellationToken ct = default);
+    /// <remarks>
+    /// <para>
+    /// 返回的不只是「读到了什么」，还有<strong>磁盘相对本程序上次同步这个文件变了没有</strong>
+    /// （见 <see cref="NoteFileSync.DiskChanged"/>）。这一格是判断「这次事件是不是我们自己写盘
+    /// 引起的」的唯一依据（§10.3），也是 §11.4 三路比较里的基线。做成返回值而不是让调用方
+    /// 自己去问，是因为那个判据只有仓储层手里的「上次读/写的字节」算得出来。
+    /// </para>
+    /// <para>
+    /// 文件已被外部删除时 <see cref="NoteFileSync.Note"/> 为 <c>null</c>，
+    /// 且 <see cref="NoteFileSync.DiskChanged"/> 为 <see langword="true"/>——
+    /// 从「有一份内容」变成「没有」本身就是变化。这不至于误伤：内存里根本没有这个路径时，
+    /// 上层拿到「没了」的结论也无事可做。
+    /// </para>
+    /// <para>
+    /// 本方法<strong>不</strong>回写文件：外部编辑是用户自己的动作，我们只同步内存。
+    /// 反过来立刻写回会和用户的编辑器抢文件（§10.3）。
+    /// </para>
+    /// </remarks>
+    Task<NoteFileSync> ReloadAsync(string path, CancellationToken ct = default);
+
+    /// <summary>
+    /// 这个路径是不是本程序该管的便签文件（§5.7、§10.1）。
+    /// </summary>
+    /// <remarks>
+    /// 给文件监听用。<c>FileSystemWatcher</c> 报的是<strong>目录里发生的一切</strong>，
+    /// 而扫描器（<c>LoadAllAsync</c>）收的是另一个集合：它以 <c>.</c> 开头的目录
+    /// （用户的 <c>.obsidian</c>、<c>.git</c>）、保留的附件目录、<c>.lumitmp</c> 残留、
+    /// 以及非 <c>.md</c> 的文件全都不算便签。两处判据必须是<strong>同一套</strong>——
+    /// 监听器比扫描器松的话，用户改一下 Obsidian 的配置就会在便签列表里冒出一张
+    /// 重启后又不存在的幽灵便签。
+    /// </remarks>
+    bool IsNoteFile(string path);
 
     /// <summary>把便签写回磁盘，含 Front Matter（§11.2 的原子保存）。</summary>
     Task SaveAsync(Note note, CancellationToken ct = default);
+
+    /// <summary>
+    /// 把磁盘上这一版另存成一个冲突副本，用于「覆盖外部版本」之前留底（§11.4）。
+    /// </summary>
+    /// <param name="path">被覆盖的那个便签文件的完整路径。</param>
+    /// <param name="ct">取消标记。</param>
+    /// <returns>副本的完整路径；原文件已经不在时返回 <c>null</c>。</returns>
+    /// <remarks>
+    /// <para>
+    /// 「覆盖外部版本」是<strong>破坏性</strong>的那一档，而用户点它的时候心里想的是
+    /// 「我这份才是对的」——万一他想错了，磁盘上那份就是回来找的唯一线索。
+    /// 所以覆盖之前先把它留在旁边，而不是就地抹掉。
+    /// </para>
+    /// <para>
+    /// 副本落在<strong>同一个目录</strong>里
+    /// （<c>{无扩展名的文件名}.conflict-{yyyyMMdd-HHmmss}.md</c>）：
+    /// 换一个目录用户就永远找不到它。代价是它下次扫描时会作为一张新便签出现
+    /// ——这是知情的选择，比悄悄丢掉一边强。
+    /// </para>
+    /// <para>
+    /// <strong>读不出来（权限、被独占锁定）与写不出去都抛异常</strong>，不吞、也不返回
+    /// <see langword="null"/>：调用方要靠它决定「副本没留成，那就别覆盖了」。
+    /// 只有「原文件已经不在」才是 <see langword="null"/>——那不是失败，是没有东西可留底。
+    /// </para>
+    /// </remarks>
+    Task<string?> BackupConflictCopyAsync(string path, CancellationToken ct = default);
 
     /// <summary>
     /// 在笔记目录里建一张新的空白便签，并立刻落盘（§5.6、§3.3 流 3）。

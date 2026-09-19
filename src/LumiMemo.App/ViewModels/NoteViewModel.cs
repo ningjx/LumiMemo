@@ -43,6 +43,15 @@ public sealed partial class NoteViewModel : ObservableObject, IDisposable
 
     private bool _isDisposed;
 
+    /// <summary>
+    /// 正在把 <see cref="Note"/> 的值搬进界面。搬的期间 <see cref="OnContentChanged"/> 必须让路。
+    /// </summary>
+    /// <remarks>
+    /// 用布尔闸而不是「比一比值有没有变」：值确实变了（这次搬的就是新的），
+    /// 要区分的不是「变没变」而是「这个变化是谁引起的」。
+    /// </remarks>
+    private bool _isRefreshing;
+
     /// <param name="note">本便签的数据模型。ViewModel 与它共存亡。</param>
     /// <param name="layout">本便签的设备状态。折叠/置顶/缩放直接读写它。</param>
     /// <param name="messenger">
@@ -209,8 +218,49 @@ public sealed partial class NoteViewModel : ObservableObject, IDisposable
     /// </remarks>
     partial void OnContentChanged(string value)
     {
+        // 「从磁盘搬回来」的那一次不算用户编辑，见 RefreshFromNote。
+        if (_isRefreshing)
+        {
+            return;
+        }
+
         _noteService.ApplyLocalEdit(Note, value);
         _autoSaveService.ScheduleSave(Note.Id);
+    }
+
+    /// <summary>
+    /// 把 <see cref="Note"/> 此刻的正文与颜色重新读进界面（§10.2）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 外部改动之后，内容已经在 <c>NoteStore</c> 里那个实例上了，而界面绑的是本类自己的一份
+    /// 副本（<see cref="Content"/> 有自己的字段），不会自己知道。
+    /// </para>
+    /// <para>
+    /// <strong><see cref="OnContentChanged"/> 必须被闸住</strong>：它会把这个值推回业务层、
+    /// 再排一次去抖保存。不闸的话，「把磁盘上的内容搬进界面」会被当成本地编辑，
+    /// 用户什么都没做，文件却被重写一遍，修改时间也跟着变——而 §5.9 那条「没变就不写」的自检
+    /// 恰好会挡掉它，于是症状更隐蔽：多数时候看不出问题，只有在外部那一版与内存版
+    /// 恰好差一点点的时候才写错。
+    /// </para>
+    /// <para>
+    /// 已知的小瑕疵：整串替换正文会把光标挪到末尾。只发生在外部队这个文件动手的那一瞬，
+    /// 代价可以接受。
+    /// </para>
+    /// </remarks>
+    public void RefreshFromNote()
+    {
+        _isRefreshing = true;
+
+        try
+        {
+            Content = Note.Content;
+            Color = Note.Color;
+        }
+        finally
+        {
+            _isRefreshing = false;
+        }
     }
 
     /// <summary>实现 <see cref="IDisposable"/>，且必须幂等（§18.3）。</summary>

@@ -238,6 +238,13 @@ public sealed class WindowManager : IWindowManager, IDisposable
     }
 
     /// <inheritdoc />
+    public void RefreshNote(Guid noteId)
+    {
+        // 没有窗口就什么都不做：那是最常见的情况，不是异常。
+        GetViewModel(noteId)?.RefreshFromNote();
+    }
+
+    /// <inheritdoc />
     public void HideAllNotes()
     {
         foreach (NoteWindow window in _windows.Values)

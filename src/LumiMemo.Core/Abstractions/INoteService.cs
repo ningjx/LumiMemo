@@ -19,19 +19,78 @@ public interface INoteService
     // ---- 磁盘 → 内存 ----
 
     /// <summary>
-    /// 扫描笔记目录并建立 <c>NoteStore</c>（§5.5 的启动补给流程、§17.1 的启动顺序）。
+    /// 扫描笔记目录并把结果<strong>合并进</strong> <c>NoteStore</c>（§5.5 的启动补给流程、§17.1 的启动顺序）。
     /// </summary>
+    /// <param name="ct">取消标记。</param>
+    /// <returns>
+    /// 内存相对磁盘发生过的变化，逐条列出（新增 / 重载 / 删除 / 冲突）。
+    /// 启动时 Store 是空的，因此它整份都是「新增」，调用方直接丢掉即可。
+    /// </returns>
     /// <remarks>
+    /// <para>
     /// 实现必须遵守 §5.5 的顺序：解析 → 补写缺失的 id → 处理 id 冲突 → 建 Store。
     /// 注意 <strong>watcher 由调用方在这之后才启动</strong>，因为本方法会修改一批用户文件，
     /// 若 watcher 已在运行会立刻收到一堆 Changed 事件，与自写抑制逻辑叠加后时序极难调试。
+    /// </para>
+    /// <para>
+    /// <strong>是「合并」而不是「清空重建」</strong>（§10.4 的差异比对就是它）：
+    /// 同 id 的便签把磁盘版的字段搬进<strong>内存里那个实例</strong>，只有磁盘上多出来的才新建、
+    /// 已经不在磁盘上的才摘除。清空重建会换掉 <c>Note</c> 对象，而便签窗口绑的正是那个引用——
+    /// 用户在窗口里改的字既进不了 Store 也存不下去，等于「重新加载全部便签」在有未保存改动的
+    /// 便签上丢数据。这是本轮修掉的一个既有缺陷。
+    /// </para>
+    /// <para>
+    /// 有未落盘改动、且磁盘版本不同的便签<strong>会被报成冲突而不是被覆盖</strong>，
+    /// 由调用方去问用户——与文件监听走同一套判定。
+    /// </para>
     /// </remarks>
-    Task LoadAllAsync(CancellationToken ct = default);
+    Task<IReadOnlyList<ExternalChangeResult>> LoadAllAsync(CancellationToken ct = default);
 
-    /// <summary>把一个从磁盘读出的解析结果应用到内存状态（§3.3 流 2 的终点）。</summary>
+    /// <summary>
+    /// 把一个外部文件变化应用到内存状态（§3.3 流 2 的终点、§10.2、§11.4）。
+    /// </summary>
     /// <param name="path">文件的完整路径，用于定位 <c>NoteStore</c> 中的便签。</param>
-    /// <param name="readResult">解析器输出，尚未绑定 id 与路径。</param>
-    void ApplyExternalChange(string path, NoteReadResult readResult);
+    /// <param name="fileSync">这次读盘的结果，以及它与本程序上次同步这个文件的差异。</param>
+    /// <returns>
+    /// 内存变成了什么样。<see cref="ExternalChangeKind.None"/> 表示磁盘其实没变——
+    /// 自写事件、或者同一份内容的重复通知，调用方可以什么都不做。
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// <strong>判定不靠时间戳，靠三样东西</strong>（§11.4）：磁盘现在是什么
+    /// （<paramref name="fileSync"/>）、本程序上次同步这个文件时它是什么
+    /// （<paramref name="fileSync"/> 的 <c>DiskChanged</c>）、以及内存这一份有没有没落盘的改动。
+    /// 三者组合出「忽略 / 静默重载 / 冲突」三种结论，见 <see cref="ExternalChangeKind"/>。
+    /// </para>
+    /// <para>
+    /// <strong>它只改内存，不弹任何界面</strong>：冲突时它停下来，把两边都交回给调用方，
+    /// 由 App 层去问用户（Core 不认识对话框与窗口，§3.1）。
+    /// </para>
+    /// </remarks>
+    ExternalChangeResult ApplyExternalChange(string path, NoteFileSync fileSync);
+
+    /// <summary>
+    /// §11.4 冲突处置的第一档「重新加载」：采用磁盘那一版，丢掉本地的改动。
+    /// </summary>
+    /// <remarks>
+    /// 内容来自 <paramref name="conflict"/> 里带着的那一版磁盘便签——它是发现冲突时读到的，
+    /// 不是现在重读的。这中间用户又改了文件的话，下一次事件会再走一遍判定，不会漏。
+    /// </remarks>
+    void ResolveConflictByReload(ExternalChangeResult conflict);
+
+    /// <summary>
+    /// §11.4 冲突处置的第二档「覆盖外部版本」：把本地的改动写回磁盘，磁盘那一版先另存一份副本。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>先备份再覆盖</strong>，而且备份失败就不覆盖：这一档是破坏性的
+    /// （磁盘上的内容即将消失），留一份副本是它唯一的退路。
+    /// </para>
+    /// <para>
+    /// 备份文件名与位置由 <see cref="INoteRepository.BackupConflictCopyAsync"/> 定。
+    /// </para>
+    /// </remarks>
+    Task ResolveConflictByOverwriteAsync(ExternalChangeResult conflict, CancellationToken ct = default);
 
     // ---- 编辑 → 内存（不落盘，落盘由 <see cref="SaveNoteAsync"/> 负责）----
 

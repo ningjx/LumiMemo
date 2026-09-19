@@ -147,19 +147,26 @@ public sealed class MarkdownNoteRepository : INoteRepository
     /// <inheritdoc />
     /// <remarks>
     /// <para>
-    /// 文件被外部删掉时返回 <see langword="null"/>；文件被独占锁定、重试三次仍读不出来时抛
-    /// <see cref="NoteTemporarilyLockedException"/>——这两种情况的处理方式完全不同：
-    /// 前者意味着便签没了，后者意味着便签还在、只是这一刻读不到，调用方必须保留内存里的旧内容。
-    /// 用 <see langword="null"/> 表达后者会让便签从 NoteStore 里消失（§5.10）。
+    /// 文件被外部删掉时 <see cref="NoteFileSync.Note"/> 为 <see langword="null"/>；文件被独占锁定、
+    /// 重试三次仍读不出来时抛 <see cref="NoteTemporarilyLockedException"/>——这两种情况的处理方式
+    /// 完全不同：前者意味着便签没了，后者意味着便签还在、只是这一刻读不到，调用方必须保留内存里的
+    /// 旧内容。用 <see langword="null"/> 表达后者会让便签从 NoteStore 里消失（§5.10）。
     /// </para>
     /// <para>
     /// 本方法<strong>不</strong>回写文件。外部编辑是用户的动作，我们只同步内存，
     /// 反过来立刻写回会和用户的编辑器抢文件（§10.3）。
     /// </para>
+    /// <para>
+    /// <see cref="NoteFileSync.DiskChanged"/> <strong>必须在本方法刷新缓存之前算出来</strong>：
+    /// 算完 <see cref="Cache"/> 一跑，手上那份基线就变成刚刚读到的字节了，之后问什么都只会答「没变」。
+    /// </para>
     /// </remarks>
-    public async Task<Note?> ReloadAsync(string path, CancellationToken ct = default)
+    public async Task<NoteFileSync> ReloadAsync(string path, CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrEmpty(path);
+
+        // 读盘之前先取基线。它是「本程序上次读或写这个文件时，它长什么样」（§10.3）。
+        _ = _states.TryGetValue(path, out NoteFileState? baseline);
 
         byte[] raw;
         try
@@ -168,11 +175,11 @@ public sealed class MarkdownNoteRepository : INoteRepository
         }
         catch (FileNotFoundException)
         {
-            return null;
+            return new NoteFileSync(null, DiskChanged: true);
         }
         catch (DirectoryNotFoundException)
         {
-            return null;
+            return new NoteFileSync(null, DiskChanged: true);
         }
         catch (IOException ex)
         {
@@ -191,12 +198,18 @@ public sealed class MarkdownNoteRepository : INoteRepository
             throw NoteTemporarilyLockedException.ForPath(path, ex);
         }
 
+        byte[] hash = SHA256.HashData(raw);
+
+        // 文件不见了也算变过：从「有一份内容」变成「没有」本身就是变化。
+        // 这里之所以敢无条件报 true，是因为内存里根本没有这条路径时，上层拿到 Deleted
+        // 也不会做什么（它找不到可以摘掉的东西）。
+        bool changed = baseline is null || !baseline.ContentHash.AsSpan().SequenceEqual(hash);
+
         ParsedNoteFile parsed = FrontMatterParser.Parse(raw);
 
         // 身份优先取文件里的 id。文件被外部编辑器清空了 Front Matter 时，
         // 退回上一次记住的 id：外部编辑改的是内容，不该让便签换一个身份（§5.5）。
-        Guid id = parsed.Result.Id
-            ?? (_states.TryGetValue(path, out NoteFileState? state) ? state.LastId : Guid.NewGuid());
+        Guid id = parsed.Result.Id ?? baseline?.LastId ?? Guid.NewGuid();
 
         var note = new Note
         {
@@ -222,9 +235,106 @@ public sealed class MarkdownNoteRepository : INoteRepository
         }
 
         LogParseIssues(path, note.ParseIssues);
-        Cache(path, parsed.Encoding, raw, id);
+        CacheHash(path, parsed.Encoding, hash, id);
 
-        return note;
+        return new NoteFileSync(note, changed);
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// 判据必须与 <see cref="EnumerateNoteFiles"/> 一致，包括「以 <c>.</c> 开头的目录」
+    /// 与附件目录两层——两处放宽一点，用户改一下 Obsidian 的配置就会在便签列表里
+    /// 冒出一张重启后又不存在的幽灵便签（§5.7、§10.1）。
+    /// </remarks>
+    public bool IsNoteFile(string path)
+    {
+        if (string.IsNullOrEmpty(path))
+        {
+            return false;
+        }
+
+        string? root = _paths.NotesFolder;
+        if (string.IsNullOrWhiteSpace(root))
+        {
+            return false;
+        }
+
+        if (!path.EndsWith(NoteFileNameBuilder.Extension, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (path.EndsWith(AtomicFileWriter.TempSuffix, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        string attachments = _paths.AttachmentsDirectory;
+
+        // 从文件往上逐级走，走到笔记目录就算通过；中途撞上被排除的目录、或者走到了
+        // 笔记目录之外，都不算。逐级比较而不是拼相对路径，是为了不必处理「两个路径
+        // 只有一个带结尾斜杠」这类标点差异。
+        for (string? directory = Path.GetDirectoryName(path);
+            directory is not null;
+            directory = Path.GetDirectoryName(directory))
+        {
+            if (string.Equals(directory, root, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            if (string.Equals(directory, attachments, StringComparison.OrdinalIgnoreCase)
+                || Path.GetFileName(directory).StartsWith('.'))
+            {
+                return false;
+            }
+        }
+
+        return false;
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// <para>
+    /// 副本与原件<strong>同目录</strong>：换一个目录用户就永远找不到它了。代价是它下次扫描时
+    /// 会作为一张新便签出现——这是知情的取舍，比悄悄丢掉一边强（§11.4）。
+    /// </para>
+    /// <para>
+    /// 读不出来与写不出去都<strong>直接抛</strong>，不吞也不返回 <see langword="null"/>：
+    /// 调用方要靠这个异常决定「这份副本没留成，那就别覆盖了」。
+    /// 只有「原文件已经不在了」才返回 <see langword="null"/>——那不是失败，是没有东西可留底。
+    /// </para>
+    /// </remarks>
+    public async Task<string?> BackupConflictCopyAsync(string path, CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(path);
+
+        byte[] raw;
+        try
+        {
+            raw = await ReadAllBytesWithRetryAsync(path, ct).ConfigureAwait(false);
+        }
+        catch (FileNotFoundException)
+        {
+            return null;
+        }
+        catch (DirectoryNotFoundException)
+        {
+            return null;
+        }
+
+        DateTimeOffset now = _clock.Now;
+        string timestamp = now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture);
+        string directory = Path.GetDirectoryName(path) ?? _paths.NotesFolder!;
+        string name = Path.GetFileNameWithoutExtension(path);
+        string backup = Path.Combine(
+            directory,
+            $"{name}.conflict-{timestamp}{NoteFileNameBuilder.Extension}");
+
+        await _writer.WriteAsync(backup, raw, now, ct).ConfigureAwait(false);
+
+        _logger.LogInformation("覆盖外部版本前已备份原文件：{Backup}。", backup);
+        return backup;
     }
 
     /// <inheritdoc />
@@ -689,7 +799,11 @@ public sealed class MarkdownNoteRepository : INoteRepository
     }
 
     private void Cache(string path, NoteEncodingProfile encoding, byte[] content, Guid id) =>
-        _states[path] = new NoteFileState(encoding, SHA256.HashData(content), id);
+        CacheHash(path, encoding, SHA256.HashData(content), id);
+
+    /// <summary>记下「这个文件现在长这样」，哈希由调用方给——它可能已经算过了。</summary>
+    private void CacheHash(string path, NoteEncodingProfile encoding, byte[] hash, Guid id) =>
+        _states[path] = new NoteFileState(encoding, hash, id);
 
     /// <summary>只更新记住的 id，不动编码与哈希。</summary>
     private void RememberId(string path, Guid id)

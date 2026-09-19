@@ -66,7 +66,8 @@ public sealed class ManagerHarness : IDisposable
             Dispatcher,
             Clock,
             SearchTimers,
-            Messenger);
+            Messenger,
+            NullLogger<ManagerViewModel>.Instance);
     }
 
     /// <summary>

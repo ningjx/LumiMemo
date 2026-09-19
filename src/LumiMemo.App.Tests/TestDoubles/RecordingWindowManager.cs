@@ -19,10 +19,13 @@ namespace LumiMemo.App.Tests.TestDoubles;
 /// </remarks>
 public sealed class RecordingWindowManager : IWindowManager
 {
-    private readonly HashSet<Guid> _openNotes = [];
+    private readonly Dictionary<Guid, NoteViewModel> _openNotes = [];
 
     /// <summary>所有被调用过的方法名与参数，按发生顺序。</summary>
     public List<string> Calls { get; } = [];
+
+    /// <summary>所有被 <see cref="RefreshNote"/> 刷新过的便签 id，按发生顺序。</summary>
+    public List<Guid> RefreshedNotes { get; } = [];
 
     /// <summary>最后一次 <see cref="ShowNote"/> 收到的 ViewModel。</summary>
     public NoteViewModel? LastShownViewModel { get; private set; }
@@ -45,7 +48,7 @@ public sealed class RecordingWindowManager : IWindowManager
         Calls.Add($"ShowNote({viewModel.Id})");
         LastShownViewModel = viewModel;
         LastShownLayout = layout;
-        _openNotes.Add(viewModel.Id);
+        _openNotes[viewModel.Id] = viewModel;
     }
 
     /// <inheritdoc />
@@ -54,6 +57,21 @@ public sealed class RecordingWindowManager : IWindowManager
         Calls.Add($"CloseNote({noteId})");
         ClosedNotes.Add(noteId);
         _openNotes.Remove(noteId);
+    }
+
+    /// <inheritdoc />
+    public void RefreshNote(Guid noteId)
+    {
+        Calls.Add($"RefreshNote({noteId})");
+        RefreshedNotes.Add(noteId);
+
+        // 与真实现一样去动那扇窗里的 ViewModel，而不是只记一笔：
+        // 「外部改了之后窗口里的正文真的换成磁盘版了吗」是本方法存在的全部理由，
+        // 只记调用的话，一个把 RefreshFromNote 写反了（搬成内存版覆盖磁盘版）的实现照样是绿的。
+        if (_openNotes.TryGetValue(noteId, out NoteViewModel? viewModel))
+        {
+            viewModel.RefreshFromNote();
+        }
     }
 
     /// <inheritdoc />
@@ -95,7 +113,7 @@ public sealed class RecordingWindowManager : IWindowManager
     public void OnDisplayConfigurationChanged() => Calls.Add("OnDisplayConfigurationChanged()");
 
     /// <inheritdoc />
-    public bool IsNoteOpen(Guid noteId) => _openNotes.Contains(noteId);
+    public bool IsNoteOpen(Guid noteId) => _openNotes.ContainsKey(noteId);
 
     /// <inheritdoc />
     public void BeginShutdown() => Calls.Add("BeginShutdown()");

@@ -446,19 +446,320 @@ public sealed class NoteServiceTests
         Assert.Empty(harness.Layouts.All);
     }
 
-    // ================= 本轮明确不支持的能力 =================
+    // ================= 外部变更（§10.3、§11.4） =================
 
     [Fact]
-    public void 外部变更_明确抛异常而不是静默吞掉()
+    public void 磁盘没变_什么也不做()
     {
-        // 本程序的启动扫描会主动写用户文件（补 id、原子替换）。若这里留一个空实现，
-        // 那些自写事件会以「外部修改」的身份涌进内存，把用户刚改的内容覆盖回去。
-        // 宁可让它在调用点立刻炸掉，也不要留一个看起来能用的假实现。
+        // §10.3 的自写抑制落在这一格上：我们刚保存完，监听器把那个事件报回来，
+        // 读出来与上次同步的字节一模一样。它要是被当成外部改动，
+        // 每一次自动保存都会触发一轮「重载」，把用户正在打的那行字顶掉。
         var harness = CreateHarness();
+        Note local = NewNote("内容");
+        harness.Store.Add(local);
 
-        // 两个参数都无关紧要——这个方法不管收到什么都会抛。
-        Assert.Throws<NotSupportedException>(
-            () => harness.Service.ApplyExternalChange(@"D:\notes\a.md", null!));
+        ExternalChangeResult result = harness.Service.ApplyExternalChange(
+            local.FilePath, new NoteFileSync(DiskNote(local.FilePath, "另一个版本"), DiskChanged: false));
+
+        Assert.Equal(ExternalChangeKind.None, result.Kind);
+        Assert.Equal("内容", local.Content);
+    }
+
+    [Fact]
+    public void 外面改了_本地没改_静默重载()
+    {
+        // §11.4 第一行：本地干净、磁盘变了，直接采用磁盘那一版。
+        var harness = CreateHarness();
+        Note local = NewNote("旧内容");
+        harness.Store.Add(local);
+        Note disk = DiskNote(local.FilePath, "# 新标题\n新内容", local.Id);
+
+        ExternalChangeResult result = harness.Service.ApplyExternalChange(
+            local.FilePath, new NoteFileSync(disk, DiskChanged: true));
+
+        Assert.Equal(ExternalChangeKind.Reloaded, result.Kind);
+        Assert.Equal("# 新标题\n新内容", local.Content);
+
+        // 引用的同一性在这里是硬要求：便签窗口绑的是这一个实例，换掉它，
+        // 那扇窗就握着一张不在 Store 里的孤儿——用户在里面敲的字谁也收不到。
+        Assert.Same(local, result.LocalNote);
+        Assert.Same(local, harness.Store.TryGet(local.Id));
+
+        // 索引也得跟着换，否则管理器搜到的还是旧内容。
+        Assert.Contains("新标题", harness.Index.GetPlainText(local.Id), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 外面删了_便签从内存里摘干净()
+    {
+        var harness = CreateHarness();
+        Note local = NewNote("内容");
+        harness.Store.Add(local);
+
+        ExternalChangeResult result = harness.Service.ApplyExternalChange(
+            local.FilePath, new NoteFileSync(null, DiskChanged: true));
+
+        Assert.Equal(ExternalChangeKind.Deleted, result.Kind);
+        Assert.False(harness.Store.Contains(local.Id));
+        Assert.Null(harness.Store.TryGetByPath(local.FilePath));
+        Assert.Empty(harness.Index.GetPlainText(local.Id));
+    }
+
+    [Fact]
+    public void 外面新建了一张_进内存并建好索引()
+    {
+        var harness = CreateHarness();
+        Note disk = DiskNote(@"D:\notes\外面新建的.md", "外部写的内容");
+
+        ExternalChangeResult result = harness.Service.ApplyExternalChange(
+            disk.FilePath, new NoteFileSync(disk, DiskChanged: true));
+
+        Assert.Equal(ExternalChangeKind.Created, result.Kind);
+        Assert.Same(disk, harness.Store.TryGet(disk.Id));
+        Assert.Contains("外部写的内容", harness.Index.GetPlainText(disk.Id), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 同一张便签换了个路径_认成移动而不是删掉再新建()
+    {
+        // 外部把文件重命名或搬走了。身份来自 Front Matter 里的 id（§5.5），所以还是同一张便签。
+        // 认成「删掉 + 新增」的话，那扇开着的窗会变成孤儿：它绑的实例已经不在 Store 里，
+        // 用户在窗口里敲的字既进不了 Store 也存不下去（SaveNoteAsync 按 id 取到的是另一个对象）。
+        var harness = CreateHarness();
+        Note local = NewNote("内容");
+        harness.Store.Add(local);
+        string oldPath = local.FilePath;
+        Note disk = DiskNote(@"D:\notes\换了名字.md", "内容", local.Id);
+
+        ExternalChangeResult result = harness.Service.ApplyExternalChange(
+            disk.FilePath, new NoteFileSync(disk, DiskChanged: true));
+
+        Assert.Equal(ExternalChangeKind.Reloaded, result.Kind);
+        Assert.Same(local, harness.Store.TryGet(local.Id));
+        Assert.Same(local, result.LocalNote);
+        Assert.Equal(disk.FilePath, local.FilePath);
+
+        // 老路径上不能再指着这张便签。留着的话，那个路径上再来一个事件会误伤它——
+        // 「按路径找便签」是这条路上唯一的定位手段。
+        Assert.Null(harness.Store.TryGetByPath(oldPath));
+    }
+
+    [Fact]
+    public void 同一个路径换了身份_旧的那张进Replaced()
+    {
+        // 外部编辑器改写了 Front Matter 里的 id，或者文件被整个换掉（git 切分支最常见）。
+        // 文件是权威，所以旧的摘掉、新的放进来——被顶掉的那一张必须交出去：
+        // 它的 id 与磁盘上那张不同，调用方不显式关掉那扇窗的话，
+        // 窗口会一直挂着一张内存里已经不存在的便签。
+        var harness = CreateHarness();
+        Note local = NewNote("旧身份的内容");
+        harness.Store.Add(local);
+        Note disk = DiskNote(local.FilePath, "新身份的内容");
+
+        ExternalChangeResult result = harness.Service.ApplyExternalChange(
+            local.FilePath, new NoteFileSync(disk, DiskChanged: true));
+
+        Assert.Equal(ExternalChangeKind.Created, result.Kind);
+        Assert.Same(disk, result.LocalNote);
+        Assert.Same(local, result.Replaced);
+        Assert.False(harness.Store.Contains(local.Id));
+        Assert.Same(disk, harness.Store.TryGet(disk.Id));
+    }
+
+    [Fact]
+    public void 两边都改了_判成冲突交出去()
+    {
+        // §11.4 的真冲突：本地有没落盘的改动，磁盘上又是另一版。
+        // 本层不替用户做主，只把两边都交出去，让 App 层去问（Core 不认识对话框）。
+        var harness = CreateHarness();
+        Note local = NewNote("原文");
+        harness.Store.Add(local);
+        harness.Service.ApplyLocalEdit(local, "本地改过");
+        Note disk = DiskNote(local.FilePath, "磁盘改过", local.Id);
+
+        ExternalChangeResult result = harness.Service.ApplyExternalChange(
+            local.FilePath, new NoteFileSync(disk, DiskChanged: true));
+
+        Assert.Equal(ExternalChangeKind.Conflict, result.Kind);
+        Assert.Same(local, result.LocalNote);
+        Assert.Same(disk, result.Disk.Note);
+
+        // 用户还没裁决，内存里一动不动。
+        Assert.Equal("本地改过", local.Content);
+    }
+
+    [Fact]
+    public async Task 存下去之后_再来的外部改动就不算冲突了()
+    {
+        // 「有没有未落盘的改动」是判冲突的唯一依据，而它必须被保存清掉。
+        // 清不掉的话，用户编辑过一次之后无论存多少回，这张便签从此永远弹冲突框。
+        var harness = CreateHarness();
+        Note local = NewNote("原文");
+        harness.Store.Add(local);
+        harness.Service.ApplyLocalEdit(local, "本地改过");
+        await harness.Service.SaveNoteAsync(local.Id);
+
+        Note disk = DiskNote(local.FilePath, "磁盘改过", local.Id);
+        ExternalChangeResult result = harness.Service.ApplyExternalChange(
+            local.FilePath, new NoteFileSync(disk, DiskChanged: true));
+
+        Assert.Equal(ExternalChangeKind.Reloaded, result.Kind);
+        Assert.Equal("磁盘改过", local.Content);
+    }
+
+    [Fact]
+    public void 本地改过又与磁盘一样_静默接受而不是弹框()
+    {
+        // 判定顺序不能换：「内容本来就一样」要在「本地有没有未落盘的改动」之前。
+        // 反过来的话，用户把改过的字又删回原样、而磁盘上恰好也是这一版时，
+        // 他会收到一个无从回答的冲突框——两边一模一样，选哪个都没区别。
+        var harness = CreateHarness();
+        Note local = NewNote("原文");
+        harness.Store.Add(local);
+        harness.Service.ApplyLocalEdit(local, "改过的");
+        harness.Service.ApplyLocalEdit(local, "原文");
+
+        Note disk = DiskNote(local.FilePath, "原文", local.Id);
+        ExternalChangeResult result = harness.Service.ApplyExternalChange(
+            local.FilePath, new NoteFileSync(disk, DiskChanged: true));
+
+        Assert.Equal(ExternalChangeKind.Reloaded, result.Kind);
+    }
+
+    [Fact]
+    public void 冲突选重新加载_本地实例被磁盘版覆盖而引用不变()
+    {
+        var harness = CreateHarness();
+        Note local = NewNote("原文");
+        harness.Store.Add(local);
+        harness.Service.ApplyLocalEdit(local, "本地改过");
+        Note disk = DiskNote(local.FilePath, "磁盘改过", local.Id);
+
+        ExternalChangeResult conflict = harness.Service.ApplyExternalChange(
+            local.FilePath, new NoteFileSync(disk, DiskChanged: true));
+
+        harness.Service.ResolveConflictByReload(conflict);
+
+        Assert.Same(local, harness.Store.TryGet(local.Id));
+        Assert.Equal("磁盘改过", local.Content);
+        Assert.Contains("磁盘改过", harness.Index.GetPlainText(local.Id), StringComparison.Ordinal);
+
+        // 裁决过了，这张便签重新变干净：同一个文件再来一次改动不该又弹一次框。
+        ExternalChangeResult again = harness.Service.ApplyExternalChange(
+            local.FilePath,
+            new NoteFileSync(DiskNote(local.FilePath, "磁盘又改了", local.Id), DiskChanged: true));
+
+        Assert.Equal(ExternalChangeKind.Reloaded, again.Kind);
+    }
+
+    [Fact]
+    public async Task 冲突选覆盖_先留副本再写回去()
+    {
+        // §11.4：用户点「覆盖外部版本」时心里想的是「我这份才是对的」，
+        // 但万一他想错了，那份副本是他唯一的退路——所以备份必须发生在覆盖之前。
+        var harness = CreateHarness();
+        Note local = NewNote("原文");
+        harness.Store.Add(local);
+        harness.Service.ApplyLocalEdit(local, "本地改过");
+        Note disk = DiskNote(local.FilePath, "磁盘改过", local.Id);
+
+        ExternalChangeResult conflict = harness.Service.ApplyExternalChange(
+            local.FilePath, new NoteFileSync(disk, DiskChanged: true));
+
+        await harness.Service.ResolveConflictByOverwriteAsync(conflict, Ct);
+
+        Assert.Equal([local.FilePath], harness.Repository.BackedUpPaths);
+        Assert.Same(local, Assert.Single(harness.Repository.Saved));
+        Assert.Equal("本地改过", local.Content);
+    }
+
+    [Fact]
+    public async Task 副本写不出来时_绝不覆盖磁盘()
+    {
+        // 副本没留成还照写不误的话，磁盘上那一版就真没了。用户点错那一档时，
+        // 他丢掉的是另一个程序里的改动，而本程序连一句「备份失败」都没说。
+        var harness = CreateHarness();
+        Note local = NewNote("原文");
+        harness.Store.Add(local);
+        harness.Service.ApplyLocalEdit(local, "本地改过");
+        Note disk = DiskNote(local.FilePath, "磁盘改过", local.Id);
+
+        ExternalChangeResult conflict = harness.Service.ApplyExternalChange(
+            local.FilePath, new NoteFileSync(disk, DiskChanged: true));
+
+        harness.Repository.BackupException = new IOException("磁盘满了");
+
+        await Assert.ThrowsAsync<IOException>(
+            () => harness.Service.ResolveConflictByOverwriteAsync(conflict, Ct));
+
+        Assert.Empty(harness.Repository.Saved);
+    }
+
+    // ================= 整目录重扫（§10.4、§17.1 第 10 步） =================
+
+    [Fact]
+    public async Task 重扫时_把磁盘版搬进内存里那个实例()
+    {
+        // 托盘的「重新加载全部便签」与缓冲区溢出恢复走的都是这一条。
+        // 早先的实现是「清空 Store 再逐条 Add」，那会换掉 Note 实例——
+        // 而便签窗口绑的正是那个实例，重扫之后用户在窗口里敲的字谁也收不到。
+        var harness = CreateHarness();
+        Note local = NewNote("旧内容");
+        harness.Store.Add(local);
+
+        // 仓储交出来的是另一张对象：真实实现每读一次盘都会新建一个。
+        harness.Repository.NotesToLoad.Add(DiskNote(local.FilePath, "磁盘上的新内容", local.Id));
+
+        IReadOnlyList<ExternalChangeResult> changes = await harness.Service.LoadAllAsync(Ct);
+
+        Assert.Same(local, harness.Store.TryGet(local.Id));
+        Assert.Equal("磁盘上的新内容", local.Content);
+        Assert.Equal(ExternalChangeKind.Reloaded, Assert.Single(changes).Kind);
+    }
+
+    [Fact]
+    public async Task 重扫时_磁盘上没有的便签从内存里摘掉()
+    {
+        var harness = CreateHarness();
+        Note local = NewNote("文件已经被删掉了");
+        harness.Store.Add(local);
+
+        IReadOnlyList<ExternalChangeResult> changes = await harness.Service.LoadAllAsync(Ct);
+
+        Assert.False(harness.Store.Contains(local.Id));
+        Assert.Equal(ExternalChangeKind.Deleted, Assert.Single(changes).Kind);
+    }
+
+    [Fact]
+    public async Task 重扫时_没变的东西不算变化()
+    {
+        // 结果列表里只有真正变过的东西。全都报一遍的话，管理器会白白刷一轮列表，
+        // 而选中项与滚动位置就在那一次刷新里丢掉。
+        var harness = CreateHarness();
+        Note local = NewNote("内容");
+        harness.Store.Add(local);
+        harness.Repository.NotesToLoad.Add(DiskNote(local.FilePath, "内容", local.Id));
+
+        IReadOnlyList<ExternalChangeResult> changes = await harness.Service.LoadAllAsync(Ct);
+
+        Assert.Empty(changes);
+    }
+
+    [Fact]
+    public async Task 重扫时_本地有未落盘的改动_同样判成冲突()
+    {
+        // 重扫与单文件外部变更共用同一段判定（Merge），于是「用户点托盘上的重新加载」
+        // 与「外面有人改了文件」对待未落盘改动的方式必然一致，
+        // 不会出现一条路静默覆盖、另一条路弹对话框这种半对半错的状态。
+        var harness = CreateHarness();
+        Note local = NewNote("原文");
+        harness.Store.Add(local);
+        harness.Service.ApplyLocalEdit(local, "本地改过");
+        harness.Repository.NotesToLoad.Add(DiskNote(local.FilePath, "磁盘改过", local.Id));
+
+        IReadOnlyList<ExternalChangeResult> changes = await harness.Service.LoadAllAsync(Ct);
+
+        Assert.Equal(ExternalChangeKind.Conflict, Assert.Single(changes).Kind);
     }
 
     // ---- 新建（§3.3 流 3） ----
@@ -563,6 +864,18 @@ public sealed class NoteServiceTests
             CreatedAt = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero),
             UpdatedAt = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero),
         };
+    }
+
+    /// <summary>
+    /// 磁盘上那一份：内容与 id 随用例定，<strong>路径必须显式给</strong>——
+    /// 「按路径找到内存里那张便签」是外部变更那条路上唯一的定位手段。
+    /// </summary>
+    private static Note DiskNote(string path, string content, Guid? id = null)
+    {
+        Note note = NewNote(content, id);
+        note.FilePath = path;
+
+        return note;
     }
 
     private sealed record Harness(

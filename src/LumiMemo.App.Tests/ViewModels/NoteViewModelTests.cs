@@ -149,6 +149,64 @@ public sealed class NoteViewModelTests
         Assert.Empty(notes.LocalEdits);
     }
 
+    // ---- 从磁盘刷新（§10.2）----
+
+    [Fact]
+    public void 从磁盘刷新_把新正文与新颜色搬进界面()
+    {
+        // 外部改完之后内容已经在 Note 上了，而界面绑的是本 ViewModel 自己的一份副本
+        // （Content 有自己的字段），它不会自己知道——不搬的话用户对着一个磁盘上
+        // 已经不存在的版本继续打字，而下一次自动保存会把它连同旧内容一起写出去。
+        var note = CreateNote("旧内容", NoteColor.Yellow);
+        var vm = CreateViewModel(note);
+
+        note.Content = "磁盘上的新内容";
+        note.Color = NoteColor.Blue;
+        vm.RefreshFromNote();
+
+        Assert.Equal("磁盘上的新内容", vm.Content);
+        Assert.Equal(NoteColor.Blue, vm.Color);
+    }
+
+    [Fact]
+    public void 从磁盘刷新_不算用户编辑()
+    {
+        // OnContentChanged 会把这个值推回业务层、再排一次去抖保存。不闸住的话，
+        // 「把磁盘上的内容搬进界面」会被当成本地编辑：用户什么都没做，文件却被重写一遍，
+        // 修改时间跟着变——而且业务层那个「有未落盘改动」的标记会被点亮，
+        // 下一次真的外部改动就会被误判成冲突。
+        var note = CreateNote("旧内容");
+        var notes = new FakeNoteService();
+        var timers = new RecordingUiTimerFactory();
+        var autoSave = new AutoSaveService(notes, timers, NullLogger<AutoSaveService>.Instance);
+        var vm = CreateViewModel(note, noteService: notes, autoSaveService: autoSave);
+
+        note.Content = "磁盘上的新内容";
+        vm.RefreshFromNote();
+
+        Assert.Equal("磁盘上的新内容", vm.Content);
+        Assert.Empty(notes.LocalEdits);
+        Assert.Empty(timers.Created);
+    }
+
+    [Fact]
+    public void 从磁盘刷新_之后的编辑照常推送()
+    {
+        // 闸门只闸这一次：它是方法内的一个局部状态，不是「这个 ViewModel 从此不再上报编辑」。
+        // 实现里若把标志置上忘了清（或清得晚了一步），症状是外部改动之后
+        // 用户打的字再也不落盘——安静得可怕。
+        var note = CreateNote("旧内容");
+        var notes = new FakeNoteService();
+        var vm = CreateViewModel(note, noteService: notes);
+
+        note.Content = "磁盘上的新内容";
+        vm.RefreshFromNote();
+        vm.Content = "我在界面上接着写";
+
+        var edit = Assert.Single(notes.LocalEdits);
+        Assert.Equal("我在界面上接着写", edit.Content);
+    }
+
     // ---- 释放（§18.3）----
 
     [Fact]

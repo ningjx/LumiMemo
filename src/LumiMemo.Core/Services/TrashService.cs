@@ -233,7 +233,7 @@ public sealed class TrashService
         Note? note;
         try
         {
-            note = await _repository.ReloadAsync(path, ct);
+            note = (await _repository.ReloadAsync(path, ct)).Note;
         }
         catch (NoteTemporarilyLockedException)
         {

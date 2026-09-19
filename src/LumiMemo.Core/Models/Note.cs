@@ -99,4 +99,72 @@ public sealed class Note
 
     /// <summary>解析过程中发现的异常（编码异常、YAML 损坏等），用于在 UI 上提示（§5.10）。</summary>
     public List<NoteParseIssue> ParseIssues { get; set; } = [];
+
+    /// <summary>
+    /// 把另一张便签的字段搬进<strong>本实例</strong>，<see cref="Id"/> 不动。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 外部修改与整目录重扫都要用磁盘版覆盖内存版（§10.2、§11.4），而<strong>不能换掉对象本身</strong>：
+    /// 便签窗口绑的是 <see cref="Note"/> 这一个引用，换实例会让窗口握着一个不在
+    /// <see cref="Stores.NoteStore"/> 里的孤儿——用户在里面敲的字既进不了 Store 也存不下去，
+    /// 而 <c>SaveNoteAsync</c> 按 id 找到的是另一个对象。字段搬进来，引用不变。
+    /// </para>
+    /// <para>
+    /// <see cref="Tags"/>（以及另外两个列表）<strong>原地清空再填</strong>，不换对象：
+    /// 它们的引用已经散出去了（<c>NoteListItem</c> 直接交出那份列表本身），
+    /// 换掉列表对象会让那些引用停在旧数据上。<c>ApplyTagsEdit</c> 守的是同一条约定。
+    /// </para>
+    /// <para>
+    /// <strong><see cref="FilePath"/> 也在搬运之列</strong>：它的值来自磁盘，
+    /// 而调用方通常是按路径找到本实例的，所以正常情况下它前后相同。
+    /// 万一不同，磁盘上的那份才是事实。
+    /// </para>
+    /// </remarks>
+    public void CopyFrom(Note other)
+    {
+        ArgumentNullException.ThrowIfNull(other);
+
+        FilePath = other.FilePath;
+        Content = other.Content;
+        Color = other.Color;
+        CreatedAt = other.CreatedAt;
+        UpdatedAt = other.UpdatedAt;
+        LineEnding = other.LineEnding;
+        HadBom = other.HadBom;
+        FrontMatterTail = other.FrontMatterTail;
+
+        Replace(Tags, other.Tags);
+        Replace(UnknownFrontMatterKeys, other.UnknownFrontMatterKeys);
+        Replace(ParseIssues, other.ParseIssues);
+
+        static void Replace<T>(List<T> target, List<T> source)
+        {
+            target.Clear();
+            target.AddRange(source);
+        }
+    }
+
+    /// <summary>
+    /// 两张便签的<strong>用户数据</strong>是不是同一份（§0.2 划定的那一类字段）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 比的是正文、颜色、标签三样——用户在界面上看得见、改得动的东西。刻意<strong>不比</strong>
+    /// 时间戳、行尾、BOM、Front Matter 结构：那些只是文件的形态，同一份内容被另一个编辑器
+    /// 存过一遍就会变，据此判「内容变了」会让整批文件白重载一次。
+    /// </para>
+    /// <para>
+    /// 整目录重扫（<c>NoteService.LoadAllAsync</c>）用它回答「这个文件相对内存变了没有」——
+    /// 重扫时仓储的「上次同步字节」已经被这次扫描自己刷新掉了，只能拿内容比。
+    /// </para>
+    /// </remarks>
+    public bool HasSameUserDataAs(Note other)
+    {
+        ArgumentNullException.ThrowIfNull(other);
+
+        return Color == other.Color
+            && string.Equals(Content, other.Content, StringComparison.Ordinal)
+            && Tags.SequenceEqual(other.Tags, StringComparer.Ordinal);
+    }
 }

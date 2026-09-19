@@ -71,6 +71,23 @@ public interface IWindowManager
     bool IsNoteOpen(Guid noteId);
 
     /// <summary>
+    /// 让这张便签的窗口把正文重新读一遍内存里那一份（§10.2）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 外部改了这个文件之后，内容已经搬进 <c>NoteStore</c> 里那个实例了，
+    /// 但窗口里的编辑框绑的是 <c>NoteViewModel</c> 自己的副本，不会自己知道。
+    /// 没有这个方法的话，用户会看着一张显示旧内容的便签继续打字，
+    /// 而下一次自动保存会把他打的字和旧内容一起写出去。
+    /// </para>
+    /// <para>
+    /// 便签没有开着的窗口时<strong>什么都不做</strong>，也不报错：绝大多数外部变化
+    /// 都发生在管理器里没打开的便签上，那是最常见的情况而不是异常。
+    /// </para>
+    /// </remarks>
+    void RefreshNote(Guid noteId);
+
+    /// <summary>
     /// 告诉窗口层「进程要退出了」：此后关掉的每一个便签窗口都不是用户关的。
     /// </summary>
     /// <remarks>

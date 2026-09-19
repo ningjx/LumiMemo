@@ -50,6 +50,36 @@ public interface IDispatcher
     Task InvokeAsync(Action action);
 
     /// <summary>
+    /// 异步在 UI 线程上执行，但排在<strong>低优先级</strong>上（§10.6）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 与 <see cref="InvokeAsync"/> 的差别只在<strong>排在哪一档</strong>：那个是 <c>Normal</c>，
+    /// 这个走 <c>DispatcherPriority.Background</c>，而 <c>Background</c> 排在 <c>Render</c>
+    /// <strong>之后</strong>。
+    /// </para>
+    /// <para>
+    /// <strong>为什么外部变更必须让路</strong>：一批文件变化（git 切分支、同步盘刷一批）
+    /// 会在几百毫秒内灌进几十条事件，每条都要改 <c>NoteStore</c>、刷列表、可能还要开窗。
+    /// 用 <c>Normal</c> 排的话，这批工作会一直插在<strong>输入事件</strong>前面
+    /// （<c>Input</c> 也低于 <c>Normal</c>），用户在这期间敲的键要等整批处理完才轮到——
+    /// 表现为便签卡住不响应。排到 <c>Background</c>，用户的输入与重绘都排在前面。
+    /// </para>
+    /// </remarks>
+    Task InvokeBackgroundAsync(Action action);
+
+    /// <summary>
+    /// 同 <see cref="InvokeBackgroundAsync(Action)"/>，但<strong>可以等它跑完</strong>。
+    /// </summary>
+    /// <remarks>
+    /// 用在「排到 UI 线程的那段活本身就是异步」的场合：外部变更落到界面时要读盘、
+    /// 还可能弹一个等用户选边站的冲突对话框。那种情况用上面的
+    /// <see cref="InvokeBackgroundAsync(Action)"/> 的话，返回的任务发出去就没人观察了——
+    /// 失败没有日志，测试也只能靠猜什么时候跑完。
+    /// </remarks>
+    Task InvokeBackgroundAsync(Func<Task> action);
+
+    /// <summary>
     /// 把续体排到 UI 线程的<strong>低优先级</strong>上，让当前排队的工作先跑完。
     /// </summary>
     /// <remarks>

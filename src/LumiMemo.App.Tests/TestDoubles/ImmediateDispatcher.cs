@@ -62,6 +62,31 @@ public sealed class ImmediateDispatcher : IDispatcher
 
     /// <inheritdoc />
     /// <remarks>
+    /// 同样就地执行：优先级是消息泵的事，这里没有消息泵。
+    /// 「外部变更被排到了低优先级」这条约定由 <see cref="RecordingDispatcher"/> 记下来。
+    /// </remarks>
+    public Task InvokeBackgroundAsync(Action action)
+    {
+        ArgumentNullException.ThrowIfNull(action);
+
+        action();
+
+        return Task.CompletedTask;
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// 就地 await：这里没有消息泵，把任务原样等下去就是「封送」的全部含义。
+    /// </remarks>
+    public async Task InvokeBackgroundAsync(Func<Task> action)
+    {
+        ArgumentNullException.ThrowIfNull(action);
+
+        await action();
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
     /// 立刻完成：这里没有帧可让。分批开窗口的用例只需要「批次之间确实交了手」，
     /// 而这件事由 <see cref="RecordingDispatcher"/> 记下来，不靠真的等一帧。
     /// </remarks>

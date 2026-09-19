@@ -66,6 +66,23 @@ public sealed class WpfDispatcher : IDispatcher
     }
 
     /// <inheritdoc />
+    public Task InvokeBackgroundAsync(Action action)
+    {
+        ArgumentNullException.ThrowIfNull(action);
+
+        return _dispatcher.InvokeAsync(action, DispatcherPriority.Background).Task;
+    }
+
+    /// <inheritdoc />
+    public Task InvokeBackgroundAsync(Func<Task> action)
+    {
+        ArgumentNullException.ThrowIfNull(action);
+
+        // InvokeAsync 给出的任务是 Task<Task>，Unwrap 之后才是「里面那段活真的跑完了」。
+        return _dispatcher.InvokeAsync(action, DispatcherPriority.Background).Task.Unwrap();
+    }
+
+    /// <inheritdoc />
     public Task YieldAsync() =>
         _dispatcher.InvokeAsync(static () => { }, DispatcherPriority.Background).Task;
 }

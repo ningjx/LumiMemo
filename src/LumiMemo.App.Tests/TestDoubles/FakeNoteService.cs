@@ -57,17 +57,73 @@ public sealed class FakeNoteService : INoteService
     /// <summary><see cref="LoadAllAsync"/> 是否被调用过，以及调用次数。</summary>
     public int LoadAllCallCount { get; private set; }
 
+    /// <summary><see cref="LoadAllAsync"/> 要返回的结论（全量重扫的差异比对结果）。</summary>
+    public List<ExternalChangeResult> LoadAllResult { get; } = [];
+
     /// <inheritdoc />
-    public Task LoadAllAsync(CancellationToken ct = default)
+    public Task<IReadOnlyList<ExternalChangeResult>> LoadAllAsync(CancellationToken ct = default)
     {
         LoadAllCallCount++;
 
-        return Task.CompletedTask;
+        return Task.FromResult<IReadOnlyList<ExternalChangeResult>>(LoadAllResult);
     }
 
+    /// <summary>所有 <see cref="ApplyExternalChange"/> 收到的参数，按发生顺序。</summary>
+    public List<(string Path, NoteFileSync Sync)> ExternalChanges { get; } = [];
+
+    /// <summary>
+    /// 逐路径指定 <see cref="ApplyExternalChange"/> 的结论；没配的路径返回「什么都没变」。
+    /// </summary>
+    /// <remarks>
+    /// 判定规则（什么时候算冲突、什么时候算删除）是 Core 的事，由 <c>NoteServiceTests</c> 覆盖。
+    /// 这里的用例只关心<strong>管理器拿到各种结论之后分别做了什么</strong>，
+    /// 所以结论由用例直接摆好，替身自己不去推。
+    /// </remarks>
+    public Dictionary<string, ExternalChangeResult> ExternalChangeResults { get; } =
+        new(StringComparer.OrdinalIgnoreCase);
+
     /// <inheritdoc />
-    public void ApplyExternalChange(string path, NoteReadResult readResult) =>
-        LocalEdits.Add((Guid.Empty, $"外部变更:{path}"));
+    public ExternalChangeResult ApplyExternalChange(string path, NoteFileSync fileSync)
+    {
+        ExternalChanges.Add((path, fileSync));
+
+        return ExternalChangeResults.TryGetValue(path, out ExternalChangeResult? scripted)
+            ? scripted
+            : new ExternalChangeResult(ExternalChangeKind.None, null, fileSync);
+    }
+
+    /// <summary>所有 <see cref="ResolveConflictByReload"/> 调用，按发生顺序。</summary>
+    public List<ExternalChangeResult> ConflictsReloaded { get; } = [];
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// 只记录被调过，不模拟「把磁盘那一版copy进本地」。那条规则属于 Core，
+    /// 由 <c>NoteServiceTests</c> 钉；这里再实现一遍只会让两边一起错还彼此印证。
+    /// </remarks>
+    public void ResolveConflictByReload(ExternalChangeResult conflict) =>
+        ConflictsReloaded.Add(conflict);
+
+    /// <summary>所有 <see cref="ResolveConflictByOverwriteAsync"/> 调用，按发生顺序。</summary>
+    public List<ExternalChangeResult> ConflictsOverwritten { get; } = [];
+
+    /// <summary>设成非 null 后 <see cref="ResolveConflictByOverwriteAsync"/> 会抛出它。</summary>
+    /// <remarks>
+    /// 用来验「备份没留成就不覆盖」那一条：真实现里备份失败会抛异常，
+    /// 而管理器必须把失败告诉用户，不能默默什么都不做。
+    /// </remarks>
+    public Exception? OverwriteException { get; set; }
+
+    /// <inheritdoc />
+    public Task ResolveConflictByOverwriteAsync(
+        ExternalChangeResult conflict,
+        CancellationToken ct = default)
+    {
+        ConflictsOverwritten.Add(conflict);
+
+        return OverwriteException is null
+            ? Task.CompletedTask
+            : Task.FromException(OverwriteException);
+    }
 
     /// <inheritdoc />
     public void ApplyLocalEdit(Note note, string content)

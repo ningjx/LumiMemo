@@ -12,6 +12,7 @@ using LumiMemo.Infrastructure.Logging;
 using LumiMemo.Infrastructure.Settings;
 using LumiMemo.Infrastructure.Storage;
 using LumiMemo.Infrastructure.Trash;
+using LumiMemo.Infrastructure.Watching;
 using LumiMemo.Infrastructure.Windows;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -346,6 +347,12 @@ public partial class App : Application
         services.AddSingleton<INoteService, NoteService>();
         services.AddSingleton<AutoSaveService>();
 
+        // ---- 外部变更（§10）----
+        // 监听器与去抖编排分两层：前者是「Windows 的 FileSystemWatcher 长什么样」，
+        // 后者是「什么时候读盘、什么时候封送」。测试只替身第一层。
+        services.AddSingleton<IFileWatcher, FileSystemWatcherAdapter>();
+        services.AddSingleton<FileWatchService>();
+
         // ---- 界面基础设施 ----
         services.AddSingleton<IDialogService, DialogService>();
         services.AddSingleton<IFolderPicker, FolderPickerDialog>();
@@ -370,6 +377,11 @@ public partial class App : Application
         // ManagerViewModel 与 ManagerWindow 都是单例：整个进程只有一个管理器。
         services.AddSingleton<ManagerViewModel>();
         services.AddSingleton<ManagerWindow>();
+
+        // 外部变化的去处就是它：窗口层、对话框、列表三样都在管理器手上。
+        // 让 FileWatchService 依赖这个接口而不是具体类型，是为了让监听那一层
+        // （去抖、去重、溢出恢复）能在测试里单独验，不必顺带把整个管理器装起来。
+        services.AddSingleton<IExternalChangeSink>(sp => sp.GetRequiredService<ManagerViewModel>());
 
         // SettingsWindow 则是「每次打开一个新的」，不能注册成单例：
         // WPF 的 Window 一旦 Close() 过就不能再 Show()，第二次会抛异常。
