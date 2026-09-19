@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Media;
@@ -130,14 +131,37 @@ public sealed class TrayService : IDisposable
     }
 
     /// <summary>
-    /// 菜单弹出前把回收站的条目数刷新一遍（§15.9 的「回收站（N）」）。
+    /// 菜单弹出这一刻：把它摆到鼠标这儿来，顺带刷新回收站的条目数（§15.9 的「回收站（N）」）。
     /// </summary>
     /// <remarks>
+    /// <para>
+    /// <strong>为什么要自己摆。</strong> <see cref="TaskbarIcon"/> 用
+    /// <c>PlacementMode.AbsolutePoint</c> 摆菜单，坐标取自 shell 放进托盘消息
+    /// <c>wParam</c> 里的那个「锚点」（<c>NOTIFYICON_VERSION_4</c> 的规矩），
+    /// 而<strong>那个锚点不等于光标位置</strong>——本机（单屏 3840×1600、125%）
+    /// 实测菜单会跑到图标右边挺远的地方。
+    /// </para>
+    /// <para>
+    /// 直接换成 <see cref="PlacementMode.MousePoint"/> 让 WPF 按当前光标摆：右键点图标时
+    /// 光标就在图标上，于是菜单贴着图标出现，屏幕缩放也由 WPF 自己换算，不必我们插一脚。
+    /// 两个偏移量必须归零——MousePoint 会把它们<strong>加</strong>在光标位置上。
+    /// </para>
+    /// <para>
     /// 挂在弹出这一刻，而不是每次删除/恢复之后逐个通知：后者要让回收站那边
     /// 反向认识托盘，而用户看不到菜单的时候那个数字没人看，多算几次没有代价。
+    /// </para>
     /// </remarks>
-    private void OnTrayMenuOpen(object? sender, RoutedEventArgs e) =>
+    private void OnTrayMenuOpen(object? sender, RoutedEventArgs e)
+    {
+        if (_icon?.ContextMenu is { } menu)
+        {
+            menu.Placement = PlacementMode.MousePoint;
+            menu.HorizontalOffset = 0;
+            menu.VerticalOffset = 0;
+        }
+
         _ = _viewModel.RefreshTrashCountAsync();
+    }
 
     private void OnManagerWindowClosing(object? sender, CancelEventArgs e)
     {
