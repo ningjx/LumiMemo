@@ -53,4 +53,36 @@ public sealed class ExplorerShellLauncher : IShellLauncher
             return false;
         }
     }
+
+    /// <inheritdoc />
+    public bool RevealInExplorer(string filePath)
+    {
+        if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath))
+        {
+            return false;
+        }
+
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = "explorer.exe",
+            UseShellExecute = false,
+        };
+
+        // `/select,<路径>` 是 explorer 自己的一个开关，**整个是同一个参数**——
+        // 写成两个参数（"/select," 与路径）时 explorer 会把后一个当成要打开的目录。
+        // 与 OpenFolder 一样交给 ArgumentList，路径里的空格与中文由运行时加引号，
+        // 不自己拼 $"/select,\"{filePath}\""。
+        startInfo.ArgumentList.Add($"/select,{filePath}");
+
+        try
+        {
+            using Process? process = Process.Start(startInfo);
+
+            return process is not null;
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
+        {
+            return false;
+        }
+    }
 }

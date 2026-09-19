@@ -34,6 +34,17 @@ public sealed record NoteListItem(Note Note, string PlainText, string? Query = n
     /// <summary>标题，取自 <see cref="Note.Title"/>（自带缓存，见 §5.4）。</summary>
     public string Title => Note.Title;
 
+    /// <summary>标签（§15.8 结果项里的「小徽章」）。</summary>
+    /// <remarks>
+    /// 直接交出 <see cref="Note.Tags"/> 这个列表本身，不复制、不排序。复制一份意味着
+    /// 「便签加了标签但列表还显示旧的」这类不一致，而标签的数量与顺序都是用户自己定的
+    /// （§5.8 按 Front Matter 里的原样保留），重排会让他认不出自己写的那一串。
+    /// </remarks>
+    public IReadOnlyList<string> Tags => Note.Tags;
+
+    /// <summary>便签颜色（§15.8 结果项里的「颜色点」）。界面靠转换器把它换成笔刷。</summary>
+    public NoteColor Color => Note.Color;
+
     /// <summary>
     /// 副标题要渲染的片段（§12.3、§15.8）。
     /// </summary>

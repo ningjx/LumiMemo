@@ -1,6 +1,7 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Messaging;
 using LumiMemo.App.Abstractions;
+using LumiMemo.App.Messages;
 using LumiMemo.App.Services;
 using LumiMemo.Core.Abstractions;
 using LumiMemo.Core.Models;
@@ -80,6 +81,24 @@ public sealed partial class NoteViewModel : ObservableObject, IDisposable
         _isTopMost = layout.IsTopMost;
         _isLocked = layout.IsLocked;
         _contentScale = layout.ContentScale;
+
+        // 别处（管理器的右键菜单）改了这张便签的置顶时，把镜像跟过去。
+        // 少这一条的话，窗口既不真的置顶、按钮也还显示着旧状态——用户再点一下反而取消了。
+        // 为什么不直接读 Layout.IsTopMost 而要一条消息：那个字段的写入不会发出任何通知，
+        // 镜像这一侧无从知道它变了。见 NoteTopMostChangedMessage 的说明。
+        //
+        // 消息是同步分发的，所以收到时就在 UI 线程上（发送方是管理器，它在 UI 线程）。
+        messenger.Register<NoteTopMostChangedMessage>(
+            this,
+            static (recipient, message) =>
+            {
+                var viewModel = (NoteViewModel)recipient;
+
+                if (viewModel.Id == message.NoteId)
+                {
+                    viewModel.IsTopMost = message.IsTopMost;
+                }
+            });
     }
 
     /// <summary>本便签的数据模型。</summary>

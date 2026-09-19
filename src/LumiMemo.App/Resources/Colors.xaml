@@ -1,0 +1,61 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+  <!--
+    便签颜色（§15.3）。每种颜色三个色值，而不是一个：
+
+      Note{Color}BackgroundBrush   便签纸背景
+      Note{Color}TitleBarBrush     标题条背景（比背景略深，形成层次）
+      Note{Color}AccentBrush       强调色（选中、链接、复选框勾选）
+
+    键名里的颜色名与 Core 的 NoteColor 枚举成员一一对应（黄 Pink Blue Green
+    Purple Orange Gray），取色时靠字符串拼出来（见 NoteColorToBrushConverter）。
+
+    文档 §15.3 的示例里还给背景另写了一个 <Color x:Key="...Color"> 资源、笔刷再引用它。
+    这里没有照做：那些 Color 资源眼下没有任何消费者，唯一用得着它们的是文档末段说的
+    深色变体（NoteYellowBackgroundBrushDark 等），而深色那一套还没做。
+    等真做深色变体时再加，那时颜色会变成「亮色一套 Color + 深色一套 Color，
+    笔刷各引一个」的形状，也比现在先把七对没用的 Color 摆上去更清楚。
+
+    **只有黄色那三个值是文档给的**，其余六组是自拟的，按黄色那组的明度关系配：
+    背景很浅（L≈90%）、标题条中浅（L≈80%）、强调色饱和且深（L≈35%）。
+    这里的「强调色」同时被管理器列表里的颜色点用（§15.8 的「结果项 …… 颜色点」）——
+    用强调色而不是背景色，是因为 8 像素的点上浅色背景彼此分不开。
+  -->
+
+  <!-- 便签纸：黄 -->
+  <SolidColorBrush x:Key="NoteYellowBackgroundBrush" Color="#FFFDF3C4" />
+  <SolidColorBrush x:Key="NoteYellowTitleBarBrush" Color="#FFF7E9A0" />
+  <SolidColorBrush x:Key="NoteYellowAccentBrush" Color="#FFB58900" />
+
+  <!-- 便签纸：粉 -->
+  <SolidColorBrush x:Key="NotePinkBackgroundBrush" Color="#FFFBE0EA" />
+  <SolidColorBrush x:Key="NotePinkTitleBarBrush" Color="#FFF5BED2" />
+  <SolidColorBrush x:Key="NotePinkAccentBrush" Color="#FFB0356B" />
+
+  <!-- 便签纸：蓝 -->
+  <SolidColorBrush x:Key="NoteBlueBackgroundBrush" Color="#FFDFEDFB" />
+  <SolidColorBrush x:Key="NoteBlueTitleBarBrush" Color="#FFB7D6F2" />
+  <SolidColorBrush x:Key="NoteBlueAccentBrush" Color="#FF1F5FA8" />
+
+  <!-- 便签纸：绿 -->
+  <SolidColorBrush x:Key="NoteGreenBackgroundBrush" Color="#FFE0F3E0" />
+  <SolidColorBrush x:Key="NoteGreenTitleBarBrush" Color="#FFB7E2B9" />
+  <SolidColorBrush x:Key="NoteGreenAccentBrush" Color="#FF2E7D46" />
+
+  <!-- 便签纸：紫 -->
+  <SolidColorBrush x:Key="NotePurpleBackgroundBrush" Color="#FFEDE3F9" />
+  <SolidColorBrush x:Key="NotePurpleTitleBarBrush" Color="#FFD2BCEE" />
+  <SolidColorBrush x:Key="NotePurpleAccentBrush" Color="#FF6A3FA0" />
+
+  <!-- 便签纸：橙 -->
+  <SolidColorBrush x:Key="NoteOrangeBackgroundBrush" Color="#FFFCE7D4" />
+  <SolidColorBrush x:Key="NoteOrangeTitleBarBrush" Color="#FFF8CBA0" />
+  <SolidColorBrush x:Key="NoteOrangeAccentBrush" Color="#FFB75E12" />
+
+  <!-- 便签纸：灰 -->
+  <SolidColorBrush x:Key="NoteGrayBackgroundBrush" Color="#FFEFEFEF" />
+  <SolidColorBrush x:Key="NoteGrayTitleBarBrush" Color="#FFD9D9D9" />
+  <SolidColorBrush x:Key="NoteGrayAccentBrush" Color="#FF5F5F5F" />
+
+</ResourceDictionary>

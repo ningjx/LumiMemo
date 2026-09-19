@@ -57,6 +57,8 @@ public sealed class ManagerHarness : IDisposable
                 Messenger),
             Windows,
             Presenter,
+            Shell,
+            Dialogs,
             new ImmediateDispatcher(),
             Clock,
             SearchTimers,
@@ -87,6 +89,17 @@ public sealed class ManagerHarness : IDisposable
     public RecordingUiTimer SearchTimer => SearchTimers.Last;
 
     public RecordingWindowManager Windows { get; }
+
+    /// <summary>管理器这一侧对外壳的调用（「在资源管理器中显示」）。</summary>
+    /// <remarks>
+    /// 与上面那个工厂里那只 <c>RecordingDialogService</c> <strong>刻意不是同一只</strong>：
+    /// 那只记的是便签窗口的弹窗，这只记的是管理器的。共用一份的话，
+    /// 「删不掉时提示了用户」和「便签窗口存不下时提示了用户」会落进同一个列表，
+    /// 断言就分不清是谁弹的。
+    /// </remarks>
+    public RecordingDialogService Dialogs { get; } = new();
+
+    public RecordingShellLauncher Shell { get; } = new();
 
     /// <summary>
     /// 「把管理器窗口带出来」的记录型替身。

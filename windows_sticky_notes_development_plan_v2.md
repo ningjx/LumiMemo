@@ -3627,6 +3627,10 @@ public enum NoteColor
 
 **深色模式下的便签颜色**：每种 `NoteColor` 需要一套深色变体（`NoteYellowBackgroundBrushDark` 等）。切换明暗时用 `DynamicResource` 而不是 `StaticResource`，这样运行时能正确刷新。
 
+**实现说明**：`App/Resources/Colors.xaml` 已落地（由 `App.xaml` 合并进来）。**上面给的只有黄色那一组三值，其余六组是自拟的**——按同样的明度关系推：背景很浅（L≈90%）、标题条中浅（L≈80%）、强调色饱和且深（L≈35%），七个颜色的强调色两两分得开。文档示例里那种"先写 `<Color>`、再让 `SolidColorBrush` 用 `StaticResource` 引它"的写法**没有照做**：眼下没有任何消费者要那个 `Color` 本身（唯一用得着的是本节末的深色变体，而那一套还没做），多一层间接只是多一处要同步的地方。深色变体与 `DynamicResource` 一并留给深色模式那一轮。
+
+**强调色在管理器里已经用起来了**：结果项右侧那个 8×8 的颜色点取的是 `{Color}AccentBrush` 而不是背景色——这么小的点上，七个浅背景色在白底上彼此分不开。转换在 `Views/Converters/NoteColorToBrushConverter.cs`。便签窗口用哪一支笔刷、以及切换颜色时怎么刷新，是**管理器的颜色编辑解禁之后**才要定的事。
+
 ## 15.4 标题与重命名
 
 **标题是派生的，不是独立字段**（§5.4）。这带来一个必须明确的交互：**用户如何"改标题"？**
@@ -3827,15 +3831,17 @@ Keyboard.Focus(_editor);
 ┌─────────────────────────────────────────────────┐
 │ 🔍 搜索便签...                      [ + 新建 ]  │
 ├─────────────────────────────────────────────────┤
-│ ☐ 全部   ☐ 置顶   ☐ 有标签   ☐ 最近 7 天         │  ← 过滤条
+│ ⟨全部⟩  ☐ 置顶   ☐ 有标签   ☐ 最近 7 天           │  ← 过滤条
 ├─────────────────────────────────────────────────┤
-│ 周报-20260920                            黄 ●  │
+│ 周报-20260920  ⟨周报⟩                     黄 ●  │
 │ 本周完成：窗口系统原型…            · 2 天前     │
 ├─────────────────────────────────────────────────┤
 │ Docker 常用命令                          蓝 ●  │
 │ docker compose up -d --build…       · 1 周前    │
 └─────────────────────────────────────────────────┘
 ```
+
+`⟨全部⟩` 是尖括号不是复选框，因为它**不是第四个条件**——见下面过滤条那一段。
 
 **规格**：
 
@@ -3857,9 +3863,12 @@ Keyboard.Focus(_editor);
 
 | 位置 | 内容 |
 |---|---|
-| `ViewModels/ManagerViewModel.cs` | `SearchQuery`（去抖入口）、`SearchDebounceMilliseconds`（由启动序列从 `AppSettings.SearchDebounceMs` 灌入）、`MaxRenderedResults = 200`、`HasOverflow` / `OverflowHint`、`EmptyHint` / `CountText` 按查询词切换 |
+| `ViewModels/ManagerViewModel.cs` | `SearchQuery`（去抖入口）、`SearchDebounceMilliseconds`（由启动序列从 `AppSettings.SearchDebounceMs` 灌入）、`MaxRenderedResults = 200`、`HasOverflow` / `OverflowHint`、`EmptyHint` / `CountText` 按查询词与过滤条切换；`FilterTopMost` / `FilterTagged` / `FilterRecent` + `IsFilterAll` / `ClearFilters` / `PassesFilter`；`ToggleTopMost` / `TopMostMenuHeader` / `NotifyContextMenuOpening`；`RevealInExplorerAsync` |
 | `Views/SnippetPresenter.cs` | 把 `IReadOnlyList<SnippetSegment>` 画成一行文字的自绘 `TextBlock` |
-| `ViewModels/NoteListItem.cs` | 副标题的片段由 `Query` 决定：`SnippetBuilder.Build` 摘得出就用摘要，摘不出退回「修改时间 · 字数」 |
+| `Views/Converters/NoteColorToBrushConverter.cs` | 颜色名 → `Note{颜色}AccentBrush` 笔刷；取不到时退到一支冻结的灰色（无 WPF 应用的进程里 `Application.Current` 是 `null`） |
+| `Resources/Colors.xaml` | §15.3 调色板。**只有黄色三值是文档给的，其余六组是自拟的**（背景很浅 L≈90%、标题条中浅 L≈80%、强调色饱和且深 L≈35%）。文档 §15.3 示例还给背景另写了 `<Color>` 资源，这里**没有照做**——眼下没有消费者 |
+| `Messages/NoteTopMostChangedMessage.cs` | 「某一张便签的置顶被别处改了」。与 `NotesChangedMessage`（"有哪些便签变了"、接收方整表重读）刻意分开：合并之后管理器每切一次置顶都要整表重扫，而重扫会把用户正在看的那一行从选中状态里抖出去 |
+| `ViewModels/NoteListItem.cs` | 副标题的片段由 `Query` 决定：`SnippetBuilder.Build` 摘得出就用摘要，摘不出退回「修改时间 · 字数」；`Tags` / `Color` 是给结果项那两个装饰用的直通 |
 
 **两条路径不能合并。** 查询词为空时直接取 `NoteStore.Snapshot()` 按 `UpdatedAt` 降序（`NoteSearch.OrderForList`），有查询词时才走 `NoteSearch.Search` 的评分排序。若让空查询也走评分，那些"分数很低但确实匹配"的规则会把整个列表重排一遍，用户会在清空输入框的瞬间看到列表乱跳。
 
@@ -3867,11 +3876,35 @@ Keyboard.Focus(_editor);
 
 **副标题的"修改时间"用绝对时刻（`9/18 11:19`）而不是上面示意图里的「2 天前」。** 这是上一轮已定的裁决（相对时间要跟着"现在"变，列表刷新的时机就成了一件要额外定义的事），此处与示意图不一致，以裁决为准。字号那一截取的是 `Note.Content.Length`，**含 Markdown 标记**——用户看到的数与文件里的字节数一致。
 
-**本轮明确没做的**：过滤条（全部/置顶/有标签/最近 7 天）、结果项的颜色点与标签徽章、`[ + 新建 ]`、虚拟化的显式确认。**另外这一节里没有"排序字段"这一项**——上面表格里的「排序」是一条规定（按 §12.2 评分；无查询词按 `UpdatedAt` 降序），不是让用户选的字段，所以没有排序下拉框。
+**这一节里没有"排序字段"这一项**——上面表格里的「排序」是一条规定（按 §12.2 评分；无查询词按 `UpdatedAt` 降序），不是让用户选的字段，所以没有排序下拉框。
+
+**过滤条（全部 / 置顶 / 有标签 / 最近 7 天）**。「全部」**不是第四个条件、也不参与那个"与"运算**——它就是"一个条件都不勾"。做成一个真的复选框会立刻出现"全部 + 置顶"该是什么意思这种答不上来的问题。因此落地成：三个条件各是一个 `ToggleButton`（点一下生效、再点一下取消），「全部」是一个 `Button`，按 `ClearFiltersCommand`，并在 `IsFilterAll` 为真时由 `DataTrigger` 亮起，表示"现在没有在筛"。
+
+**过滤排在搜索之前**（`ManagerViewModel.BuildItems`）。被条件筛掉的便签压根不该参与 §12.2 的评分与排序，也不该进 `_matches`——状态栏的「筛选出 N 条」与「还有 N 条结果」读的都是 `_matches`，若过滤排在搜索后面，用户会看到"找到 2 条"而列表里只有一行。置顶那一份 id 集合（`TopMostIds()`）在两个阶段都要用，所以只建一次。
+
+**过滤条与 §12.2 的「七天内 +30」共用同一个窗口常量**（`NoteSearch.RecentWindow`）。两处各写一个 `TimeSpan.FromDays(7)` 的话，把窗口改成 3 天时只会改到一处，症状是"搜出来的结果比筛出来的多"——两者都叫"最近"却没有同一套口径。`ClearFilters` 里逐次给三个属性赋值会把列表重建三遍（点一下肉眼可见地卡三下），用 `_clearingFilters` 把中间几次 `OnFilterChanged` 挡掉；**不能**图省事直接写后备字段，那连 `PropertyChanged` 都没有，界面上三个按钮不会弹回来，而工具包的 MVVMTK0034 也正是为了拦这一手。
+
+**结果项的颜色点与标签徽章**。颜色点取的是调色板里的**强调色**而不是背景色——这个点只有 8×8，七个浅色背景在白底上彼此分不开。颜色名到笔刷的映射在 `Views/Converters/NoteColorToBrushConverter.cs` 里（`Note{颜色}AccentBrush` 去 `Application.Current.TryFindResource`），而不是在 `NoteListItem` 上放一个 `Brush` 属性：笔刷是界面概念，调色板只能有一处真相源。标签徽章是一个横向 `StackPanel` 的 `ItemsControl`，空标签时不占宽度。`NoteListItem.Tags` **直接交出 `Note.Tags` 本身**，不复制、不排序——标签的数量与顺序都是用户自己定的（§5.8 按 Front Matter 原样保留）。
+
+**虚拟化显式钉住**（`IsVirtualizing="True"` / `VirtualizationMode="Recycling"` / `ScrollViewer.CanContentScroll="True"`）。前两个本来就是默认值，写出来是为了将来有人给 `ListBox` 套一层外层 `ScrollViewer` 时能立刻看出这里被改过。真正要命的是第三个：`CanContentScroll` 为 `False` 时 `ListBox` 按像素滚动，于是必须先把所有项都测量一遍，虚拟化就名存实亡了；它与 `HorizontalScrollBarVisibility="Disabled"` 是一对，外层 `ScrollViewer` 拿到无限宽度时同样会失去虚拟化。这个列表可能有上千条（搜索命中多时），关掉虚拟化的代价是肉眼可见的卡顿。
+
+**`[ + 新建 ]` 放在工具条最前面**，走 `NewNoteCommand`——它与托盘菜单、将来的 `Ctrl+N` 是同一条路（顺序仍是 §3.3 流 3：业务层建 → 布局层算位 → 工厂造 ViewModel → 开窗），入口可以多，路径只能有一条。
+
+**`[ + 新建 ]` 与「显示全部 / 隐藏全部」不属一类动作**：它是这个窗口里唯一"造出新东西"的动作，所以排在那几个"对已有的东西做事"之前。
 
 **工具条末尾有一个齿轮按钮**（打开设置窗口，§15.9 的补充）。它用齿轮而不是"设置"两个字，是因为它跟左边三个不属一类：那三个是"对便签做事"，它是"对程序做事"。这一段点击处理**放在代码后置而不是 ViewModel 命令里**——它不含任何状态判断（"已开着就唤到前面"这条规则在 `SettingsWindowLauncher` 里），跟列表项双击是同一档。真有一个"什么时候不该开"的条件时再挪进 ViewModel。
 
-**右键菜单已经接上，但眼下只有「移入回收站」一项。** 上面结果项规格里那一行列了五项（置顶 / 颜色 / 标签 / 在资源管理器中显示 / 移入回收站），另外四项都还没实现——先把点不动的死项放上来，比只有一项更糟。菜单挂在 `ListBox` 上而不是每一行上：每行一个的话，虚拟化列表滚一遍就造出一堆一模一样的实例。代价是 `ContextMenu` 是独立的 `Popup`、不在 `ListBox` 的视觉树里，靠继承拿不到 ViewModel，`DataContext` 得显式绑到 `PlacementTarget`。（试过改挂到 `ItemContainerStyle` 上，为的是免掉下面那一拦——行不通：`ItemContainerStyle` 里一个不带 `BasedOn` 的隐式 `Style` 会把 `ListBoxItem` 的默认样式整个替换掉，连 `Template` 一起，列表项当场就不正常了。真要挂得补 `BasedOn="{StaticResource {x:Type ListBoxItem}}"`。）
+**右键菜单眼下有三项**：置顶 / 在资源管理器中显示 / 移入回收站。上面结果项规格里那一行列了五项，剩下的**颜色**与**标签**还没实现——它们要连着 §15.3 的调色板与便签窗口换肤一起做，否则用户选了蓝色、便签窗口还是黄的。先把点不动的死项放上来，比缺两项更糟。
+
+菜单挂在 `ListBox` 上而不是每一行上：每行一个的话，虚拟化列表滚一遍就造出一堆一模一样的实例。代价是 `ContextMenu` 是独立的 `Popup`、不在 `ListBox` 的视觉树里，靠继承拿不到 ViewModel，`DataContext` 得显式绑到 `PlacementTarget`。（试过改挂到 `ItemContainerStyle` 上，为的是免掉下面那一拦——行不通：`ItemContainerStyle` 里一个不带 `BasedOn` 的隐式 `Style` 会把 `ListBoxItem` 的默认样式整个替换掉，连 `Template` 一起，列表项当场就不正常了。真要挂得补 `BasedOn="{StaticResource {x:Type ListBoxItem}}"`。）
+
+**共享的 `ContextMenu` 有一个绑定陈旧的坑，靠 `NotifyContextMenuOpening()` 补掉。** 菜单是同一个实例，`DataContext` 绑在 `PlacementTarget.DataContext` 上——每次打开，`PlacementTarget` 都是同一个 `ListBox`、求值结果没变，于是这条绑定不会重新求值，挂在它下面的 `Header` 也就不去重读。症状：先用便签窗口标题条上的置顶按钮把某张便签置顶，再在管理器里右键它，菜单上还写着「置顶」。所以 `ManagerWindow.OnListContextMenuOpening` 在选中该行之后**显式喊一声**，让 `TopMostMenuHeader` 重算。光靠 `OnSelectedNoteChanged` 不够——右键落在**已经选中**的那一行时选中项没变，一声通知都不会发。
+
+**菜单标题写成"点下去会发生什么"**（`TopMostMenuHeader`：已置顶时是「取消置顶」），而不是永远写着「置顶」——后者在已经置顶的便签上分不出这是"再置顶一次"（无动作）还是"取消置顶"。
+
+**「置顶」写完必须发一条消息**（`NoteTopMostChangedMessage`）。置顶的真实状态在 `NoteLayout.IsTopMost` 上，而开着的便签窗口另存一份镜像（`NoteViewModel.IsTopMost`，标题条那个拨动按钮绑的就是它）。镜像这一侧的改动会顺着 `WindowManager.OnViewModelPropertyChanged` 往下走（真的把 HWND 设成 topmost、把布局标记为脏），但反过来——**从布局层改**——没有任何东西会通知窗口：那个字段的写入不发任何通知。于是管理器里点「置顶」，窗口既不置顶、按钮也还显示着未置顶，用户再点一下那个按钮反而把它取消了。这条消息**只在这个方向发**：便签窗口自己切换置顶时，管理器那边没有需要立刻改的东西（列表顺序按修改时间排，与置顶无关——置顶只在搜索结果里加 50 分，那是下一次搜索的事），反方向也发一条就得先有一个"谁先动的手"的判据才能避免两边互相触发。
+
+**「在资源管理器中显示」与「打开笔记目录」是两件事**，所以 `IShellLauncher` 上是两个方法：前者要**选中文件**（`explorer.exe /select,<文件>`），后者只打开目录（`explorer.exe <目录>`）。`/select,<路径>` **整个是同一个参数**——写成两个参数时 explorer 会把后一个当成要打开的目录；与 `OpenFolder` 一样交给 `ProcessStartInfo.ArgumentList`，路径里的空格与中文由运行时加引号，不自己拼 `$"/select,\"{filePath}\""`（§19.3）。失败时弹一句提示而不是静默返回（与 `SettingsViewModel.OpenNotesFolderAsync` 同一手法）：这里的失败只有一个实际来由（文件已经不在了，而列表还是上一轮的快照），但用户刚点了一下按钮，什么都不发生的话他只会以为程序卡住了。
 
 **右键必须先把落在的那一行选中**（`ManagerWindow.OnListContextMenuOpening`）。WPF 的 `ListBox` **不会**因为右键而改变选中项，而菜单项作用在 `SelectedNote` 上——少了这一步，用户在一个没选中的行上点「移入回收站」，删掉的是他上一次选的那张，而且列表一刷新他连"刚才删的是谁"都无从对照。右键落在空白处或滚动条上时菜单整个不弹（`ContainerFromElement` 给不出容器），同理：那一个「移入回收站」会对着一个与鼠标位置无关的选中行执行。
 
@@ -3887,6 +3920,8 @@ Keyboard.Focus(_editor);
 **一处已知的粗糙，记在这里免得将来被当成 bug 查**：删一张**开着**的便签会走 `CloseNote`，于是 `OnNoteWindowClosed` 把 `layout.IsOpen` 置成 `false`——那个回写的语义是「用户关掉了这张便签」（§17.3），而用户其实是删了它。layout 条目本身按 §8.3 保留，位置、折叠、置顶因此都还在，只是从回收站恢复回来时它不会自己弹出来。本轮按"不弹"处理：用户刚恢复一张便签，先看到它在列表里，比它自己蹦到桌面上更合情理。
 
 **一处反直觉的结论，将来改 `SearchIndex.ToPlainText` 前先看这里**：标题那一行<strong>本身就在纯文本里</strong>（`GetPlainText` 拿的是整篇正文），所以「命中标题」必然同时是一次正文命中，摘要总是摘得出来、不会退回日期。想让它退回日期，得先让纯文本不含标题行——而那会连带影响 §12.2 的"出现次数加分"（标题命中的那一次就没了）。
+
+**下一轮要做的（这一轮刻意留下的）**：右键菜单里的「颜色」与「标签」两项，以及它们的编辑入口。这两件事不能只做管理器这一半——用户从菜单里改了颜色，便签窗口得当场换成那个颜色，而那是 §15.3 调色板落地到 `NoteWindow` 的整块工作（含 `NoteViewModel.Color` 往下传到窗口背景与标题条）。标签还缺一个自拟的编辑对话框（文档没有给）。另外**结果项卡片里的内联图标**（在资源管理器中显示、移入回收站那两个小图标）等用户的卡片参考图——图还没到，先不做。
 
 ## 15.9 托盘图标与菜单
 

@@ -14,6 +14,9 @@ public sealed class RecordingShellLauncher : IShellLauncher
     /// <summary>所有被请求打开的文件夹，按发生顺序。</summary>
     public List<string> OpenedFolders { get; } = [];
 
+    /// <summary>所有被请求「显示」的文件，按发生顺序。</summary>
+    public List<string> RevealedFiles { get; } = [];
+
     /// <summary>外壳的答复。改成 <see langword="false"/> 模拟「资源管理器没能打开」。</summary>
     public bool Result { get; set; } = true;
 
@@ -21,6 +24,14 @@ public sealed class RecordingShellLauncher : IShellLauncher
     public bool OpenFolder(string path)
     {
         OpenedFolders.Add(path);
+
+        return Result;
+    }
+
+    /// <inheritdoc />
+    public bool RevealInExplorer(string filePath)
+    {
+        RevealedFiles.Add(filePath);
 
         return Result;
     }

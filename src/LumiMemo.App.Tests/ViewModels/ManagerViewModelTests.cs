@@ -467,6 +467,364 @@ public sealed class ManagerViewModelTests
         Assert.Empty(h.NoteService.DeletedNoteIds);
     }
 
+    // ================= 过滤条（§15.8） =================
+
+    [Fact]
+    public void 只看置顶时筛掉没置顶的()
+    {
+        using var h = new ManagerHarness();
+        var pinned = ManagerHarness.NewNote("# 置顶的");
+        var plain = ManagerHarness.NewNote("# 没置顶的");
+
+        h.Add(pinned);
+        h.Add(plain);
+        h.Pin(pinned.Id);
+
+        h.Vm.FilterTopMost = true;
+
+        Assert.Equal(pinned.Id, Assert.Single(h.Vm.Notes).Id);
+
+        // 计数与空提示都挂在 Refresh 上，过滤走的是它，所以三处文案一起换了。
+        Assert.Equal("筛选出 1 条", h.Vm.CountText);
+        Assert.False(h.Vm.IsFilterAll);
+    }
+
+    [Fact]
+    public void 只看有标签时筛掉没标签的()
+    {
+        using var h = new ManagerHarness();
+        var tagged = ManagerHarness.NewNote("# 有标签的");
+        var bare = ManagerHarness.NewNote("# 没标签的");
+
+        tagged.Tags.Add("工作");
+
+        h.Add(tagged);
+        h.Add(bare);
+
+        h.Vm.FilterTagged = true;
+
+        Assert.Equal(tagged.Id, Assert.Single(h.Vm.Notes).Id);
+    }
+
+    [Fact]
+    public void 只看最近七天时筛掉更旧的()
+    {
+        using var h = new ManagerHarness();
+        var fresh = ManagerHarness.NewNote("# 今天改的", updatedAt: ManagerHarness.AtHours(1));
+
+        // 时钟拨在 2026-09-19 12:00Z，往回两百小时是 9 月 10 日，刚好在七天之外。
+        var stale = ManagerHarness.NewNote("# 很久没动过", updatedAt: ManagerHarness.AtHours(-200));
+
+        h.Add(fresh);
+        h.Add(stale);
+
+        h.Vm.FilterRecent = true;
+
+        Assert.Equal(fresh.Id, Assert.Single(h.Vm.Notes).Id);
+    }
+
+    [Fact]
+    public void 勾了多个条件时是且的关系()
+    {
+        using var h = new ManagerHarness();
+        var both = ManagerHarness.NewNote("# 都满足");
+        var onlyPinned = ManagerHarness.NewNote("# 只置顶");
+        var onlyTagged = ManagerHarness.NewNote("# 只有标签");
+
+        both.Tags.Add("工作");
+        onlyTagged.Tags.Add("工作");
+
+        h.Add(both);
+        h.Add(onlyPinned);
+        h.Add(onlyTagged);
+
+        h.Pin(both.Id);
+        h.Pin(onlyPinned.Id);
+
+        h.Vm.FilterTopMost = true;
+        h.Vm.FilterTagged = true;
+
+        // 「与」而不是「或」：两个条件是叠加的约束，不是两个互不相干的入口。
+        Assert.Equal(both.Id, Assert.Single(h.Vm.Notes).Id);
+    }
+
+    [Fact]
+    public void 过滤在搜索之前_筛掉的不参与评分也不计数()
+    {
+        using var h = new ManagerHarness();
+        var tagged = ManagerHarness.NewNote("# 甲\n文档在这里放着");
+        var bare = ManagerHarness.NewNote("# 乙\n文档在这里放着");
+
+        tagged.Tags.Add("工作");
+
+        h.Add(tagged);
+        h.Add(bare);
+
+        h.Vm.FilterTagged = true;
+        h.SettleQuery("文档");
+
+        Assert.Equal(tagged.Id, Assert.Single(h.Vm.Notes).Id);
+
+        // 计数读的是筛过之后的 _matches。若过滤排在搜索后面，
+        // 这里会报「找到 2 条」而列表里只有一行，用户对不上账。
+        Assert.Equal("找到 1 条", h.Vm.CountText);
+    }
+
+    [Fact]
+    public void 过滤把自己筛空时提示说的是筛选而不是没有便签()
+    {
+        using var h = new ManagerHarness();
+
+        h.Add(ManagerHarness.NewNote("# 没标签的"));
+
+        h.Vm.FilterTagged = true;
+
+        Assert.Empty(h.Vm.Notes);
+        Assert.Equal("筛选出 0 条", h.Vm.CountText);
+
+        // 分开一句：文件夹里明明有便签却说"还没有便签"，用户会以为程序没扫到文件，
+        // 而真正的原因是他自己勾了一个过滤条件。
+        Assert.Equal("没有符合筛选条件的便签。", h.Vm.EmptyHint);
+    }
+
+    [Fact]
+    public void 清空过滤时列表只重建一遍()
+    {
+        using var h = new ManagerHarness();
+
+        h.Add(ManagerHarness.NewNote("# 笔记"));
+
+        h.Vm.FilterTopMost = true;
+        h.Vm.FilterTagged = true;
+        h.Vm.FilterRecent = true;
+
+        // Refresh 每次都会撤掉还没到期的去抖搜索，所以这个计数就是"列表被重建了几遍"。
+        int before = h.SearchTimer.StopCount;
+
+        h.Vm.ClearFilters();
+
+        // 三个条件是一个一个赋的，中间那两次过渡态不该各刷一遍——
+        // 不加 _clearingFilters 的话这里是 +3，点一下「全部」肉眼可见地卡三下。
+        Assert.Equal(before + 1, h.SearchTimer.StopCount);
+
+        Assert.False(h.Vm.FilterTopMost);
+        Assert.False(h.Vm.FilterTagged);
+        Assert.False(h.Vm.FilterRecent);
+
+        // 「全部」不是第四个条件，它是"三个都没勾"这个状态本身。
+        Assert.True(h.Vm.IsFilterAll);
+    }
+
+    [Fact]
+    public void 清空过滤会让三个拨动按钮收到通知弹回来()
+    {
+        // 这条钉的是实现手法：ClearFilters 里是逐个给属性赋值（走 PropertyChanged），
+        // 不是图省事直接写后备字段。后者连通知都没有，用户会看着三个按钮全亮着、
+        // 列表却是全部。工具包的 MVVMTK0034 也正是为了拦这一手。
+        using var h = new ManagerHarness();
+
+        h.Vm.FilterTopMost = true;
+        h.Vm.FilterTagged = true;
+        h.Vm.FilterRecent = true;
+
+        var changed = new List<string?>();
+        h.Vm.PropertyChanged += (_, e) => changed.Add(e.PropertyName);
+
+        h.Vm.ClearFilters();
+
+        Assert.Contains(nameof(ManagerViewModel.FilterTopMost), changed);
+        Assert.Contains(nameof(ManagerViewModel.FilterTagged), changed);
+        Assert.Contains(nameof(ManagerViewModel.FilterRecent), changed);
+
+        // 「全部」那一档也得跟着亮起来，否则界面看上去还是"在筛"。
+        Assert.Contains(nameof(ManagerViewModel.IsFilterAll), changed);
+    }
+
+    [Fact]
+    public void 没有勾任何条件时清空过滤什么都不做()
+    {
+        using var h = new ManagerHarness();
+
+        h.Vm.Refresh();
+
+        int before = h.SearchTimer.StopCount;
+
+        h.Vm.ClearFilters();
+
+        Assert.Equal(before, h.SearchTimer.StopCount);
+    }
+
+    // ================= 右键菜单：置顶 =================
+
+    [Fact]
+    public void 右键置顶会写进布局并发消息告诉已开着的窗口()
+    {
+        using var h = new ManagerHarness();
+        var note = ManagerHarness.NewNote("# 笔记");
+
+        h.Add(note);
+        h.Vm.Refresh();
+
+        NoteTopMostChangedMessage? received = null;
+        h.Messenger.Register<NoteTopMostChangedMessage>(this, (_, message) => received = message);
+
+        h.Vm.ToggleTopMost(h.Vm.Notes[0]);
+
+        Assert.True(h.LayoutStore.GetOrCreate(note.Id).IsTopMost);
+
+        // 置顶落在 layout.json 上（§18.1 的三类状态里它归窗口状态那一类），
+        // 所以标脏是必须的——否则这次点击重启之后就没了。
+        Assert.True(h.LayoutStore.IsDirty);
+
+        // 开着的便签窗口另存一份镜像，而布局层的写入不会发出任何通知。
+        // 少了这条消息，窗口既不真的置顶、标题条上的按钮也还显示着旧状态。
+        Assert.True(received is not null);
+        Assert.Equal(note.Id, received.NoteId);
+        Assert.True(received.IsTopMost);
+    }
+
+    [Fact]
+    public void 再点一次置顶是取消()
+    {
+        using var h = new ManagerHarness();
+        var note = ManagerHarness.NewNote("# 笔记");
+
+        h.Add(note);
+        h.Vm.Refresh();
+
+        h.Vm.ToggleTopMost(h.Vm.Notes[0]);
+        h.Vm.ToggleTopMost(h.Vm.Notes[0]);
+
+        Assert.False(h.LayoutStore.GetOrCreate(note.Id).IsTopMost);
+    }
+
+    [Fact]
+    public void 置顶一张列表里已经没有的便签时什么都不做()
+    {
+        using var h = new ManagerHarness();
+        var note = ManagerHarness.NewNote("# 笔记");
+
+        h.Add(note);
+        h.Vm.Refresh();
+
+        var stale = h.Vm.Notes[0];
+
+        h.Store.Remove(note.Id);
+
+        h.Vm.ToggleTopMost(stale);
+
+        Assert.False(h.LayoutStore.TryGet(note.Id)?.IsTopMost ?? false);
+    }
+
+    [Fact]
+    public void 右键菜单的标题跟着选中行的置顶状态换()
+    {
+        using var h = new ManagerHarness();
+        var note = ManagerHarness.NewNote("# 笔记");
+
+        h.Add(note);
+        h.Vm.Refresh();
+
+        var changed = new List<string?>();
+        h.Vm.PropertyChanged += (_, e) => changed.Add(e.PropertyName);
+
+        // 没有选中行时无从置顶，写的还是默认那一句。
+        Assert.Equal("置顶", h.Vm.TopMostMenuHeader);
+
+        h.Vm.SelectedNote = h.Vm.Notes[0];
+
+        Assert.Contains(nameof(ManagerViewModel.TopMostMenuHeader), changed);
+
+        // 便签窗口标题条上的置顶按钮改的也是布局层，管理器这一侧毫无察觉。
+        h.Pin(note.Id);
+        changed.Clear();
+
+        // 读一把就是新值——它是现算的，不是存下来的。
+        Assert.Equal("取消置顶", h.Vm.TopMostMenuHeader);
+
+        // 但"选中没变所以一声通知都不发"这件事仍然成立，
+        // 而菜单是挂在整个 ListBox 上的同一个实例，重开时也不会自己去重读。
+        Assert.Empty(changed);
+
+        // 于是 ManagerWindow 在菜单弹出前显式喊这一声。
+        h.Vm.NotifyContextMenuOpening();
+
+        Assert.Contains(nameof(ManagerViewModel.TopMostMenuHeader), changed);
+    }
+
+    // ================= 右键菜单：在资源管理器中显示 =================
+
+    [Fact]
+    public async Task 在资源管理器中显示会把文件路径交给外壳()
+    {
+        using var h = new ManagerHarness();
+        var note = ManagerHarness.NewNote("# 笔记");
+
+        h.Add(note);
+        h.Vm.Refresh();
+
+        await h.Vm.RevealInExplorerAsync(h.Vm.Notes[0]);
+
+        // 交出去的是文件而不是目录：要的是"选中它"，不是"打开所在目录"。
+        Assert.Equal(new[] { note.FilePath }, h.Shell.RevealedFiles);
+        Assert.Empty(h.Dialogs.ErrorRequests);
+    }
+
+    [Fact]
+    public async Task 文件已经不在了时提示用户而不是静默返回()
+    {
+        using var h = new ManagerHarness();
+        var note = ManagerHarness.NewNote("# 笔记");
+
+        h.Add(note);
+        h.Vm.Refresh();
+
+        h.Shell.Result = false;
+
+        await h.Vm.RevealInExplorerAsync(h.Vm.Notes[0]);
+
+        // 用户刚点了一下按钮，什么都不发生的话他只会以为程序卡住了。
+        Assert.Equal(
+            $"管理器|找不到这个文件：\n{note.FilePath}",
+            Assert.Single(h.Dialogs.ErrorRequests));
+    }
+
+    [Fact]
+    public async Task 没有选中行时在资源管理器中显示什么都不做()
+    {
+        using var h = new ManagerHarness();
+
+        await h.Vm.RevealInExplorerAsync(null);
+
+        Assert.Empty(h.Shell.RevealedFiles);
+        Assert.Empty(h.Dialogs.ErrorRequests);
+    }
+
+    // ================= 列表项上的标签与颜色 =================
+
+    [Fact]
+    public void 列表项把便签的标签与颜色原样交出来()
+    {
+        using var h = new ManagerHarness();
+        var note = ManagerHarness.NewNote("# 笔记");
+
+        note.Tags.Add("工作");
+        note.Tags.Add("紧急");
+        note.Color = NoteColor.Blue;
+
+        h.Add(note);
+        h.Vm.Refresh();
+
+        var item = Assert.Single(h.Vm.Notes);
+
+        // 不复制、不排序：标签的数量与顺序都是用户自己定的（§5.8 按 Front Matter 原样保留），
+        // 重排会让他认不出自己写的那一串。
+        Assert.Equal(new[] { "工作", "紧急" }, item.Tags);
+
+        // 界面靠转换器把它换成笔刷，这里只保证这一头交出去的是颜色名。
+        Assert.Equal(NoteColor.Blue, item.Color);
+    }
+
     // ================= 别处改了便签集合 =================
 
     [Fact]

@@ -66,6 +66,16 @@ public static class NoteSearch
     public const double EmptyBodyPenalty = -100;
 
     /// <summary>
+    /// 「最近」的窗口，<see cref="RecentWeekBonus"/> 与管理器过滤条上那个「最近 7 天」共用。
+    /// </summary>
+    /// <remarks>
+    /// 两处各写一个 <c>TimeSpan.FromDays(7)</c> 的话，把窗口改成 3 天时只会改到一处，
+    /// 而症状是「搜出来的结果比筛出来的多」——两者都叫「最近」却没有同一套口径，
+    /// 用户没有任何办法理解那多出来的几条是怎么来的。
+    /// </remarks>
+    public static readonly TimeSpan RecentWindow = TimeSpan.FromDays(7);
+
+    /// <summary>
     /// 按查询词筛出命中的便签并排好序（§12.1、§12.2）。
     /// </summary>
     /// <param name="notes">候选便签，通常是 <c>NoteStore.Snapshot()</c>。</param>
@@ -207,7 +217,7 @@ public static class NoteSearch
         // 不给它单开一个分支：加 30 分与加 0 分的差别不值得多一条规则。
         var age = now - note.UpdatedAt;
 
-        if (age <= TimeSpan.FromDays(7))
+        if (age <= RecentWindow)
         {
             best += RecentWeekBonus;
         }

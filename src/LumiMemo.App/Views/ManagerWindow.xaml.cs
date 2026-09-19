@@ -82,6 +82,15 @@ public partial class ManagerWindow : Window
     /// 这时同样不能放行菜单：那一个「移入回收站」会对着一个与鼠标位置无关的选中行执行。
     /// 憋回去比给一个会误伤的菜单好。
     /// </para>
+    /// <para>
+    /// <strong>最后那句 <c>NotifyContextMenuOpening</c> 是给「置顶」那一项的标题用的。</strong>
+    /// 整个列表共用同一个 <c>ContextMenu</c>（每行一个的话，虚拟化滚一遍就造一堆），
+    /// 而它的 <c>DataContext</c> 绑在 <c>PlacementTarget.DataContext</c> 上——
+    /// 每次打开，<c>PlacementTarget</c> 都是同一个 <c>ListBox</c>、求值结果没变，
+    /// 于是这条绑定不会重新求值，挂在它下面的 <c>Header</c> 也就不去重读。
+    /// 结果是：上一次开菜单时那张便签是置顶的，这一次右键一张没置顶的，
+    /// 菜单上还写着「取消置顶」。喊一声让它重读，比换成每行一个菜单便宜得多。
+    /// </para>
     /// </remarks>
     private void OnListContextMenuOpening(object sender, ContextMenuEventArgs e)
     {
@@ -89,6 +98,8 @@ public partial class ManagerWindow : Window
             && NoteList.ContainerFromElement(source) is ListBoxItem item)
         {
             item.IsSelected = true;
+
+            _viewModel.NotifyContextMenuOpening();
 
             return;
         }

@@ -49,9 +49,12 @@ public sealed partial class ManagerViewModel : ObservableObject
     private readonly NoteViewModelFactory _viewModelFactory;
     private readonly IWindowManager _windowManager;
     private readonly IManagerWindowPresenter _managerWindow;
+    private readonly IShellLauncher _shell;
+    private readonly IDialogService _dialogs;
     private readonly IDispatcher _dispatcher;
     private readonly IClock _clock;
     private readonly IUiTimer _searchTimer;
+    private readonly IMessenger _messenger;
 
     /// <summary>当前查询词下命中的<strong>全部</strong>便签，未截断。见 <see cref="Notes"/>。</summary>
     private readonly List<NoteListItem> _matches = [];
@@ -64,6 +67,8 @@ public sealed partial class ManagerViewModel : ObservableObject
         NoteViewModelFactory viewModelFactory,
         IWindowManager windowManager,
         IManagerWindowPresenter managerWindow,
+        IShellLauncher shell,
+        IDialogService dialogs,
         IDispatcher dispatcher,
         IClock clock,
         IUiTimerFactory timers,
@@ -76,6 +81,8 @@ public sealed partial class ManagerViewModel : ObservableObject
         ArgumentNullException.ThrowIfNull(viewModelFactory);
         ArgumentNullException.ThrowIfNull(windowManager);
         ArgumentNullException.ThrowIfNull(managerWindow);
+        ArgumentNullException.ThrowIfNull(shell);
+        ArgumentNullException.ThrowIfNull(dialogs);
         ArgumentNullException.ThrowIfNull(dispatcher);
         ArgumentNullException.ThrowIfNull(clock);
         ArgumentNullException.ThrowIfNull(timers);
@@ -88,9 +95,12 @@ public sealed partial class ManagerViewModel : ObservableObject
         _viewModelFactory = viewModelFactory;
         _windowManager = windowManager;
         _managerWindow = managerWindow;
+        _shell = shell;
+        _dialogs = dialogs;
         _dispatcher = dispatcher;
         _clock = clock;
         _searchTimer = timers.Create();
+        _messenger = messenger;
 
         // 自己改的（新建 / 删除 / 重扫）各方法直接调 Refresh()，不绕消息一圈。
         // 只有「别人改了便签集合、我无从知道」的那一处才需要这条线：
@@ -135,12 +145,99 @@ public sealed partial class ManagerViewModel : ObservableObject
     /// </remarks>
     public int SearchDebounceMilliseconds { get; set; } = 150;
 
-    /// <summary>列表为空时显示的提示。</summary>
-    public string EmptyHint =>
-        IsSearching ? "没有找到匹配的便签。" : "这个文件夹里还没有便签。";
+    // ------------------------------------------------------------------
+    // 过滤条（§15.8）。三个条件之间是「与」：勾了置顶和最近 7 天就是两者同时满足。
+    // ------------------------------------------------------------------
 
-    /// <summary>状态栏上的计数，形如「3 条便签」，搜索时是「找到 2 条」。</summary>
-    public string CountText => IsSearching ? $"找到 {_matches.Count} 条" : $"{_matches.Count} 条便签";
+    /// <summary>只看置顶的便签。</summary>
+    [ObservableProperty]
+    private bool _filterTopMost;
+
+    /// <summary>只看有标签的便签。</summary>
+    [ObservableProperty]
+    private bool _filterTagged;
+
+    /// <summary>只看 <see cref="NoteSearch.RecentWindow"/>（七天）内改过的便签。</summary>
+    [ObservableProperty]
+    private bool _filterRecent;
+
+    /// <summary>
+    /// 三个勾选框一个都没勾，即过滤条上「全部」那一档。
+    /// </summary>
+    /// <remarks>
+    /// 「全部」不是第四个条件、也不参与「与」运算——它就是<strong>没有条件</strong>。
+    /// 做成一个真的复选框会立刻出现「全部 + 置顶」该是什么意思这种答不上来的问题。
+    /// </remarks>
+    public bool IsFilterAll => !HasFilter;
+
+    private bool HasFilter => FilterTopMost || FilterTagged || FilterRecent;
+
+    /// <summary>正在一次点掉多个过滤条件。<see cref="OnFilterChanged"/> 靠它跳过中间那几次。</summary>
+    private bool _clearingFilters;
+
+    partial void OnFilterTopMostChanged(bool value) => OnFilterChanged();
+
+    partial void OnFilterTaggedChanged(bool value) => OnFilterChanged();
+
+    partial void OnFilterRecentChanged(bool value) => OnFilterChanged();
+
+    /// <summary>
+    /// 把三个勾选框都清掉（过滤条上的「全部」）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 三个属性是一个一个赋的，每个 setter 都会走一次 <see cref="OnFilterChanged"/>，
+    /// 也就是把列表整个重建三遍——点一下「全部」卡三下。中间那几次用
+    /// <see cref="_clearingFilters"/> 挡掉，末尾自己刷新一遍。
+    /// </para>
+    /// <para>
+    /// 这里<strong>不能</strong>图省事去直接写 <c>_filterTopMost</c> 那几个后备字段：
+    /// 工具包把「绕过生成的属性直接碰后备字段」判成错误（MVVMTK0034），
+    /// 理由很实在——那样连 <c>PropertyChanged</c> 都没有，
+    /// 界面上那三个拨动按钮不会弹回来，用户会看着三个全部亮着、列表却是全部。
+    /// </para>
+    /// </remarks>
+    [RelayCommand]
+    public void ClearFilters()
+    {
+        if (!HasFilter)
+        {
+            return;
+        }
+
+        _clearingFilters = true;
+
+        try
+        {
+            FilterTopMost = false;
+            FilterTagged = false;
+            FilterRecent = false;
+        }
+        finally
+        {
+            _clearingFilters = false;
+        }
+
+        OnFilterChanged();
+    }
+
+    /// <summary>列表为空时显示的提示。</summary>
+    public string EmptyHint => (IsSearching, HasFilter) switch
+    {
+        (true, _) => "没有找到匹配的便签。",
+
+        // 分开一句：文件夹里明明有便签却说"还没有便签"，用户会以为程序没扫到文件，
+        // 而真正的原因是他自己勾了一个过滤条件。
+        (false, true) => "没有符合筛选条件的便签。",
+        _ => "这个文件夹里还没有便签。",
+    };
+
+    /// <summary>状态栏上的计数，形如「3 条便签」；搜索时是「找到 2 条」，只筛选时是「筛选出 2 条」。</summary>
+    public string CountText => IsSearching
+        ? $"找到 {_matches.Count} 条"
+        : HasFilter
+            ? $"筛选出 {_matches.Count} 条"
+            : $"{_matches.Count} 条便签";
 
     /// <summary>结果超过渲染上限时状态栏上的提示。没超过时是空串。</summary>
     public string OverflowHint =>
@@ -150,6 +247,52 @@ public sealed partial class ManagerViewModel : ObservableObject
     public bool HasOverflow => _matches.Count > MaxRenderedResults;
 
     private bool IsSearching => !string.IsNullOrWhiteSpace(SearchQuery);
+
+    /// <summary>
+    /// 过滤条件变了：重算列表，并让「全部」那一档跟着换外观。
+    /// </summary>
+    /// <remarks>
+    /// <see cref="IsFilterAll"/> 不在 <see cref="Refresh"/> 的通知清单里（它跟列表内容无关），
+    /// 所以它得自己在这儿喊一声。漏掉的症状是：勾上「置顶」之后「全部」还亮着，
+    /// 看上去像是两个互相矛盾的条件同时生效。
+    /// </remarks>
+    private void OnFilterChanged()
+    {
+        // 「全部」是一次点掉三个条件的，中间那两次过渡态不该各刷一遍列表。
+        // 末尾那一次是正常的逐个切换，会老老实实走到下面。
+        if (_clearingFilters)
+        {
+            return;
+        }
+
+        OnPropertyChanged(nameof(IsFilterAll));
+
+        Refresh();
+    }
+
+    partial void OnSelectedNoteChanged(NoteListItem? value) =>
+        OnPropertyChanged(nameof(TopMostMenuHeader));
+
+    /// <summary>右键菜单里那一项的标题：这张便签已经置顶时是「取消置顶」。</summary>
+    /// <remarks>
+    /// 让菜单写清"点下去会发生什么"，而不是永远写着「置顶」——后者在已经置顶的便签上
+    /// 看不出这是「再置顶一次」（无动作）还是「取消置顶」。
+    /// </remarks>
+    public string TopMostMenuHeader =>
+        SelectedNote is { } item && IsPinned(item.Id) ? "取消置顶" : "置顶";
+
+    /// <summary>
+    /// 菜单马上就要弹出来了：重算一遍菜单上那些跟当前状态有关的东西。
+    /// </summary>
+    /// <remarks>
+    /// <strong>光靠属性通知不够。</strong> 右键落在<em>已经选中</em>的那一行时
+    /// <c>SelectedNote</c> 没有变，于是一声通知都不会发；而菜单是同一个共享实例
+    /// （挂在整个 <c>ListBox</c> 上），里面的 <c>Header</c> 绑定不会因为菜单重开就自己重算——
+    /// <c>PlacementTarget</c> 每次都指向同一个 <c>ListBox</c>，值没变，绑定就不重新求值。
+    /// 表现为：用户先用便签标题条上的置顶按钮把某张便签置顶，再在管理器里右键它，
+    /// 菜单上写着「置顶」。
+    /// </remarks>
+    public void NotifyContextMenuOpening() => OnPropertyChanged(nameof(TopMostMenuHeader));
 
     /// <summary>
     /// 查询词变了：重新起一次去抖计时（§15.8 的「输入停止 150ms 后执行」）。
@@ -281,6 +424,67 @@ public sealed partial class ManagerViewModel : ObservableObject
     }
 
     /// <summary>
+    /// 切换一张便签的置顶（§15.8 右键菜单）。列表项右键菜单走这里。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 置顶的真实状态在 <see cref="NoteLayout.IsTopMost"/> 上（落盘到 <c>layout.json</c>，
+    /// §18.1 的三类状态里它属于窗口状态那一类），所以这里写布局层而不是便签模型。
+    /// </para>
+    /// <para>
+    /// <strong>写完必须喊一声</strong>：开着的便签窗口自己存了一份镜像
+    /// （<c>NoteViewModel.IsTopMost</c>）。镜像的改动会往下传到窗口，但布局层这一侧
+    /// 不会发出任何通知——不喊这一声，窗口既不真的置顶、标题条上那个按钮也还显示着旧状态，
+    /// 用户再点一下反而把它取消了。见 <see cref="NoteTopMostChangedMessage"/>。
+    /// </para>
+    /// </remarks>
+    [RelayCommand]
+    public void ToggleTopMost(NoteListItem? item)
+    {
+        if (item is null || !_store.Contains(item.Id))
+        {
+            return;
+        }
+
+        NoteLayout layout = _layoutService.GetOrCreate(item.Id);
+
+        layout.IsTopMost = !layout.IsTopMost;
+
+        // GetOrCreate 自己也会安排一次落盘，但那一句管的是「新条目要落盘」。
+        // 这一句管的是「这一个字段变了」——两件事，将来 GetOrCreate 改成
+        // 只在新建时才标脏的那天，这一句还在。
+        _layoutService.MarkDirtyAndScheduleFlush();
+        _messenger.Send(new NoteTopMostChangedMessage(item.Id, layout.IsTopMost));
+
+        // 列表要重算：搜索结果里置顶的排前面（§12.2 的 +50），
+        // 菜单上那一句说法也跟着换了（TopMostMenuHeader）。
+        Refresh();
+    }
+
+    /// <summary>
+    /// 在资源管理器里打开这张便签所在的位置并选中它（§15.8 右键菜单）。
+    /// </summary>
+    /// <remarks>
+    /// 失败时给一句提示而不是静默返回（与 <see cref="SettingsViewModel.OpenNotesFolderAsync"/>
+    /// 同一手法）。这里的失败只有一个实际来由：文件已经不在了，而列表还是上一轮的快照
+    /// （外部删掉、或者用户在另一台机器上删的）。用户刚点了一下按钮，
+    /// 什么都不发生的话他只会以为程序卡住了。
+    /// </remarks>
+    [RelayCommand]
+    public async Task RevealInExplorerAsync(NoteListItem? item)
+    {
+        if (item is null)
+        {
+            return;
+        }
+
+        if (!_shell.RevealInExplorer(item.Note.FilePath))
+        {
+            await _dialogs.ShowErrorAsync("管理器", $"找不到这个文件：\n{item.Note.FilePath}");
+        }
+    }
+
+    /// <summary>
     /// 新建一张便签并立刻打开它。
     /// </summary>
     /// <remarks>
@@ -389,10 +593,23 @@ public sealed partial class ManagerViewModel : ObservableObject
         _windowManager.ShowNote(viewModel, layout);
     }
 
-    /// <summary>按当前查询词算出要展示的行。</summary>
+    /// <summary>按当前查询词与过滤条件算出要展示的行。</summary>
+    /// <remarks>
+    /// <strong>过滤在搜索之前</strong>：条件筛掉的那些便签压根不该参与评分与排序，
+    /// 也不该进 <c>_matches</c>——状态栏那个「筛选出 N 条」与「还有 N 条结果」
+    /// 说的都是筛过之后的数，而它们读的正是 <c>_matches</c>。
+    /// </remarks>
     private List<NoteListItem> BuildItems()
     {
         IReadOnlyList<Note> notes = _store.Snapshot();
+
+        // 置顶这一份查两次（过滤一次、评分一次），所以只建一次。
+        HashSet<Guid> topMost = TopMostIds();
+
+        if (HasFilter)
+        {
+            notes = [.. notes.Where(note => PassesFilter(note, topMost))];
+        }
 
         if (!IsSearching)
         {
@@ -407,9 +624,41 @@ public sealed partial class ManagerViewModel : ObservableObject
         return
         [
             .. NoteSearch
-                .Search(notes, query, _index.GetPlainText, TopMostIds(), _clock.Now)
+                .Search(notes, query, _index.GetPlainText, topMost, _clock.Now)
                 .Select(hit => new NoteListItem(hit.Note, _index.GetPlainText(hit.Note.Id), query))
         ];
+    }
+
+    /// <summary>这张便签是否满足当前勾选的<strong>全部</strong>过滤条件（§15.8 的「与」关系）。</summary>
+    private bool PassesFilter(Note note, HashSet<Guid> topMostIds)
+    {
+        if (FilterTopMost && !topMostIds.Contains(note.Id))
+        {
+            return false;
+        }
+
+        if (FilterTagged && note.Tags.Count == 0)
+        {
+            return false;
+        }
+
+        // 与 §12.2 的「七天内 +30」共用同一个窗口常量，见 NoteSearch.RecentWindow。
+        // 用 >= 那一侧不判：未来时间戳（时钟回拨）算"最近"，与评分那边一致。
+        return !FilterRecent || _clock.Now - note.UpdatedAt <= NoteSearch.RecentWindow;
+    }
+
+    /// <summary>这张便签现在是否置顶。</summary>
+    private bool IsPinned(Guid noteId)
+    {
+        foreach (NoteLayout layout in _layoutService.All)
+        {
+            if (layout.NoteId == noteId)
+            {
+                return layout.IsTopMost;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>当前处于置顶的便签 id，交给 §12.2 的「置顶 +50」。</summary>

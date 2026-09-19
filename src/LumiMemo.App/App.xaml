@@ -12,4 +12,18 @@
     这里没有 StartupUri —— 启动由 App.xaml.cs 的 OnStartup 显式控制，
     顺序按 §17.1，不能交给 XAML 的隐式约定（§24.1 原则 9）。
   -->
+
+  <!--
+    资源字典（§15.10）。眼下只有 Colors 一个：管理器列表里的颜色点要按便签颜色取笔刷。
+    文档列的那套顺序是 Metrics → Typography → Colors → Icons，其余三个字典还没有内容，
+    不先摆空文件——空字典合并进来除了让人以为"东西在这里面"之外没有作用。
+    新增字典时按 §15.10 的顺序插进来即可（后面的可以覆盖前面的）。
+  -->
+  <Application.Resources>
+    <ResourceDictionary>
+      <ResourceDictionary.MergedDictionaries>
+        <ResourceDictionary Source="Resources/Colors.xaml" />
+      </ResourceDictionary.MergedDictionaries>
+    </ResourceDictionary>
+  </Application.Resources>
 </Application>

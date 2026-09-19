@@ -28,4 +28,24 @@ public interface IShellLauncher
     /// 该给他一句提示，而不是让异常掀掉整个界面。
     /// </remarks>
     bool OpenFolder(string path);
+
+    /// <summary>
+    /// 在资源管理器里打开一个<strong>文件所在的目录并选中该文件</strong>（§15.8 右键菜单的「在资源管理器中显示」）。
+    /// </summary>
+    /// <param name="filePath">文件的完整路径。</param>
+    /// <returns>同上：交出去了给 <c>true</c>，文件不在或外壳拒绝启动给 <c>false</c>。</returns>
+    /// <remarks>
+    /// <para>
+    /// <strong>它和 <see cref="OpenFolder"/> 是两件事，不能合并。</strong>
+    /// 只打开目录的话，用户在几十个 <c>.md</c> 里还得自己找那一个——而「在资源管理器中显示」
+    /// 这个动作的全部意义就是替他找到。文件所在目录与便签的 <c>FilePath</c> 是两回事：
+    /// 同一个目录下可能有几十张便签。
+    /// </para>
+    /// <para>
+    /// 单开一个方法而不是给 <see cref="OpenFolder"/> 加个开关参数：两者的命令行形状不同
+    /// （<c>explorer.exe &lt;目录&gt;</c> 对 <c>explorer.exe /select,&lt;文件&gt;</c>），
+    /// 而参数拼错在这里的后果是把用户给的路径当成一个开关去执行（§19.3）。
+    /// </para>
+    /// </remarks>
+    bool RevealInExplorer(string filePath);
 }
