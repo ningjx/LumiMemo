@@ -999,6 +999,16 @@ tags:
 | 空标签 | 直接丢弃 |
 | 长度上限 | 64 字符，超出则拒绝并提示 |
 
+**实现落在 `Core/Services/TagRules.cs`，且只有这一份**（`Normalize` / `TryAdd` / `Split` + `MaxLength = 64`）。解析 Front Matter 与管理器那个标签编辑框都走它：两处各写一份的话，「编辑完写回、再读回来标签变了」这种缺陷只会在特定输入下出现，极难查。
+
+三条与直觉不同的落地细节：
+
+- **规范化在读的时候也跑一遍**（解析 Front Matter 时），而不是只在写入时。这样 `Note.Tags` 里永远是规范形式，展示/比较/写回三处都不必各自记着再规范化一次——漏掉一处就是同一个标签被当成两个。
+- **长度上限不在 `TagRules` 里执行**。§5.8 对它要求的是"拒绝并提示"，那是**输入校验**；读文件时套用它等于把用户已有的长标签直接丢掉，属于破坏数据。`Split` 照样把超长标签交出来，由调用方（编辑框的校验回调）决定怎么拒。
+- **空格不在分隔符里**。上面那条"内部空白换成 `-`"决定了 `"to read"` 是一个标签，若 `Split` 按空格拆，用户打「to read」会得到两个标签，与那条规则直接打架。分隔符是 `, ， 、 ; ； \n`——中文标点必须收：中文输入法下打出全角逗号是默认行为，不是用户写错了。
+
+**大小写去重不能交给 `Distinct()`**：它按默认比较器（字节序）挑一个留下，用户写的 `Work` 可能被判成重复而以 `work` 落盘。`TryAdd` 是"先查再加"，保留首次出现的写法。
+
 ### 内存索引
 
 `SearchIndex` 维护 `Dictionary<string, HashSet<Guid>>`（键是忽略大小写后的标签），在以下时机重建或增量更新：
@@ -3629,7 +3639,9 @@ public enum NoteColor
 
 **实现说明**：`App/Resources/Colors.xaml` 已落地（由 `App.xaml` 合并进来）。**上面给的只有黄色那一组三值，其余六组是自拟的**——按同样的明度关系推：背景很浅（L≈90%）、标题条中浅（L≈80%）、强调色饱和且深（L≈35%），七个颜色的强调色两两分得开。文档示例里那种"先写 `<Color>`、再让 `SolidColorBrush` 用 `StaticResource` 引它"的写法**没有照做**：眼下没有任何消费者要那个 `Color` 本身（唯一用得着的是本节末的深色变体，而那一套还没做），多一层间接只是多一处要同步的地方。深色变体与 `DynamicResource` 一并留给深色模式那一轮。
 
-**强调色在管理器里已经用起来了**：结果项右侧那个 8×8 的颜色点取的是 `{Color}AccentBrush` 而不是背景色——这么小的点上，七个浅背景色在白底上彼此分不开。转换在 `Views/Converters/NoteColorToBrushConverter.cs`。便签窗口用哪一支笔刷、以及切换颜色时怎么刷新，是**管理器的颜色编辑解禁之后**才要定的事。
+**强调色在管理器里已经用起来了**：结果项右侧那个 8×8 的颜色点取的是 `{Color}AccentBrush` 而不是背景色——这么小的点上，七个浅背景色在白底上彼此分不开。转换在 `Views/Converters/NoteColorToBrushConverter.cs`。右键菜单「颜色」子菜单那七个色块引的是同一批笔刷。
+
+**颜色这条链路的状态（截至颜色/标签编辑落地）**：数据面已经全通——管理器改色 → `INoteService.ApplyColorEdit` → 写回 `Note.Color` → `SaveNoteAsync` 写进 Front Matter → 重启还在；管理器列表那一行的颜色点当场就换。**但便签窗口还没跟着换**：`NoteWindow.xaml` 既不绑 `Color` 也不绑 `Tags`（`NoteViewModel.Color` 是一份没有消费者的镜像），所以 `SetColorAsync` 刻意**不发**任何消息——发出去就是一条没有接收方的管线。便签窗口用哪一支笔刷、切换时怎么刷新，等**界面整体改毛玻璃那一轮**一起做：半透明的纸与"每张便签自己的颜色"会互相打架，颜色这套值在毛玻璃下要重新定，不是换个笔刷的事。
 
 ## 15.4 标题与重命名
 
@@ -3863,9 +3875,12 @@ Keyboard.Focus(_editor);
 
 | 位置 | 内容 |
 |---|---|
-| `ViewModels/ManagerViewModel.cs` | `SearchQuery`（去抖入口）、`SearchDebounceMilliseconds`（由启动序列从 `AppSettings.SearchDebounceMs` 灌入）、`MaxRenderedResults = 200`、`HasOverflow` / `OverflowHint`、`EmptyHint` / `CountText` 按查询词与过滤条切换；`FilterTopMost` / `FilterTagged` / `FilterRecent` + `IsFilterAll` / `ClearFilters` / `PassesFilter`；`ToggleTopMost` / `TopMostMenuHeader` / `NotifyContextMenuOpening`；`RevealInExplorerAsync` |
+| `ViewModels/ManagerViewModel.cs` | `SearchQuery`（去抖入口）、`SearchDebounceMilliseconds`（由启动序列从 `AppSettings.SearchDebounceMs` 灌入）、`MaxRenderedResults = 200`、`HasOverflow` / `OverflowHint`、`EmptyHint` / `CountText` 按查询词与过滤条切换；`FilterTopMost` / `FilterTagged` / `FilterRecent` + `IsFilterAll` / `ClearFilters` / `PassesFilter`；`ToggleTopMost` / `TopMostMenuHeader` / `NotifyContextMenuOpening`；`RevealInExplorerAsync`；`SetColorAsync` / `EditTagsAsync` + `ValidateTagsInput` / `PersistEditAsync`（后两者是私有的） |
 | `Views/SnippetPresenter.cs` | 把 `IReadOnlyList<SnippetSegment>` 画成一行文字的自绘 `TextBlock` |
 | `Views/Converters/NoteColorToBrushConverter.cs` | 颜色名 → `Note{颜色}AccentBrush` 笔刷；取不到时退到一支冻结的灰色（无 WPF 应用的进程里 `Application.Current` 是 `null`） |
+| `Views/Converters/NoteColorMatchesConverter.cs` | 「当前颜色是不是参数指定的那一个」，只用于颜色子菜单那七项的 `IsChecked`（`Mode=OneWay`）。反向抛异常 |
+| `Services/DialogService.PromptAsync` + `Views/PromptDialog.xaml(.xaml.cs)` | 单行输入对话框（文档没有给样子，自拟）。带一个调用方传进来的校验回调，不过时不关窗 |
+| `Core/Services/TagRules.cs` | §5.8 规则的唯一实现（`Normalize` / `TryAdd` / `Split`）。解析器与管理器的标签编辑框都走它 |
 | `Resources/Colors.xaml` | §15.3 调色板。**只有黄色三值是文档给的，其余六组是自拟的**（背景很浅 L≈90%、标题条中浅 L≈80%、强调色饱和且深 L≈35%）。文档 §15.3 示例还给背景另写了 `<Color>` 资源，这里**没有照做**——眼下没有消费者 |
 | `Messages/NoteTopMostChangedMessage.cs` | 「某一张便签的置顶被别处改了」。与 `NotesChangedMessage`（"有哪些便签变了"、接收方整表重读）刻意分开：合并之后管理器每切一次置顶都要整表重扫，而重扫会把用户正在看的那一行从选中状态里抖出去 |
 | `ViewModels/NoteListItem.cs` | 副标题的片段由 `Query` 决定：`SnippetBuilder.Build` 摘得出就用摘要，摘不出退回「修改时间 · 字数」；`Tags` / `Color` 是给结果项那两个装饰用的直通 |
@@ -3894,11 +3909,15 @@ Keyboard.Focus(_editor);
 
 **工具条末尾有一个齿轮按钮**（打开设置窗口，§15.9 的补充）。它用齿轮而不是"设置"两个字，是因为它跟左边三个不属一类：那三个是"对便签做事"，它是"对程序做事"。这一段点击处理**放在代码后置而不是 ViewModel 命令里**——它不含任何状态判断（"已开着就唤到前面"这条规则在 `SettingsWindowLauncher` 里），跟列表项双击是同一档。真有一个"什么时候不该开"的条件时再挪进 ViewModel。
 
-**右键菜单眼下有三项**：置顶 / 在资源管理器中显示 / 移入回收站。上面结果项规格里那一行列了五项，剩下的**颜色**与**标签**还没实现——它们要连着 §15.3 的调色板与便签窗口换肤一起做，否则用户选了蓝色、便签窗口还是黄的。先把点不动的死项放上来，比缺两项更糟。
+**右键菜单五项齐了**：置顶 / 颜色 / 标签 / 在资源管理器中显示 / 移入回收站。分隔线以上是「改这张便签自己」，以下是「跟外头打交道」——五种动作里只有前三种会改便签的内容。
+
+**颜色与标签本轮只做到数据链路**：写回内存 + 写回 Front Matter，验收面是管理器那一行的颜色点与徽章。便签窗口怎么跟着换色留到毛玻璃那一轮（理由见本节末「改颜色不发任何消息给便签窗口」那一段）。
 
 菜单挂在 `ListBox` 上而不是每一行上：每行一个的话，虚拟化列表滚一遍就造出一堆一模一样的实例。代价是 `ContextMenu` 是独立的 `Popup`、不在 `ListBox` 的视觉树里，靠继承拿不到 ViewModel，`DataContext` 得显式绑到 `PlacementTarget`。（试过改挂到 `ItemContainerStyle` 上，为的是免掉下面那一拦——行不通：`ItemContainerStyle` 里一个不带 `BasedOn` 的隐式 `Style` 会把 `ListBoxItem` 的默认样式整个替换掉，连 `Template` 一起，列表项当场就不正常了。真要挂得补 `BasedOn="{StaticResource {x:Type ListBoxItem}}"`。）
 
-**共享的 `ContextMenu` 有一个绑定陈旧的坑，靠 `NotifyContextMenuOpening()` 补掉。** 菜单是同一个实例，`DataContext` 绑在 `PlacementTarget.DataContext` 上——每次打开，`PlacementTarget` 都是同一个 `ListBox`、求值结果没变，于是这条绑定不会重新求值，挂在它下面的 `Header` 也就不去重读。症状：先用便签窗口标题条上的置顶按钮把某张便签置顶，再在管理器里右键它，菜单上还写着「置顶」。所以 `ManagerWindow.OnListContextMenuOpening` 在选中该行之后**显式喊一声**，让 `TopMostMenuHeader` 重算。光靠 `OnSelectedNoteChanged` 不够——右键落在**已经选中**的那一行时选中项没变，一声通知都不会发。
+**共享的 `ContextMenu` 有一个绑定陈旧的坑，靠 `NotifyContextMenuOpening()` 补掉。** 菜单是同一个实例，`DataContext` 绑在 `PlacementTarget.DataContext` 上——每次打开，`PlacementTarget` 都是同一个 `ListBox`、求值结果没变，于是这条绑定不会重新求值，挂在它下面的**所有**绑定也就不去重读。症状：先用便签窗口标题条上的置顶按钮把某张便签置顶，再在管理器里右键它，菜单上还写着「置顶」。所以 `ManagerWindow.OnListContextMenuOpening` 在选中该行之后**显式喊一声**。光靠 `OnSelectedNoteChanged` 不够——右键落在**已经选中**的那一行时选中项没变，一声通知都不会发。
+
+**这一声要喊两句，不是一句**（`TopMostMenuHeader` + `SelectedNote`）。颜色子菜单那七项绑的是 `SelectedNote.Color`，与 `TopMostMenuHeader` 不是同一条属性路径——陈旧的病根在 `DataContext` 那一条绑定上，只有把**下面每一条**依赖它的属性都通知一遍才治得住。少喊第二句的具体症状：右键一张蓝色的便签、在子菜单里点了「蓝」（当前就是蓝），那一项的勾会被 `MenuItem` 自己拨掉——源没变、绑定不会去纠正它，于是七个项里一个亮的都没有，用户以为颜色没了。
 
 **菜单标题写成"点下去会发生什么"**（`TopMostMenuHeader`：已置顶时是「取消置顶」），而不是永远写着「置顶」——后者在已经置顶的便签上分不出这是"再置顶一次"（无动作）还是"取消置顶"。
 
@@ -3921,7 +3940,29 @@ Keyboard.Focus(_editor);
 
 **一处反直觉的结论，将来改 `SearchIndex.ToPlainText` 前先看这里**：标题那一行<strong>本身就在纯文本里</strong>（`GetPlainText` 拿的是整篇正文），所以「命中标题」必然同时是一次正文命中，摘要总是摘得出来、不会退回日期。想让它退回日期，得先让纯文本不含标题行——而那会连带影响 §12.2 的"出现次数加分"（标题命中的那一次就没了）。
 
-**下一轮要做的（这一轮刻意留下的）**：右键菜单里的「颜色」与「标签」两项，以及它们的编辑入口。这两件事不能只做管理器这一半——用户从菜单里改了颜色，便签窗口得当场换成那个颜色，而那是 §15.3 调色板落地到 `NoteWindow` 的整块工作（含 `NoteViewModel.Color` 往下传到窗口背景与标题条）。标签还缺一个自拟的编辑对话框（文档没有给）。另外**结果项卡片里的内联图标**（在资源管理器中显示、移入回收站那两个小图标）等用户的卡片参考图——图还没到，先不做。
+**颜色子菜单的七项写成七个静态节点**。颜色是编译期就定下来的（`NoteColor` 枚举，没有第二个来源会往这个菜单里加颜色），所以每一项写死一个 `CommandParameter="{x:Static models:NoteColor.Xxx}"` 就够；用 `ItemsSource` 去绑定枚举反而要为"当前选中是哪一项"再绕一圈。勾选态由一个只读转换器给出（`NoteColorMatchesConverter`：拿当前颜色与 `ConverterParameter` 那个字符串比），**且必须 `Mode=OneWay`**——`MenuItem.IsChecked` 的默认绑定模式是 `TwoWay`，而它在默认模板上真的会被用户点击改掉，反向那条路会写到只读的 `NoteListItem.Color` 上。那条路本来就不该存在：改颜色是"点了哪一项"这个信息，走 `CommandParameter` 传到 ViewModel，而不是靠 WPF 替我们把勾拨过去；所以反向干脆不实现，写错的那天立刻炸掉。转换器里枚举名拼错**不抛异常**，只是那一项不亮——XAML 里那一行就在眼前，看得见。
+
+**色块放进 `Header` 而不是 `Icon`**。`MenuItem` 的默认模板里勾与 `Icon` 抢同一列，`IsCheckable="True"` 时两者会叠在一起。`Header` 放一个 `StackPanel`（`Ellipse` + `TextBlock`）从构造上避开这个冲突——`MenuItem.Header` 放对象内容是合法且常用的做法。
+
+**子菜单那七个色块引的是 `{StaticResource Note{颜色}AccentBrush}`，所以 `ManagerWindow.xaml` 自己又合并了一次 `Resources/Colors.xaml`**（`App.xaml` 里已经有一份，两处指的是同一个文件，内容不会分叉）。理由不是洁癖：`StaticResource` 在**解析期**求值，而那发生在 `InitializeComponent()` 里——此时 `Application.Current` 可能还不存在（无头测试就是这种情况），窗口自己没合并的话整扇窗都建不起来。改用 `DynamicResource` 能绕开，但那样键名写错只会表现为"色块没颜色"，而 `ManagerWindowTests` 恰恰是拿来抓这类笔误的（它验的就是"XAML 能不能加载"）。补一句：这次是**测试先红了才发现的**（`XamlParseException`：无法找到名为 `NoteYellowAccentBrush` 的资源），不是预防性设计。
+
+**`SetColorAsync` 的签名只有颜色、便签取 `SelectedNote`**。子菜单七项各有各的 `CommandParameter`，而便签是另一个必需参数——命令的两个参数写法要求 XAML 能造出一个元组，而 XAML 造不出来。之所以能安全地退回读选中项：菜单只可能在**某一行上**弹出来，而 `OnListContextMenuOpening` 在弹菜单之前一定先把那行选上了。
+
+**点了当前那一支、或者打开标签对话框却没改，都直接返回。** 白白往下走一趟的话 `ApplyColorEdit` / `ApplyTagsEdit` 会刷新 `UpdatedAt`，于是列表按修改时间重排——用户只是点了一下"确认还是这个颜色"，却看到这一行跳到别处去了。
+
+**标签对话框是自拟的**（文档没有给样子）：`IDialogService.PromptAsync(title, message, initialValue, validate)` + `Views/PromptDialog.xaml`，界面是"一行说明 + 一个输入框 + 取消/确定"。几个要点：
+
+| 决定 | 理由 |
+|---|---|
+| 输入框里是"逗号分隔的一大串"，不是一列可增删的 chip | 标签数量少，用户改起来是"换掉整批"而不是"逐个调"，一次打完比来回点便宜；chip 那样还得多一个自绘控件与一套增删逻辑 |
+| 校验回调由调用方传进去 | 服务层不该认识某一个具体业务规则（这里是 §5.8 的 64 字上限） |
+| 校验不过时对话框**不关闭**，错误写在输入框下面 | 关掉再弹一个错误框的话，用户刚打的那一串就没了，得从头再打一遍 |
+| 返回类型可空 | "取消"与"输入了空串"是两件事——留空对标签编辑是有意义的（**清空全部标签**）。所以调用方判的是 `input is null`，不是 `input.Length == 0` |
+| 校验与写入必须是**同一次拆分** | 两处各拆一遍的话，将来给 `TagRules.Separators` 加一个分隔符，就会出现"校验说有问题的那个标签，写入时其实已经被拆没了" |
+
+**「关掉就落盘」这一步不走 `AutoSaveService`**（`ManagerViewModel.PersistEditAsync`）：去抖是为"连续按键"准备的（§11.1），而这里是一次点完就结束的动作——用户改完颜色随即关掉程序，那几百毫秒就成了纯粹的丢数据窗口。`SaveNoteAsync` 内部还有一道"内容哈希没变就不写盘"的自检（§5.9），所以也不会白白多写文件。失败时 `catch (IOException or UnauthorizedAccessException)` → 弹一句提示，**但不回滚内存**（与 §11.5 一致）：用户改的东西还在，下一次改动或退出时的整批保存会再写一遍；回滚更糟——用户看着颜色自己弹回去，却不知道是为什么。
+
+**改颜色不发任何消息给便签窗口**，这是本轮刻意的留白。`NoteWindow.xaml` 既不绑 `Color` 也不绑 `Tags`（`NoteViewModel.Color` 眼下是一份没有消费者的镜像），发出去就是一条没有接收方的管线。等毛玻璃那一轮把颜色落到窗口背景与标题条时再接上——那时它才有接收方。
 
 ## 15.9 托盘图标与菜单
 

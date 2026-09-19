@@ -1,9 +1,12 @@
+using System.Globalization;
+using System.IO;
 using CommunityToolkit.Mvvm.Messaging;
 using LumiMemo.App.Messages;
 using LumiMemo.App.Tests.TestDoubles;
 using LumiMemo.App.ViewModels;
 using LumiMemo.Core.Abstractions;
 using LumiMemo.Core.Models;
+using LumiMemo.Core.Services;
 using LumiMemo.Core.Stores;
 using Xunit;
 
@@ -798,6 +801,324 @@ public sealed class ManagerViewModelTests
 
         Assert.Empty(h.Shell.RevealedFiles);
         Assert.Empty(h.Dialogs.ErrorRequests);
+    }
+
+    // ================= 右键菜单：颜色 =================
+
+    [Fact]
+    public async Task 改颜色会写回便签并立刻落盘()
+    {
+        using var h = new ManagerHarness();
+        var note = ManagerHarness.NewNote("# 笔记");
+
+        h.Add(note);
+        h.Vm.Refresh();
+        h.Vm.SelectedNote = h.Vm.Notes[0];
+
+        await h.Vm.SetColorAsync(NoteColor.Blue);
+
+        Assert.Equal(NoteColor.Blue, note.Color);
+        Assert.Equal([(note.Id, NoteColor.Blue)], h.NoteService.ColorEdits);
+
+        // 一次点完就结束的动作，等去抖没有意义：用户改完颜色随即关掉程序，
+        // 那几百毫秒就成了纯粹的丢数据窗口。
+        Assert.Equal(new[] { note.Id }, h.NoteService.SavedNoteIds);
+    }
+
+    [Fact]
+    public async Task 改颜色之后列表会重建()
+    {
+        using var h = new ManagerHarness();
+        var note = ManagerHarness.NewNote("# 笔记");
+
+        h.Add(note);
+        h.Vm.Refresh();
+        h.Vm.SelectedNote = h.Vm.Notes[0];
+
+        var before = h.Vm.Notes[0];
+
+        await h.Vm.SetColorAsync(NoteColor.Green);
+
+        // 刷新与否，卡片上那个颜色点都是新值（它是直接读 Note 的），
+        // 所以这里只能靠实例不同来验列表确实重建了一遍。重建的意义在别处：
+        // UpdatedAt 已经动了，无查询词时那一列按它排序，摘要与计数也要重算。
+        Assert.NotSame(before, h.Vm.Notes[0]);
+    }
+
+    [Fact]
+    public async Task 点了当前那一个颜色时什么都不做()
+    {
+        // 白白走一趟的话 ApplyColorEdit 会刷新 UpdatedAt，于是列表按修改时间重排——
+        // 用户只是点了一下「确认还是这个颜色」，却看到这一行跳到别处去了。
+        using var h = new ManagerHarness();
+        var note = ManagerHarness.NewNote("# 笔记");
+
+        note.Color = NoteColor.Blue;
+
+        h.Add(note);
+        h.Vm.Refresh();
+        h.Vm.SelectedNote = h.Vm.Notes[0];
+
+        await h.Vm.SetColorAsync(NoteColor.Blue);
+
+        Assert.Empty(h.NoteService.ColorEdits);
+        Assert.Empty(h.NoteService.SavedNoteIds);
+        Assert.Equal(ManagerHarness.AtHours(0), note.UpdatedAt);
+    }
+
+    [Fact]
+    public async Task 没有选中行时改颜色什么都不做()
+    {
+        using var h = new ManagerHarness();
+
+        await h.Vm.SetColorAsync(NoteColor.Pink);
+
+        Assert.Empty(h.NoteService.ColorEdits);
+    }
+
+    [Fact]
+    public async Task 改一张列表里已经没有的便签的颜色时什么都不做()
+    {
+        using var h = new ManagerHarness();
+        var note = ManagerHarness.NewNote("# 笔记");
+
+        h.Add(note);
+        h.Vm.Refresh();
+        h.Vm.SelectedNote = h.Vm.Notes[0];
+
+        h.Store.Remove(note.Id);
+
+        await h.Vm.SetColorAsync(NoteColor.Purple);
+
+        Assert.Empty(h.NoteService.ColorEdits);
+        Assert.Empty(h.NoteService.SavedNoteIds);
+    }
+
+    [Fact]
+    public async Task 改颜色落盘失败时提示用户但不回滚内存()
+    {
+        // 与 §11.5 的策略一致：用户改的东西还在，下一次改动或退出时的整批保存会再写一遍。
+        // 回滚更糟——用户看着颜色自己弹回去，却不知道是为什么。
+        using var h = new ManagerHarness();
+        var note = ManagerHarness.NewNote("# 笔记");
+
+        h.Add(note);
+        h.Vm.Refresh();
+        h.Vm.SelectedNote = h.Vm.Notes[0];
+
+        h.NoteService.SaveException = new IOException("文件被占用");
+
+        await h.Vm.SetColorAsync(NoteColor.Orange);
+
+        Assert.Equal(NoteColor.Orange, note.Color);
+
+        string error = Assert.Single(h.Dialogs.ErrorRequests);
+
+        Assert.StartsWith("管理器|改动没能写进文件，只留在内存里：", error, StringComparison.Ordinal);
+        Assert.Contains(note.FilePath, error, StringComparison.Ordinal);
+        Assert.Contains("文件被占用", error, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 菜单打开前会通知选中行变了()
+    {
+        // 颜色子菜单里那七项绑的是 SelectedNote.Color。它与 TopMostMenuHeader 不是
+        // 同一条属性路径，所以只喊置顶那一句的话，右键一张蓝色的便签、在子菜单里点了「蓝」，
+        // 那一项的勾会被 MenuItem 自己拨掉，而源没变、绑定不会去纠正它。
+        // 菜单是挂在整个 ListBox 上的同一个实例，重开时也不会自己去重读。
+        using var h = new ManagerHarness();
+
+        var changed = new List<string?>();
+        h.Vm.PropertyChanged += (_, e) => changed.Add(e.PropertyName);
+
+        h.Vm.NotifyContextMenuOpening();
+
+        Assert.Contains(nameof(ManagerViewModel.SelectedNote), changed);
+    }
+
+    // ================= 右键菜单：标签 =================
+
+    [Fact]
+    public async Task 编辑标签_初值带上当前标签_改完写回并落盘()
+    {
+        using var h = new ManagerHarness();
+        var note = ManagerHarness.NewNote("# 笔记");
+
+        note.Tags.Add("工作");
+        note.Tags.Add("紧急");
+
+        h.Add(note);
+        h.Vm.Refresh();
+        h.Vm.SelectedNote = h.Vm.Notes[0];
+
+        h.Dialogs.PromptHandler = (_, _, _) => "工作, 私事";
+
+        await h.Vm.EditTagsAsync();
+
+        // 初值是便签当前那一串，用户改的通常是其中一两个，而不是从空开始重打。
+        string[] request = Assert.Single(h.Dialogs.PromptRequests).Split('|');
+
+        Assert.Equal("标签", request[0]);
+        Assert.Equal("工作, 紧急", request[2]);
+
+        // 拆开写而不是比较整个元组：元组里的列表是按引用比的，
+        // 我在这儿新造的 List 与替身里记的那一份永远不是同一个对象。
+        (Guid NoteId, IReadOnlyList<string> Tags) edit = Assert.Single(h.NoteService.TagsEdits);
+
+        Assert.Equal(note.Id, edit.NoteId);
+        Assert.Equal(["工作", "私事"], edit.Tags);
+
+        Assert.Equal(new[] { note.Id }, h.NoteService.SavedNoteIds);
+    }
+
+    [Fact]
+    public async Task 编辑标签_校验通过时回调给出null()
+    {
+        // 校验回调是调用方（这里）传进去的，替身把它跑出来的结论记下来。
+        // 长度上限那条规则只活在这个回调里，不跑一遍就没地方验它。
+        using var h = new ManagerHarness();
+        var note = ManagerHarness.NewNote("# 笔记");
+
+        h.Add(note);
+        h.Vm.Refresh();
+        h.Vm.SelectedNote = h.Vm.Notes[0];
+
+        h.Dialogs.PromptHandler = (_, _, _) => "工作";
+
+        await h.Vm.EditTagsAsync();
+
+        Assert.Null(Assert.Single(h.Dialogs.PromptValidations));
+    }
+
+    [Fact]
+    public async Task 编辑标签_取消时什么都不做()
+    {
+        using var h = new ManagerHarness();
+        var note = ManagerHarness.NewNote("# 笔记");
+
+        note.Tags.Add("工作");
+
+        h.Add(note);
+        h.Vm.Refresh();
+        h.Vm.SelectedNote = h.Vm.Notes[0];
+
+        // PromptResult 默认就是 null（取消）。
+        await h.Vm.EditTagsAsync();
+
+        Assert.Equal(["工作"], note.Tags);
+        Assert.Empty(h.NoteService.TagsEdits);
+        Assert.Empty(h.NoteService.SavedNoteIds);
+
+        // 对话框根本没提交，校验回调不该跑。
+        Assert.Empty(h.Dialogs.PromptValidations);
+    }
+
+    [Fact]
+    public async Task 编辑标签_打开对话框却没改时什么都不做()
+    {
+        // 与点了当前那个颜色同理：不该白白刷新 UpdatedAt 让这一行跳走。
+        using var h = new ManagerHarness();
+        var note = ManagerHarness.NewNote("# 笔记");
+
+        note.Tags.Add("工作");
+        note.Tags.Add("紧急");
+
+        h.Add(note);
+        h.Vm.Refresh();
+        h.Vm.SelectedNote = h.Vm.Notes[0];
+
+        h.Dialogs.PromptHandler = (_, _, initial) => initial;
+
+        await h.Vm.EditTagsAsync();
+
+        Assert.Empty(h.NoteService.TagsEdits);
+        Assert.Empty(h.NoteService.SavedNoteIds);
+        Assert.Equal(ManagerHarness.AtHours(0), note.UpdatedAt);
+    }
+
+    [Fact]
+    public async Task 编辑标签_留空即清空全部标签()
+    {
+        // 「取消」与「输入了空串」是两件事：留空对标签编辑是有意义的。
+        using var h = new ManagerHarness();
+        var note = ManagerHarness.NewNote("# 笔记");
+
+        note.Tags.Add("工作");
+
+        h.Add(note);
+        h.Vm.Refresh();
+        h.Vm.SelectedNote = h.Vm.Notes[0];
+
+        h.Dialogs.PromptHandler = (_, _, _) => "   ";
+
+        await h.Vm.EditTagsAsync();
+
+        Assert.Empty(note.Tags);
+        Assert.Empty(Assert.Single(h.NoteService.TagsEdits).Tags);
+    }
+
+    [Fact]
+    public async Task 编辑标签_超长标签被对话框拦下_改动不发生()
+    {
+        using var h = new ManagerHarness();
+        var note = ManagerHarness.NewNote("# 笔记");
+
+        h.Add(note);
+        h.Vm.Refresh();
+        h.Vm.SelectedNote = h.Vm.Notes[0];
+
+        h.Dialogs.PromptHandler = (_, _, _) => new string('x', TagRules.MaxLength + 1);
+
+        await h.Vm.EditTagsAsync();
+
+        string? error = Assert.Single(h.Dialogs.PromptValidations);
+
+        Assert.NotNull(error);
+        Assert.Contains(TagRules.MaxLength.ToString(CultureInfo.InvariantCulture), error, StringComparison.Ordinal);
+
+        // 校验没过 = 对话框没提交，写入这一步压根不该发生。
+        Assert.Empty(h.NoteService.TagsEdits);
+        Assert.Empty(h.NoteService.SavedNoteIds);
+    }
+
+    [Fact]
+    public async Task 编辑一张列表里已经没有的便签的标签时连对话框都不开()
+    {
+        using var h = new ManagerHarness();
+        var note = ManagerHarness.NewNote("# 笔记");
+
+        h.Add(note);
+        h.Vm.Refresh();
+        h.Vm.SelectedNote = h.Vm.Notes[0];
+
+        h.Store.Remove(note.Id);
+
+        await h.Vm.EditTagsAsync();
+
+        Assert.Empty(h.Dialogs.PromptRequests);
+        Assert.Empty(h.NoteService.TagsEdits);
+    }
+
+    [Fact]
+    public async Task 编辑标签落盘失败时提示用户但不回滚内存()
+    {
+        using var h = new ManagerHarness();
+        var note = ManagerHarness.NewNote("# 笔记");
+
+        h.Add(note);
+        h.Vm.Refresh();
+        h.Vm.SelectedNote = h.Vm.Notes[0];
+
+        h.Dialogs.PromptHandler = (_, _, _) => "工作";
+        h.NoteService.SaveException = new UnauthorizedAccessException("没有写权限");
+
+        await h.Vm.EditTagsAsync();
+
+        Assert.Equal(["工作"], note.Tags);
+
+        string error = Assert.Single(h.Dialogs.ErrorRequests);
+
+        Assert.Contains("没有写权限", error, StringComparison.Ordinal);
     }
 
     // ================= 列表项上的标签与颜色 =================

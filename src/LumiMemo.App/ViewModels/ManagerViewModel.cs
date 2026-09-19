@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.IO;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using CommunityToolkit.Mvvm.Messaging;
@@ -18,9 +19,16 @@ namespace LumiMemo.App.ViewModels;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <strong>本轮的范围</strong>：列表视图 + 搜索。把便签列出来、按查询词筛并排序、
-/// 双击开一张、批量显示/隐藏。三档视图切换按钮（列表/文件夹/标签）整个不出现，
-/// 因为另外两档还没实现；画出来却点不动比没有更糟。
+/// <strong>本轮的范围</strong>：列表视图 + 搜索 + 右键菜单上的编辑动作
+/// （置顶 / 颜色 / 标签 / 在资源管理器中显示 / 移入回收站）。
+/// 三档视图切换按钮（列表/文件夹/标签）整个不出现，因为另外两档还没实现；
+/// 画出来却点不动比没有更糟。
+/// </para>
+/// <para>
+/// 改颜色的那一半是<strong>只是数据链路</strong>：写进 <c>Note</c>、落进 Front Matter、
+/// 管理器这边立刻换颜色点。<strong>便签窗口还没跟着换肤</strong>——它眼下根本没画颜色，
+/// 所以这里也不发消息（<c>NoteViewModel.Color</c> 那份镜像暂无人读）。这件事与
+/// §15.3 调色板落地到便签窗口是同一批工作，等界面那一轮一起做。
 /// </para>
 /// <para>
 /// <strong>搜索的两条路径不能合并</strong>：查询词为空时直接取
@@ -285,14 +293,28 @@ public sealed partial class ManagerViewModel : ObservableObject
     /// 菜单马上就要弹出来了：重算一遍菜单上那些跟当前状态有关的东西。
     /// </summary>
     /// <remarks>
+    /// <para>
     /// <strong>光靠属性通知不够。</strong> 右键落在<em>已经选中</em>的那一行时
     /// <c>SelectedNote</c> 没有变，于是一声通知都不会发；而菜单是同一个共享实例
-    /// （挂在整个 <c>ListBox</c> 上），里面的 <c>Header</c> 绑定不会因为菜单重开就自己重算——
+    /// （挂在整个 <c>ListBox</c> 上），里面的绑定不会因为菜单重开就自己重算——
     /// <c>PlacementTarget</c> 每次都指向同一个 <c>ListBox</c>，值没变，绑定就不重新求值。
     /// 表现为：用户先用便签标题条上的置顶按钮把某张便签置顶，再在管理器里右键它，
     /// 菜单上写着「置顶」。
+    /// </para>
+    /// <para>
+    /// <strong>两声通知，各管一处。</strong>
+    /// <see cref="TopMostMenuHeader"/> 就是那一项的绑定路径，得单独喊它；
+    /// 颜色子菜单那七项绑的是 <c>SelectedNote.Color</c>，走的是<b>另一个</b>属性路径，
+    /// 所以还要喊一声 <see cref="SelectedNote"/>。少了后一声的症状很具体：
+    /// 用户右键一张蓝色的便签、在颜色子菜单里点了「蓝」（当前就是蓝的，什么都没发生），
+    /// 那一项的勾会被 <c>MenuItem</c> 自己拨掉——源没变，绑定不会去纠正它。
+    /// </para>
     /// </remarks>
-    public void NotifyContextMenuOpening() => OnPropertyChanged(nameof(TopMostMenuHeader));
+    public void NotifyContextMenuOpening()
+    {
+        OnPropertyChanged(nameof(TopMostMenuHeader));
+        OnPropertyChanged(nameof(SelectedNote));
+    }
 
     /// <summary>
     /// 查询词变了：重新起一次去抖计时（§15.8 的「输入停止 150ms 后执行」）。
@@ -482,6 +504,133 @@ public sealed partial class ManagerViewModel : ObservableObject
         {
             await _dialogs.ShowErrorAsync("管理器", $"找不到这个文件：\n{item.Note.FilePath}");
         }
+    }
+
+    /// <summary>
+    /// 改当前选中那张便签的颜色（§15.8 右键菜单的「颜色」子菜单）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>为什么参数只有颜色、便签取 <see cref="SelectedNote"/>。</strong>
+    /// 子菜单里那七项各有各的 <c>CommandParameter</c>（颜色），而便签也是必需的一个参数——
+    /// 命令的两个参数写法（工具包会生成 <c>ICommand&lt;(T1, T2)&gt;</c>）要求 XAML 能造出一个元组，
+    /// 而 XAML 造不出来。这里之所以能安全地退回读选中项：菜单只可能在<strong>某一行上</strong>
+    /// 弹出来，而 <c>ManagerWindow.OnListContextMenuOpening</c> 在弹菜单之前一定先把那一行选上，
+    /// 所以命令跑起来时 <see cref="SelectedNote"/> 必然就是被右键的那一张。
+    /// </para>
+    /// <para>
+    /// <strong>点了当前这一支就什么都不做。</strong> 白白往下走一次的话，
+    /// <c>ApplyColorEdit</c> 会刷新 <c>UpdatedAt</c>，于是列表按修改时间重排——
+    /// 用户只是点了一下「确认还是这个颜色」，却看到这一行跳到别处去了。
+    /// </para>
+    /// </remarks>
+    [RelayCommand]
+    public async Task SetColorAsync(NoteColor color)
+    {
+        if (SelectedNote is not { } item || !_store.Contains(item.Id) || item.Note.Color == color)
+        {
+            return;
+        }
+
+        _noteService.ApplyColorEdit(item.Note, color);
+
+        await PersistEditAsync(item);
+    }
+
+    /// <summary>
+    /// 编辑当前选中那张便签的标签（§15.8 右键菜单的「标签」）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 输入框里是「逗号分隔的一大串」，不是一列可增删的 chip：标签数量少，用户改起来是
+    /// 「换掉整批」而不是「逐个调」，一次打完比来回点便宜；chip 那种形态还要多一个自绘控件
+    /// 与一套增删逻辑。
+    /// </para>
+    /// <para>
+    /// 长度上限的校验交给对话框（<c>validate</c>）而不是等它关掉之后再弹一个错误框——
+    /// 那样用户刚打的一串就没了。<strong>校验与写入必须是同一次拆分</strong>：
+    /// 两处各拆一遍的话，将来给 <c>TagRules.Separators</c> 加一个分隔符，就会出现
+    /// 「校验说有问题的那个标签，写入时其实已经被拆没了」。
+    /// </para>
+    /// </remarks>
+    [RelayCommand]
+    public async Task EditTagsAsync()
+    {
+        if (SelectedNote is not { } item || !_store.Contains(item.Id))
+        {
+            return;
+        }
+
+        string? input = await _dialogs.PromptAsync(
+            "标签",
+            "多个标签用逗号隔开。开头的 # 会被去掉，标签里的空格会换成 -。留空即清空全部标签。",
+            string.Join(", ", item.Note.Tags),
+            ValidateTagsInput);
+
+        // 取消。注意不能拿「输入为空串」兼任取消——留空是有意义的（清空标签）。
+        if (input is null)
+        {
+            return;
+        }
+
+        List<string> tags = TagRules.Split(input);
+
+        if (item.Note.Tags.SequenceEqual(tags, StringComparer.Ordinal))
+        {
+            // 打开了对话框却没改：与 SetColor 点了当前那一支同理，不该白白刷新 UpdatedAt。
+            return;
+        }
+
+        _noteService.ApplyTagsEdit(item.Note, tags);
+
+        await PersistEditAsync(item);
+    }
+
+    /// <summary>标签输入框的校验（§5.8 的长度上限）。返回错误文案，<c>null</c> 表示可以收下。</summary>
+    private static string? ValidateTagsInput(string input)
+    {
+        foreach (string tag in TagRules.Split(input))
+        {
+            if (tag.Length > TagRules.MaxLength)
+            {
+                return $"标签「{tag}」有 {tag.Length} 个字，超过上限 {TagRules.MaxLength} 个，请改短一些。";
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// 把刚改好的内存状态写进文件，然后重建列表。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>直接存，不走 <c>AutoSaveService</c> 的去抖。</strong> 去抖是为「连续按键」
+    /// 准备的（§11.1），而这里是一次点完就结束的动作；用户改完颜色随即关掉程序，
+    /// 那几百毫秒的等待就成了纯粹的丢数据窗口。<c>SaveNoteAsync</c> 里面还有一道
+    /// 「内容哈希没变就不写盘」的自检（§5.9），所以这里也不会白白多写文件。
+    /// </para>
+    /// <para>
+    /// 失败时<strong>报一句，但不回滚内存</strong>——与 §11.5 的策略一致：用户改的东西还在，
+    /// 下一次改动或退出时的整批保存会再写一遍。回滚反而更糟：用户看着颜色自己弹回去，
+    /// 却不知道是为什么。catch 的这两个类型与 <c>AutoSaveService</c> 那条一致
+    /// （文件被别的程序占用、没有写权限）。
+    /// </para>
+    /// </remarks>
+    private async Task PersistEditAsync(NoteListItem item)
+    {
+        try
+        {
+            await _noteService.SaveNoteAsync(item.Id);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            await _dialogs.ShowErrorAsync(
+                "管理器",
+                $"改动没能写进文件，只留在内存里：\n{item.Note.FilePath}\n\n{ex.Message}");
+        }
+
+        Refresh();
     }
 
     /// <summary>

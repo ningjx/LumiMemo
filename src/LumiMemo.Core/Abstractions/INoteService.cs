@@ -40,6 +40,27 @@ public interface INoteService
     /// </summary>
     void ApplyLocalEdit(Note note, string content);
 
+    /// <summary>
+    /// 改一张便签的颜色（§15.8 右键菜单）。只改内存，<strong>不写磁盘</strong>。
+    /// </summary>
+    /// <remarks>
+    /// 与 <see cref="ApplyLocalEdit"/> 一样会刷新 <see cref="Note.UpdatedAt"/>：颜色与标签
+    /// 都是<strong>用户数据</strong>（§0.2），改了它们就是改了这张便签，管理器的
+    /// 「最近更新」排序与 §12.2 的「七天内 +30」都该跟着动。
+    /// </remarks>
+    void ApplyColorEdit(Note note, NoteColor color);
+
+    /// <summary>
+    /// 改一张便签的标签（§15.8 右键菜单）。只改内存，<strong>不写磁盘</strong>。
+    /// </summary>
+    /// <param name="tags">
+    /// 新标签。可以传用户原样输入的内容，实现会按 §5.8 规范化、去空、忽略大小写去重——
+    /// 「<c>Note.Tags</c> 里永远是规范形式」这条不变量由本方法守住，
+    /// 而不是指望每个调用方都记得先调一次 <c>TagRules</c>。
+    /// </param>
+    /// <remarks>传空集合就是<strong>清空标签</strong>，不是「不改动」。</remarks>
+    void ApplyTagsEdit(Note note, IReadOnlyList<string> tags);
+
     // ---- 内存 → 磁盘 ----
 
     Task SaveNoteAsync(Guid noteId);

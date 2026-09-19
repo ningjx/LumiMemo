@@ -116,6 +116,51 @@ public sealed class NoteService : INoteService
         _index.OnNoteUpdated(note);
     }
 
+    /// <inheritdoc />
+    /// <remarks>
+    /// <strong>不必动索引</strong>：<see cref="SearchIndex"/> 里只有正文的纯文本与标签，
+    /// 颜色不在其中。另外两个字段（<c>Content</c> / <c>Tags</c>）都改了索引可见的东西，
+    /// 所以它们那一侧要刷新——这里不要，别为了「三处长得一样」硬补一次
+    /// <c>OnNoteUpdated</c>，那会让人以为颜色也在索引里。
+    /// </remarks>
+    public void ApplyColorEdit(Note note, NoteColor color)
+    {
+        ArgumentNullException.ThrowIfNull(note);
+
+        note.Color = color;
+        note.UpdatedAt = _clock.Now;
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// 逐个 <see cref="TagRules.TryAdd"/> 到新列表再整体换上去，而不是
+    /// <c>tags.Select(Normalize).Distinct()</c>：去重的判据是<strong>忽略大小写但保留首次写法</strong>
+    /// （§5.8），<c>Distinct()</c> 的默认比较器按字节序挑，用户写的 <c>Work</c> 可能被判成重复
+    /// 而以 <c>work</c> 落盘。
+    /// </remarks>
+    public void ApplyTagsEdit(Note note, IReadOnlyList<string> tags)
+    {
+        ArgumentNullException.ThrowIfNull(note);
+        ArgumentNullException.ThrowIfNull(tags);
+
+        var normalized = new List<string>(tags.Count);
+
+        foreach (string tag in tags)
+        {
+            _ = TagRules.TryAdd(normalized, tag);
+        }
+
+        // 原地换内容而不是 note.Tags = normalized：Note.Tags 的引用已经散出去了
+        // （NoteListItem 直接交出这个列表本身），换掉整个对象会让那些引用指向旧数据。
+        note.Tags.Clear();
+        note.Tags.AddRange(normalized);
+        note.UpdatedAt = _clock.Now;
+
+        // 标签在索引里有单独一份（SearchIndex 的 byTag），必须刷新，否则
+        // 「搜到的便签已经没有这个标签了」（§12.1 的标签命中）。
+        _index.OnNoteUpdated(note);
+    }
+
     // ---- 内存 → 磁盘 ----
 
     /// <inheritdoc />

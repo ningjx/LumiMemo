@@ -3,6 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:conv="clr-namespace:LumiMemo.App.Views.Converters"
         xmlns:views="clr-namespace:LumiMemo.App.Views"
+        xmlns:models="clr-namespace:LumiMemo.Core.Models;assembly=LumiMemo.Core"
         Title="LumiMemo"
         Width="720"
         Height="520"
@@ -20,97 +21,113 @@
     两者的窗口层代码刻意不共享——共同点只有「都是 Window」这一句废话。
   -->
   <Window.Resources>
-    <conv:NoteColorToBrushConverter x:Key="NoteColorToBrush" />
+    <ResourceDictionary>
+      <!--
+        调色板在这里再合并一次（App.xaml 里已经有一份）。两处指的都是同一个文件，
+        内容不会分叉；这么做是为了让颜色子菜单那七个色块能写
+        `{StaticResource NoteXxxAccentBrush}` 这种在**解析期**就求值的引用——
+        解析发生在 InitializeComponent 里，而此时 Application.Current 可能还不存在
+        （无头测试就是这种情况），窗口自己没合并的话整扇窗都建不起来。
+        用 DynamicResource 绕开的话，键名写错就只会表现为「色块没颜色」，
+        而 XAML 测试恰恰是拿来抓这类笔误的。
+      -->
+      <ResourceDictionary.MergedDictionaries>
+        <ResourceDictionary Source="/LumiMemo.App;component/Resources/Colors.xaml" />
+      </ResourceDictionary.MergedDictionaries>
 
-    <Style x:Key="ToolButton" TargetType="Button">
-      <Setter Property="Padding" Value="12,6" />
-      <Setter Property="Margin" Value="0,0,8,0" />
-      <Setter Property="Background" Value="Transparent" />
-      <Setter Property="BorderBrush" Value="#FFD9D2B8" />
-      <Setter Property="BorderThickness" Value="1" />
-      <Setter Property="Cursor" Value="Hand" />
-      <Setter Property="Template">
-        <Setter.Value>
-          <ControlTemplate TargetType="Button">
-            <Border x:Name="Chrome"
-                    Background="{TemplateBinding Background}"
-                    BorderBrush="{TemplateBinding BorderBrush}"
-                    BorderThickness="{TemplateBinding BorderThickness}"
-                    CornerRadius="4">
-              <ContentPresenter Margin="{TemplateBinding Padding}"
-                                HorizontalAlignment="Center"
-                                VerticalAlignment="Center" />
-            </Border>
-            <ControlTemplate.Triggers>
-              <Trigger Property="IsMouseOver" Value="True">
-                <Setter TargetName="Chrome" Property="Background" Value="#FFF7E9A0" />
-              </Trigger>
-            </ControlTemplate.Triggers>
-          </ControlTemplate>
-        </Setter.Value>
-      </Setter>
-    </Style>
+      <conv:NoteColorToBrushConverter x:Key="NoteColorToBrush" />
+      <conv:NoteColorMatchesConverter x:Key="NoteColorMatches" />
 
-    <!--
-      过滤条上的一个条件（§15.8）。做成拨动按钮而不是复选框：它是"当前正在按这个条件看"，
-      点一下生效、再点一下取消，与复选框那种"勾选并提交"的心智不同。
-      下面是勾中态的实心色，与上面三个工具按钮刻意拉开距离——过滤器改变的是"看到什么"，
-      工具按钮执行的是"做什么"。
-    -->
-    <Style x:Key="FilterChip" TargetType="ToggleButton">
-      <Setter Property="Padding" Value="10,2" />
-      <Setter Property="Margin" Value="0,0,6,0" />
-      <Setter Property="FontSize" Value="12" />
-      <Setter Property="Foreground" Value="#FF6B6555" />
-      <Setter Property="Cursor" Value="Hand" />
-      <Setter Property="Template">
-        <Setter.Value>
-          <ControlTemplate TargetType="ToggleButton">
-            <Border x:Name="Chip"
-                    Background="#FFFFFDF6"
-                    BorderBrush="#FFD9D2B8"
-                    BorderThickness="1"
-                    CornerRadius="10">
-              <ContentPresenter Margin="{TemplateBinding Padding}"
-                                HorizontalAlignment="Center"
-                                VerticalAlignment="Center" />
-            </Border>
-            <ControlTemplate.Triggers>
-              <Trigger Property="IsMouseOver" Value="True">
-                <Setter TargetName="Chip" Property="Background" Value="#FFF7E9A0" />
-              </Trigger>
+      <Style x:Key="ToolButton" TargetType="Button">
+        <Setter Property="Padding" Value="12,6" />
+        <Setter Property="Margin" Value="0,0,8,0" />
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderBrush" Value="#FFD9D2B8" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="Template">
+          <Setter.Value>
+            <ControlTemplate TargetType="Button">
+              <Border x:Name="Chrome"
+                      Background="{TemplateBinding Background}"
+                      BorderBrush="{TemplateBinding BorderBrush}"
+                      BorderThickness="{TemplateBinding BorderThickness}"
+                      CornerRadius="4">
+                <ContentPresenter Margin="{TemplateBinding Padding}"
+                                  HorizontalAlignment="Center"
+                                  VerticalAlignment="Center" />
+              </Border>
+              <ControlTemplate.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                  <Setter TargetName="Chrome" Property="Background" Value="#FFF7E9A0" />
+                </Trigger>
+              </ControlTemplate.Triggers>
+            </ControlTemplate>
+          </Setter.Value>
+        </Setter>
+      </Style>
 
-              <!--
-                勾中态放在悬停之后：两个条件同时成立时后写的赢，
-                否则鼠标停在已勾中的那一颗上，它会退回悬停色，看着像被取消了。
-              -->
-              <Trigger Property="IsChecked" Value="True">
-                <Setter TargetName="Chip" Property="Background" Value="#FFB58900" />
-                <Setter TargetName="Chip" Property="BorderBrush" Value="#FFB58900" />
-                <Setter Property="Foreground" Value="#FFFFFDF6" />
-              </Trigger>
-            </ControlTemplate.Triggers>
-          </ControlTemplate>
-        </Setter.Value>
-      </Setter>
-    </Style>
+      <!--
+        过滤条上的一个条件（§15.8）。做成拨动按钮而不是复选框：它是"当前正在按这个条件看"，
+        点一下生效、再点一下取消，与复选框那种"勾选并提交"的心智不同。
+        下面是勾中态的实心色，与上面三个工具按钮刻意拉开距离——过滤器改变的是"看到什么"，
+        工具按钮执行的是"做什么"。
+      -->
+      <Style x:Key="FilterChip" TargetType="ToggleButton">
+        <Setter Property="Padding" Value="10,2" />
+        <Setter Property="Margin" Value="0,0,6,0" />
+        <Setter Property="FontSize" Value="12" />
+        <Setter Property="Foreground" Value="#FF6B6555" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="Template">
+          <Setter.Value>
+            <ControlTemplate TargetType="ToggleButton">
+              <Border x:Name="Chip"
+                      Background="#FFFFFDF6"
+                      BorderBrush="#FFD9D2B8"
+                      BorderThickness="1"
+                      CornerRadius="10">
+                <ContentPresenter Margin="{TemplateBinding Padding}"
+                                  HorizontalAlignment="Center"
+                                  VerticalAlignment="Center" />
+              </Border>
+              <ControlTemplate.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                  <Setter TargetName="Chip" Property="Background" Value="#FFF7E9A0" />
+                </Trigger>
 
-    <!--
-      「全部」那一档：它不是第四个条件，而是"把条件都清掉"，所以是 Button 不是 ToggleButton
-      ——做成拨动按钮的话它就有了自己的 on/off 状态，而"全部"被点掉的画面是没有意义的。
-      勾着任意一个条件时它自己亮起来（下面那个 DataTrigger），表示"现在不是全部"。
-    -->
-    <Style x:Key="FilterReset" TargetType="Button" BasedOn="{StaticResource ToolButton}">
-      <Setter Property="Padding" Value="10,2" />
-      <Setter Property="Margin" Value="0,0,12,0" />
-      <Setter Property="FontSize" Value="12" />
-      <Style.Triggers>
-        <DataTrigger Binding="{Binding IsFilterAll}" Value="True">
-          <Setter Property="Background" Value="#FFF7E9A0" />
-          <Setter Property="BorderBrush" Value="#FFB58900" />
-        </DataTrigger>
-      </Style.Triggers>
-    </Style>
+                <!--
+                  勾中态放在悬停之后：两个条件同时成立时后写的赢，
+                  否则鼠标停在已勾中的那一颗上，它会退回悬停色，看着像被取消了。
+                -->
+                <Trigger Property="IsChecked" Value="True">
+                  <Setter TargetName="Chip" Property="Background" Value="#FFB58900" />
+                  <Setter TargetName="Chip" Property="BorderBrush" Value="#FFB58900" />
+                  <Setter Property="Foreground" Value="#FFFFFDF6" />
+                </Trigger>
+              </ControlTemplate.Triggers>
+            </ControlTemplate>
+          </Setter.Value>
+        </Setter>
+      </Style>
+
+      <!--
+        「全部」那一档：它不是第四个条件，而是"把条件都清掉"，所以是 Button 不是 ToggleButton
+        ——做成拨动按钮的话它就有了自己的 on/off 状态，而"全部"被点掉的画面是没有意义的。
+        勾着任意一个条件时它自己亮起来（下面那个 DataTrigger），表示"现在不是全部"。
+      -->
+      <Style x:Key="FilterReset" TargetType="Button" BasedOn="{StaticResource ToolButton}">
+        <Setter Property="Padding" Value="10,2" />
+        <Setter Property="Margin" Value="0,0,12,0" />
+        <Setter Property="FontSize" Value="12" />
+        <Style.Triggers>
+          <DataTrigger Binding="{Binding IsFilterAll}" Value="True">
+            <Setter Property="Background" Value="#FFF7E9A0" />
+            <Setter Property="BorderBrush" Value="#FFB58900" />
+          </DataTrigger>
+        </Style.Triggers>
+      </Style>
+    </ResourceDictionary>
   </Window.Resources>
 
   <Grid>
@@ -352,16 +369,138 @@
         但那是为了绕开一个本来就不存在的问题：空白处的右键已经有
         ContextMenuOpening 在拦（见 ManagerWindow.xaml.cs）。
 
-        规格那一行还列着「颜色」与「标签」两项，都还没实现：它们要连着
-        §15.3 的调色板与便签窗口换肤一起做，否则用户选了蓝色、便签窗口还是黄的。
-        先把点不动的死项放上来，比现在缺两项更糟。
+        规格那一行的五项如今齐了。分隔线以上是「改这张便签自己」，以下是「跟外头打交道」。
       -->
       <ListBox.ContextMenu>
         <ContextMenu DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
           <MenuItem Header="{Binding TopMostMenuHeader}"
                     Command="{Binding ToggleTopMostCommand}"
                     CommandParameter="{Binding SelectedNote}" />
+
+          <!--
+            颜色子菜单。七项各写各的 CommandParameter（枚举本身，用 x:Static 而不是字符串），
+            便签从 SelectedNote 取——XAML 造不出「(便签, 颜色)」这样的元组参数，
+            而菜单只会在某一行上弹出，那一行必然已经被选上了（见 ManagerViewModel.SetColorAsync）。
+          -->
+          <MenuItem Header="颜色">
+            <MenuItem Command="{Binding SetColorCommand}"
+                      CommandParameter="{x:Static models:NoteColor.Yellow}"
+                      IsCheckable="True"
+                      IsChecked="{Binding SelectedNote.Color, Mode=OneWay, Converter={StaticResource NoteColorMatches}, ConverterParameter=Yellow}">
+              <MenuItem.Header>
+                <StackPanel Orientation="Horizontal">
+                  <Ellipse Width="12"
+                           Height="12"
+                           Fill="{StaticResource NoteYellowAccentBrush}"
+                           VerticalAlignment="Center"
+                           Margin="0,0,6,0" />
+                  <TextBlock Text="黄" VerticalAlignment="Center" />
+                </StackPanel>
+              </MenuItem.Header>
+            </MenuItem>
+
+            <MenuItem Command="{Binding SetColorCommand}"
+                      CommandParameter="{x:Static models:NoteColor.Pink}"
+                      IsCheckable="True"
+                      IsChecked="{Binding SelectedNote.Color, Mode=OneWay, Converter={StaticResource NoteColorMatches}, ConverterParameter=Pink}">
+              <MenuItem.Header>
+                <StackPanel Orientation="Horizontal">
+                  <Ellipse Width="12"
+                           Height="12"
+                           Fill="{StaticResource NotePinkAccentBrush}"
+                           VerticalAlignment="Center"
+                           Margin="0,0,6,0" />
+                  <TextBlock Text="粉" VerticalAlignment="Center" />
+                </StackPanel>
+              </MenuItem.Header>
+            </MenuItem>
+
+            <MenuItem Command="{Binding SetColorCommand}"
+                      CommandParameter="{x:Static models:NoteColor.Blue}"
+                      IsCheckable="True"
+                      IsChecked="{Binding SelectedNote.Color, Mode=OneWay, Converter={StaticResource NoteColorMatches}, ConverterParameter=Blue}">
+              <MenuItem.Header>
+                <StackPanel Orientation="Horizontal">
+                  <Ellipse Width="12"
+                           Height="12"
+                           Fill="{StaticResource NoteBlueAccentBrush}"
+                           VerticalAlignment="Center"
+                           Margin="0,0,6,0" />
+                  <TextBlock Text="蓝" VerticalAlignment="Center" />
+                </StackPanel>
+              </MenuItem.Header>
+            </MenuItem>
+
+            <MenuItem Command="{Binding SetColorCommand}"
+                      CommandParameter="{x:Static models:NoteColor.Green}"
+                      IsCheckable="True"
+                      IsChecked="{Binding SelectedNote.Color, Mode=OneWay, Converter={StaticResource NoteColorMatches}, ConverterParameter=Green}">
+              <MenuItem.Header>
+                <StackPanel Orientation="Horizontal">
+                  <Ellipse Width="12"
+                           Height="12"
+                           Fill="{StaticResource NoteGreenAccentBrush}"
+                           VerticalAlignment="Center"
+                           Margin="0,0,6,0" />
+                  <TextBlock Text="绿" VerticalAlignment="Center" />
+                </StackPanel>
+              </MenuItem.Header>
+            </MenuItem>
+
+            <MenuItem Command="{Binding SetColorCommand}"
+                      CommandParameter="{x:Static models:NoteColor.Purple}"
+                      IsCheckable="True"
+                      IsChecked="{Binding SelectedNote.Color, Mode=OneWay, Converter={StaticResource NoteColorMatches}, ConverterParameter=Purple}">
+              <MenuItem.Header>
+                <StackPanel Orientation="Horizontal">
+                  <Ellipse Width="12"
+                           Height="12"
+                           Fill="{StaticResource NotePurpleAccentBrush}"
+                           VerticalAlignment="Center"
+                           Margin="0,0,6,0" />
+                  <TextBlock Text="紫" VerticalAlignment="Center" />
+                </StackPanel>
+              </MenuItem.Header>
+            </MenuItem>
+
+            <MenuItem Command="{Binding SetColorCommand}"
+                      CommandParameter="{x:Static models:NoteColor.Orange}"
+                      IsCheckable="True"
+                      IsChecked="{Binding SelectedNote.Color, Mode=OneWay, Converter={StaticResource NoteColorMatches}, ConverterParameter=Orange}">
+              <MenuItem.Header>
+                <StackPanel Orientation="Horizontal">
+                  <Ellipse Width="12"
+                           Height="12"
+                           Fill="{StaticResource NoteOrangeAccentBrush}"
+                           VerticalAlignment="Center"
+                           Margin="0,0,6,0" />
+                  <TextBlock Text="橙" VerticalAlignment="Center" />
+                </StackPanel>
+              </MenuItem.Header>
+            </MenuItem>
+
+            <MenuItem Command="{Binding SetColorCommand}"
+                      CommandParameter="{x:Static models:NoteColor.Gray}"
+                      IsCheckable="True"
+                      IsChecked="{Binding SelectedNote.Color, Mode=OneWay, Converter={StaticResource NoteColorMatches}, ConverterParameter=Gray}">
+              <MenuItem.Header>
+                <StackPanel Orientation="Horizontal">
+                  <Ellipse Width="12"
+                           Height="12"
+                           Fill="{StaticResource NoteGrayAccentBrush}"
+                           VerticalAlignment="Center"
+                           Margin="0,0,6,0" />
+                  <TextBlock Text="灰" VerticalAlignment="Center" />
+                </StackPanel>
+              </MenuItem.Header>
+            </MenuItem>
+          </MenuItem>
+
+          <!-- 带省略号：它会另开一个输入对话框，而上面那个子菜单是就地展开的 -->
+          <MenuItem Header="标签…" Command="{Binding EditTagsCommand}" />
+
           <Separator />
+
           <MenuItem Header="在资源管理器中显示"
                     Command="{Binding RevealInExplorerCommand}"
                     CommandParameter="{Binding SelectedNote}" />

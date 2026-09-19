@@ -85,6 +85,113 @@ public sealed class NoteServiceTests
         Assert.Empty(harness.Repository.Saved);
     }
 
+    // ================= 颜色与标签的编辑 =================
+
+    [Fact]
+    public void 改颜色_写回便签并更新修改时间()
+    {
+        var harness = CreateHarness();
+        Note note = NewNote("内容");
+        harness.Clock.Advance(TimeSpan.FromMinutes(5));
+
+        harness.Service.ApplyColorEdit(note, NoteColor.Blue);
+
+        Assert.Equal(NoteColor.Blue, note.Color);
+        Assert.Equal(harness.Clock.Now, note.UpdatedAt);
+    }
+
+    // 这里刻意没有一条「改颜色不动索引」的用例：索引的状态不随颜色变化，
+    // 那份断言不管实现有没有多喊一次 OnNoteUpdated 都会过——它测不出东西。
+    // 该由代码注释守住的事，别摆一条假装有覆盖的测试。
+
+    [Fact]
+    public void 改标签_写回并更新修改时间()
+    {
+        var harness = CreateHarness();
+        Note note = NewNote("内容");
+        harness.Clock.Advance(TimeSpan.FromMinutes(5));
+
+        harness.Service.ApplyTagsEdit(note, ["工作", "紧急"]);
+
+        Assert.Equal(["工作", "紧急"], note.Tags);
+        Assert.Equal(harness.Clock.Now, note.UpdatedAt);
+    }
+
+    [Fact]
+    public void 改标签_按规则规范化去空去重()
+    {
+        // 调用方可以直接把用户打的字交进来（INoteService.ApplyTagsEdit 的约定）：
+        // 「Note.Tags 里永远是规范形式」这条不变量由这里守住，
+        // 而不是指望每一处调用都记得先自己跑一遍 TagRules。
+        var harness = CreateHarness();
+        Note note = NewNote("内容");
+
+        harness.Service.ApplyTagsEdit(note, [" #Work ", "work", "to read", "   ", ""]);
+
+        Assert.Equal(["Work", "to-read"], note.Tags);
+    }
+
+    [Fact]
+    public void 改标签_原地换内容而不是换掉整个列表()
+    {
+        // Note.Tags 的引用已经散出去了（NoteListItem 直接把这份列表交到界面上）。
+        // 换掉整个对象的话，那些引用会一直指向旧数据，界面上标签从此不再更新。
+        var harness = CreateHarness();
+        Note note = NewNote("内容");
+        note.Tags.Add("旧标签");
+        List<string> handedOut = note.Tags;
+
+        harness.Service.ApplyTagsEdit(note, ["新标签"]);
+
+        Assert.Same(handedOut, note.Tags);
+        Assert.Equal(["新标签"], handedOut);
+    }
+
+    [Fact]
+    public void 改标签_传空集合就是清空()
+    {
+        var harness = CreateHarness();
+        Note note = NewNote("内容");
+        note.Tags.Add("旧标签");
+
+        harness.Service.ApplyTagsEdit(note, []);
+
+        Assert.Empty(note.Tags);
+    }
+
+    [Fact]
+    public void 改标签_刷新索引里的标签索引()
+    {
+        // SearchIndex 为标签单独存了一份 byTag。不刷的话，改完之后
+        // 按新标签搜不到这张便签、按旧标签反而还搜得到（§12.1 的标签命中）。
+        var harness = CreateHarness();
+        Note note = NewNote("内容");
+        note.Tags.Add("旧标签");
+        harness.Store.Add(note);
+        harness.Index.OnNoteAdded(note);
+
+        Assert.Contains(note.Id, harness.Index.NotesWithTag("旧标签")!);
+
+        harness.Service.ApplyTagsEdit(note, ["新标签"]);
+
+        Assert.Contains(note.Id, harness.Index.NotesWithTag("新标签")!);
+
+        // 旧标签下已经没有便签了，那一格整个消失（NotesWithTag 此时返回 null）。
+        Assert.Null(harness.Index.NotesWithTag("旧标签"));
+    }
+
+    [Fact]
+    public void 改标签_不写磁盘()
+    {
+        // 与本地编辑同理：落盘由调用方（管理器的 PersistEditAsync）显式发起。
+        var harness = CreateHarness();
+        Note note = NewNote("内容");
+
+        harness.Service.ApplyTagsEdit(note, ["工作"]);
+
+        Assert.Empty(harness.Repository.Saved);
+    }
+
     // ================= 内存 → 磁盘 =================
 
     [Fact]

@@ -22,9 +22,11 @@ namespace LumiMemo.App.Services;
 /// 由系统提供，换成它这条要求就落空了。
 /// </para>
 /// <para>
-/// 两类自绘对话框的默认选项都落在「取消」那一侧：<see cref="ChooseAsync"/> 的调用方
+/// 三个自绘对话框的默认选项都落在「取消」那一侧：<see cref="ChooseAsync"/> 的调用方
 /// 负责传 <c>defaultIndex</c>，而 <see cref="ConfirmAsync"/> 固定把默认放在第二项。
-/// 敲回车时不该替用户按下那唯一不可逆的那个键。
+/// 敲回车时不该替用户按下那唯一不可逆的那个键。<see cref="PromptAsync"/> 是个例外——
+/// 它的回车就是「确定」，因为输入一段文字再敲回车，用户想要的就是提交，
+/// 而那里的默认动作不是不可逆的（改了颜色、改了标签都能再改回来）。
 /// </para>
 /// </remarks>
 public sealed class DialogService : IDialogService
@@ -65,6 +67,18 @@ public sealed class DialogService : IDialogService
         }
 
         return app.MainWindow is { IsLoaded: true } main ? main : null;
+    }
+
+    /// <inheritdoc />
+    public Task<string?> PromptAsync(
+        string title,
+        string message,
+        string initialValue,
+        Func<string, string?>? validate = null)
+    {
+        var dialog = new PromptDialog(title, message, initialValue, validate);
+
+        return Task.FromResult(dialog.Ask(ActiveWindow()));
     }
 
     /// <inheritdoc />

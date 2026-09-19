@@ -42,6 +42,29 @@ public sealed class RecordingDialogService : IDialogService
     /// <summary>需要按内容决定选第几项时设置它，优先级高于 <see cref="ChooseResult"/>。</summary>
     public Func<string, string, IReadOnlyList<string>, int>? ChooseHandler { get; set; }
 
+    /// <summary>所有的输入框请求，格式为 <c>标题|正文|初值</c>。</summary>
+    public List<string> PromptRequests { get; } = [];
+
+    /// <summary>用户对输入框的回答。<c>null</c> 表示取消。</summary>
+    /// <remarks>
+    /// 默认是<b>取消</b>而不是「原样返回初值」：没有哪个答案算得上"默认的那个"，
+    /// 而漏设时走取消那一路，至少不会让一个忘了配的用例悄悄改掉数据还万事大吉。
+    /// </remarks>
+    public string? PromptResult { get; set; }
+
+    /// <summary>需要按初值决定输入什么时设置它，优先级高于 <see cref="PromptResult"/>。</summary>
+    public Func<string, string, string, string?>? PromptHandler { get; set; }
+
+    /// <summary>
+    /// 调用方传进来的校验回调跑出来的结论，按发生顺序。<c>null</c> 表示那一次通过了。
+    /// </summary>
+    /// <remarks>
+    /// 替身不会真的拦住什么，所以它把校验的结论记下来——生产实现里那个回调
+    /// 「不通过就不关窗、把错误写在输入框下面」，而标签长度上限（§5.8）那条规则
+    /// 只活在回调里，不去跑一遍就没地方验它。
+    /// </remarks>
+    public List<string?> PromptValidations { get; } = [];
+
     /// <inheritdoc />
     public Task<bool> ConfirmAsync(string title, string message, string confirmText, string cancelText)
     {
@@ -49,6 +72,35 @@ public sealed class RecordingDialogService : IDialogService
         ConfirmTexts.Add((confirmText, cancelText, message));
 
         return Task.FromResult(ConfirmHandler?.Invoke(title, message) ?? ConfirmResult);
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// 顺序按生产实现来：先拿到用户打的字，再校验它，没过就<b>什么都不交回去</b>
+    /// （真对话框那时还开着）。所以「校验没过」与「用户取消」在调用方那里是同一个结果——
+    /// 真实流程里也确实是：用户看到红字之后要么改，要么关掉。
+    /// </remarks>
+    public Task<string?> PromptAsync(
+        string title,
+        string message,
+        string initialValue,
+        Func<string, string?>? validate = null)
+    {
+        PromptRequests.Add($"{title}|{message}|{initialValue}");
+
+        string? answer = PromptHandler?.Invoke(title, message, initialValue) ?? PromptResult;
+
+        if (answer is null)
+        {
+            // 取消：对话框根本没提交，回调不该跑。
+            return Task.FromResult<string?>(null);
+        }
+
+        string? error = validate?.Invoke(answer);
+
+        PromptValidations.Add(error);
+
+        return Task.FromResult(error is null ? answer : null);
     }
 
     /// <inheritdoc />

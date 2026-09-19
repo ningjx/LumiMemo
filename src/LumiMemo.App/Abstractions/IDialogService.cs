@@ -49,6 +49,38 @@ public interface IDialogService
         IReadOnlyList<string> choices,
         int defaultIndex = 0);
 
+    /// <summary>
+    /// 让用户输入一段文本。
+    /// </summary>
+    /// <param name="title">对话框标题。</param>
+    /// <param name="message">说明正文。</param>
+    /// <param name="initialValue">输入框的初值。</param>
+    /// <param name="validate">
+    /// 校验回调：返回一段错误文案表示拒绝，返回 <see langword="null"/> 表示接受。
+    /// 传 <see langword="null"/> 就是不校验。
+    /// </param>
+    /// <returns>用户输入的文本；点「取消」或直接关掉对话框时返回 <c>null</c>。</returns>
+    /// <remarks>
+    /// <para>
+    /// 为 §15.8 的标签编辑而生——文档没有给这个对话框的样子，它是自拟的。
+    /// </para>
+    /// <para>
+    /// <strong>校验回调交给调用方传进来</strong>，而不是让本服务去认标签规则（§5.8 那套
+    /// 长度上限、非法字符）：服务层不该认识某一个具体业务，否则下一个要输入的字段
+    /// 就得往这里再加一个方法。校验不通过时对话框<strong>不关闭</strong>，
+    /// 用户改一改就能接着提交——关掉再弹一个错误框的话，他刚打的那一串就没了。
+    /// </para>
+    /// <para>
+    /// 返回类型是可空的：用户取消与「输入了空串」是两件事。空串对标签编辑是有意义的
+    /// （清空全部标签），所以不能拿它兼任「取消」。
+    /// </para>
+    /// </remarks>
+    Task<string?> PromptAsync(
+        string title,
+        string message,
+        string initialValue,
+        Func<string, string?>? validate = null);
+
     /// <summary>提示错误。用于 §11.5 的保存失败、§10.4 的目录不可访问。</summary>
     Task ShowErrorAsync(string title, string message);
 

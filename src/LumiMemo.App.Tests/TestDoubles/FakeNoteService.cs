@@ -81,6 +81,44 @@ public sealed class FakeNoteService : INoteService
         LocalEdits.Add((note.Id, content));
     }
 
+    /// <summary>所有 <see cref="ApplyColorEdit"/> 调用，按发生顺序。</summary>
+    public List<(Guid NoteId, NoteColor Color)> ColorEdits { get; } = [];
+
+    /// <summary>
+    /// 所有 <see cref="ApplyTagsEdit"/> 调用，按发生顺序。
+    /// </summary>
+    /// <remarks>
+    /// 记的是<strong>原样传进来的那一份</strong>，不做规范化——规范化是业务规则，
+    /// 由真实现（<c>NoteService</c>）负责，验它的是 Integration.Tests。
+    /// 这里要验的是「ViewModel 有没有把该传的传对」，替身自己再实现一遍规则
+    /// 只会让两边一起错还彼此印证。
+    /// </remarks>
+    public List<(Guid NoteId, IReadOnlyList<string> Tags)> TagsEdits { get; } = [];
+
+    /// <inheritdoc />
+    public void ApplyColorEdit(Note note, NoteColor color)
+    {
+        ArgumentNullException.ThrowIfNull(note);
+
+        // 同 ApplyLocalEdit：复刻真实现里与本替身相关的那一步。不写回的话，
+        // 「改完之后管理器那行的颜色点变了吗」这条断言就无从谈起。
+        note.Color = color;
+
+        ColorEdits.Add((note.Id, color));
+    }
+
+    /// <inheritdoc />
+    public void ApplyTagsEdit(Note note, IReadOnlyList<string> tags)
+    {
+        ArgumentNullException.ThrowIfNull(note);
+        ArgumentNullException.ThrowIfNull(tags);
+
+        note.Tags.Clear();
+        note.Tags.AddRange(tags);
+
+        TagsEdits.Add((note.Id, tags));
+    }
+
     /// <summary>设成非 null 后，<see cref="SaveNoteAsync"/> 会抛出它。用于验证失败路径。</summary>
     public Exception? SaveException { get; set; }
 

@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using LumiMemo.Core.Models;
+using LumiMemo.Core.Services;
 using YamlDotNet.Core;
 using YamlDotNet.RepresentationModel;
 
@@ -447,7 +448,7 @@ public static class FrontMatterParser
                 {
                     if (item is YamlScalarNode { Value: { } value })
                     {
-                        AddTag(tags, value);
+                        _ = TagRules.TryAdd(tags, value);
                     }
                 }
 
@@ -456,7 +457,7 @@ public static class FrontMatterParser
             case YamlScalarNode { Value: { } single }:
                 // §5.10：tags 写成字符串时按单个标签处理，并记一条 Warning。
                 // 这里借用 InvalidYaml 这个种类——它就是「语义不符合规范」的通用出口。
-                AddTag(tags, single);
+                _ = TagRules.TryAdd(tags, single);
                 issues.Add(new NoteParseIssue(InvalidYaml, "tags 不是数组，已按单个标签处理。"));
                 break;
 
@@ -469,71 +470,6 @@ public static class FrontMatterParser
         }
     }
 
-    /// <summary>
-    /// 按 §5.8 规范化一个标签。
-    /// </summary>
-    /// <remarks>
-    /// §5.8 说规范化「在写入时执行一次，之后按规范形式存储与比较」。这里在<strong>读</strong>的
-    /// 时候就做，是为了让 <c>Note.Tags</c> 里永远是规范形式——否则「展示」「比较」「写回」
-    /// 三处都得各自记着再规范化一遍，漏掉一处就是同一标签被当成两个。
-    /// 长度上限（64 字符）不在这里执行：那是<strong>输入校验</strong>（拒绝并提示用户），
-    /// 读文件时执行等于把用户已有的长标签直接丢掉，属于破坏数据。
-    /// </remarks>
-    private static void AddTag(List<string> tags, string raw)
-    {
-        string tag = NormalizeTag(raw);
-
-        if (tag.Length == 0)
-        {
-            return;
-        }
-
-        foreach (string existing in tags)
-        {
-            if (string.Equals(existing, tag, StringComparison.OrdinalIgnoreCase))
-            {
-                return;
-            }
-        }
-
-        tags.Add(tag);
-    }
-
-    private static string NormalizeTag(string raw)
-    {
-        string value = raw.Trim();
-
-        // 去掉 # 前缀，与 Obsidian 一致（§5.8）。
-        if (value.StartsWith('#'))
-        {
-            value = value[1..].Trim();
-        }
-
-        // 内部空白替换为 -，"to read" → "to-read"（§5.8）。
-        if (value.Contains(' ', StringComparison.Ordinal))
-        {
-            var builder = new StringBuilder(value.Length);
-            bool lastWasDash = false;
-            foreach (char c in value)
-            {
-                if (char.IsWhiteSpace(c))
-                {
-                    if (!lastWasDash)
-                    {
-                        builder.Append('-');
-                        lastWasDash = true;
-                    }
-                }
-                else
-                {
-                    builder.Append(c);
-                    lastWasDash = c == '-';
-                }
-            }
-
-            value = builder.ToString();
-        }
-
-        return value;
-    }
+    // 标签的规范化与去重搬去了 Core 的 TagRules（§5.8）。编辑对话框也要用同一套规则，
+    // 两处各留一份的话，「编辑完写回、再读回来标签变了」只会在特定输入下出现，极难查。
 }
