@@ -461,6 +461,73 @@ public sealed class NoteServiceTests
             () => harness.Service.ApplyExternalChange(@"D:\notes\a.md", null!));
     }
 
+    // ---- 新建（§3.3 流 3） ----
+
+    [Fact]
+    public async Task 新建_把仓储建出来的便签放进内存与索引()
+    {
+        var harness = CreateHarness();
+
+        // 文件名分配与首次写盘是仓储的活（§5.6），这里要验的只是编排：
+        // 它有没有把仓储交出来的那一张真的收进内存、并通知索引。
+        Note created = NewNote("# 购物清单\n- 牛奶");
+        created.Tags = ["家务"];
+        harness.Repository.CreateHandler = () => created;
+
+        Note returned = await harness.Service.CreateNoteAsync();
+
+        Assert.Same(created, returned);
+
+        // 进了内存，管理器列表里才看得见它。
+        Assert.Same(created, harness.Store.TryGet(created.Id));
+
+        // 通知了索引，它才搜得到、也才出现在标签侧栏里。
+        // 索引里存的是去掉标记之后的纯文本（§9.4），所以这里比的是关键词而不是原文；
+        // 没被索引过的 id 拿出来是空串，因此这一条足以证明 OnNoteAdded 真的跑过。
+        Assert.Contains("牛奶", harness.Index.GetPlainText(created.Id), StringComparison.Ordinal);
+        Assert.Contains(created.Id, harness.Index.NotesWithTag("家务")!);
+    }
+
+    [Fact]
+    public async Task 新建_把颜色与目标文件夹原样交给仓储()
+    {
+        var harness = CreateHarness();
+
+        await harness.Service.CreateNoteAsync(NoteColor.Blue, "工作");
+
+        var request = Assert.Single(harness.Repository.CreateRequests);
+        Assert.Equal(NoteColor.Blue, request.Color);
+        Assert.Equal("工作", request.TargetFolder);
+    }
+
+    [Fact]
+    public async Task 新建_不自己去建布局条目()
+    {
+        var harness = CreateHarness();
+
+        Note created = await harness.Service.CreateNoteAsync();
+
+        // 布局是设备状态，谁开窗谁负责（§8.3）。在这里顺手建一条，
+        // 「新建了但没开窗」的情形就会在 layout.json 里留下一条永远用不上的记录。
+        Assert.Empty(harness.Layouts.All);
+        Assert.False(harness.Timers.Last.IsRunning);
+        Assert.Null(harness.Layouts.TryGet(created.Id));
+    }
+
+    [Fact]
+    public async Task 新建_仓储抛异常时原样往上传()
+    {
+        var harness = CreateHarness();
+        harness.Repository.CreateException = new InvalidOperationException("笔记目录不存在。");
+
+        // 变成「静默返回 null」的话，界面上就是「点了新建什么都没有」——
+        // 用户只能一遍遍地点，而不知道为什么。异常要传上去让上层去说清楚。
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => harness.Service.CreateNoteAsync());
+
+        Assert.Equal(0, harness.Store.Count);
+    }
+
     // ---- 辅助 ----
 
     private static Harness CreateHarness()

@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Security.Cryptography;
 using LumiMemo.Core.Abstractions;
 using LumiMemo.Core.Models;
+using LumiMemo.Core.Services;
 using LumiMemo.Infrastructure.Io;
 using Microsoft.Extensions.Logging;
 
@@ -259,6 +260,101 @@ public sealed class MarkdownNoteRepository : INoteRepository
 
         // 写成功才更新哈希：失败还更新的话，下一次保存会误判成「内容没变」而永远不重试。
         Cache(note.FilePath, profile, bytes, note.Id);
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// <para>
+    /// 空白便签的落盘形态直接来自 <see cref="FrontMatterSerializer"/> 现成的规则：
+    /// Front Matter 里一定有 <c>id/color/createdAt/updatedAt</c> 四个键，<c>tags</c> 为空时整个键省略，
+    /// 正文之后补一个空行。于是新文件长成 <c>---\r\n…\r\n---\r\n\r\n</c>，
+    /// 正是 §5.9 要的形态，序列化器一个字节都不用改。
+    /// </para>
+    /// <para>
+    /// 写盘复用 <see cref="SaveAsync"/> 而不是自己拼字节：它已经管着编码档、写前哈希自检、
+    /// 写成功后的 <c>Cache</c>。新路径走的是「没有缓存档 → UTF-8 → 哈希必然不同 → 写 → 落档」这条正路。
+    /// </para>
+    /// </remarks>
+    public async Task<Note> CreateAsync(
+        NoteColor? color = null,
+        string? targetFolder = null,
+        CancellationToken ct = default)
+    {
+        string root = RequireNotesFolder();
+        string directory = ResolveTargetDirectory(root, targetFolder);
+
+        Guid id = Guid.NewGuid();
+        DateTimeOffset now = _clock.Now;
+
+        var note = new Note
+        {
+            Id = id,
+            FilePath = NoteFileNameBuilder.Build(
+                TitleDeriver.Derive(string.Empty), now, id, directory, root, File.Exists),
+            Content = string.Empty,
+            Color = color ?? DefaultColor,
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
+
+        await SaveAsync(note, ct).ConfigureAwait(false);
+
+        _logger.LogInformation("新建便签：{Path}。", note.FilePath);
+
+        return note;
+    }
+
+    /// <summary>
+    /// 取笔记目录根；未配置或目录已经不在了都抛异常（§11.5）。
+    /// </summary>
+    /// <remarks>
+    /// <see cref="AtomicFileWriter.WriteAsync"/> 写之前会 <c>CreateDirectory</c>。
+    /// 若笔记目录是被拔掉的移动盘，它会兴高采烈地造一个空目录出来，而用户的便签全在别处——
+    /// 于是本次新建「成功」了，用户却看不到自己原有的任何一张便签。
+    /// 目录不在时必须让调用方知道，而不是替他重建（§11.5 的处置是引导去设置里重选）。
+    /// </remarks>
+    private string RequireNotesFolder()
+    {
+        string? root = _paths.NotesFolder;
+        if (string.IsNullOrWhiteSpace(root))
+        {
+            throw new InvalidOperationException(
+                "尚未选定笔记目录，无法新建便签（启动序列见 §17.1）。");
+        }
+
+        if (!Directory.Exists(root))
+        {
+            throw new InvalidOperationException(
+                $"笔记目录不存在：{root}。请在设置里重新选择目录。");
+        }
+
+        return root;
+    }
+
+    /// <summary>
+    /// 把相对的目标文件夹拼到笔记目录根上；越界的输入退回到根目录。
+    /// </summary>
+    /// <remarks>
+    /// <see cref="NoteFileNameBuilder.Build"/> 里那道 §19.4 校验只护住<strong>文件名</strong>，
+    /// 不护住<strong>目录</strong>：传 <c>..\..\Windows</c> 进去，它会老实地拼出
+    /// <c>{笔记目录}\..\..\Windows\untitled-xxxx.md</c> 并写出去。所以目录这一层得自己拦。
+    /// 退回到根而不是抛异常：这是调用方给错了参数，不该让用户连「新建」这个动作都用不了。
+    /// </remarks>
+    private string ResolveTargetDirectory(string root, string? targetFolder)
+    {
+        if (string.IsNullOrWhiteSpace(targetFolder))
+        {
+            return root;
+        }
+
+        string combined = Path.Combine(root, targetFolder);
+        if (NoteFileNameBuilder.IsInsideNotesRoot(combined, root))
+        {
+            return combined;
+        }
+
+        _logger.LogWarning("目标文件夹越出笔记目录，已退回到笔记目录根：{TargetFolder}。", targetFolder);
+        return root;
     }
 
     // ---- 扫描 ----

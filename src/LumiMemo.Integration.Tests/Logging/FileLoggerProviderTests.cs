@@ -322,6 +322,66 @@ public sealed class FileLoggerProviderTests
         Assert.Contains("调低之后的调试", log);
     }
 
+    // ---- 按需冲刷（§17.5 第 2 层） ----
+
+    [Fact]
+    public async Task 冲刷之后日志立刻落盘_不用等释放()
+    {
+        using var temp = new TempDirectory();
+        using var provider = Create(temp.Path, Quick);
+
+        provider.CreateLogger("LumiMemo.Test").LogInformation("崩溃前的最后一条");
+
+        // 不 Dispose、不轮询：只有 Flush 把它写出去，这一条才读得到。
+        Assert.True(provider.Flush(TimeSpan.FromSeconds(5)));
+
+        Assert.Contains("崩溃前的最后一条", ReadAll(temp.Path));
+    }
+
+    [Fact]
+    public void 没有待写的行时冲刷立刻返回()
+    {
+        using var temp = new TempDirectory();
+        using var provider = Create(temp.Path, Never);
+
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        bool flushed = provider.Flush(TimeSpan.FromSeconds(30));
+        stopwatch.Stop();
+
+        // 崩溃路径上不该为了「其实没东西要写」白等满一个上限。
+        Assert.True(flushed);
+        Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(1), $"实际等了 {stopwatch.Elapsed}。");
+    }
+
+    [Fact]
+    public void 等到上限还没写完时如实返回false而不是一直等()
+    {
+        using var temp = new TempDirectory();
+        using var provider = Create(temp.Path, Never);
+
+        provider.CreateLogger("LumiMemo.Test").LogInformation("这一条得等十分钟才轮到落盘");
+
+        // 批次不满、间隔又长，消费循环这会儿正睡着（等「下一行」或「这批到点」）。
+        // Flush 没法命令它提前写——只能等到上限，然后如实说「没冲干净」。
+        // 有个上限在，调用方就不会被无限期挂住。
+        Assert.False(provider.Flush(TimeSpan.FromMilliseconds(100)));
+    }
+
+    [Fact]
+    public void 释放之后再冲刷不抛异常()
+    {
+        using var temp = new TempDirectory();
+
+        var provider = Create(temp.Path, Never);
+
+        provider.CreateLogger("LumiMemo.Test").LogInformation("退出前的一条");
+        provider.Dispose();
+
+        // 容器释放之后、进程真正终止之前，后台线程的处理器还可能再跑一次（§17.5）。
+        // 那一刻它手里这个 provider 已经释放过了，这条路径不能炸。
+        Assert.True(provider.Flush(TimeSpan.FromMilliseconds(100)));
+    }
+
     private static FileLoggerProvider Create(
         string logDirectory,
         TimeSpan flushInterval) =>

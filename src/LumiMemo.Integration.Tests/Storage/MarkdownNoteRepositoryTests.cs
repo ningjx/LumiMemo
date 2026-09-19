@@ -447,6 +447,158 @@ public sealed class MarkdownNoteRepositoryTests
         Assert.Equal(original.Id, reloaded?.Id);
     }
 
+    // ---- 新建（§5.6、§3.3 流 3） ----
+
+    [Fact]
+    public async Task 新建的便签文件名是标题摘要加创建日期加短ID()
+    {
+        using var local = new TempDirectory();
+        using var notes = new TempDirectory();
+
+        Note note = await CreateRepository(PathsFor(local, notes), new FakeClock(SampleTime))
+            .CreateAsync(ct: Ct);
+
+        // §5.6：{标题摘要}-{创建日期}-{短ID}.md。初始正文为空，标题派生结果就是「无标题」。
+        string expected = $"无标题-20260919-{note.Id.ToString("N")[..8]}.md";
+
+        Assert.Equal(expected, Path.GetFileName(note.FilePath));
+
+        // 磁盘上真有且只有这一个文件。只断言返回值的话，一个「名字算对了但根本没写盘」
+        // 的实现照样能过。
+        Assert.Equal(expected, Path.GetFileName(Assert.Single(Directory.GetFiles(notes.Path))));
+    }
+
+    [Fact]
+    public async Task 新建的文件是无BOM的UTF8以CRLF分行的FrontMatter加一个空行()
+    {
+        using var local = new TempDirectory();
+        using var notes = new TempDirectory();
+
+        Note note = await CreateRepository(PathsFor(local, notes), new FakeClock(SampleTime))
+            .CreateAsync(ct: Ct);
+
+        byte[] bytes = await File.ReadAllBytesAsync(note.FilePath, Ct);
+
+        // §5.9 的四者之一：编码。新文件的 BOM 有一半来自「读进来的文件长什么样」，
+        // 全新文件没有那个来源，只能由第一次写盘自己定——错了就再也纠不回来。
+        Assert.False(bytes.AsSpan().StartsWith(Encoding.UTF8.GetPreamble()));
+
+        // 其余三者（行尾 CRLF、正文前一个空行、末尾换行）与四个键的顺序一起钉在这里。
+        // CanonicalText 的 body 传空串，得到的正是「空正文的全新便签」该有的样子。
+        Assert.Equal(CanonicalText(note.Id, body: string.Empty), Encoding.UTF8.GetString(bytes));
+
+        // 空标签表省略整个键，而不是写成 tags: []（§5.2）。多少用户会被那个空数组
+        // 引着去手改，然后困惑于「为什么删了它又回来了」。
+        Assert.DoesNotContain("tags", Encoding.UTF8.GetString(bytes), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task 新建的便签马上就能被扫描读到()
+    {
+        using var local = new TempDirectory();
+        using var notes = new TempDirectory();
+
+        MarkdownNoteRepository repository = CreateRepository(PathsFor(local, notes), new FakeClock(SampleTime));
+        Note created = await repository.CreateAsync(ct: Ct);
+
+        // 「新建之后重开程序，它还在」是用户对便签最朴素的期待。
+        // 写盘与解析两条路要能对上，光有写盘的用例看不出这一点。
+        Note reloaded = Assert.Single(await repository.LoadAllAsync(Ct));
+
+        Assert.Equal(created.Id, reloaded.Id);
+        Assert.Equal(created.FilePath, reloaded.FilePath);
+        Assert.Equal(string.Empty, reloaded.Content);
+        Assert.Equal(created.Color, reloaded.Color);
+    }
+
+    [Fact]
+    public async Task 不传颜色时用默认色_传了就用传的()
+    {
+        using var local = new TempDirectory();
+        using var notes = new TempDirectory();
+
+        MarkdownNoteRepository repository = CreateRepository(PathsFor(local, notes), new FakeClock(SampleTime));
+
+        Assert.Equal(NoteColor.Yellow, (await repository.CreateAsync(ct: Ct)).Color);
+
+        // 默认色是设置项，运行期可以改（§8.2）。做成可写属性就是为了这样用。
+        repository.DefaultColor = NoteColor.Purple;
+        Assert.Equal(NoteColor.Purple, (await repository.CreateAsync(ct: Ct)).Color);
+
+        Note blue = await repository.CreateAsync(NoteColor.Blue, ct: Ct);
+        Assert.Equal(NoteColor.Blue, blue.Color);
+
+        // 内存里的对象对了不算数：Front Matter 里那一行才是用户与别的工具看得见的。
+        Assert.Contains(
+            "color: blue",
+            await File.ReadAllTextAsync(blue.FilePath, Ct),
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task 传了目标文件夹就落在子目录里且目录被自动建出来()
+    {
+        using var local = new TempDirectory();
+        using var notes = new TempDirectory();
+
+        Note note = await CreateRepository(PathsFor(local, notes), new FakeClock(SampleTime))
+            .CreateAsync(targetFolder: "工作", ct: Ct);
+
+        Assert.Equal(Path.Combine(notes.Path, "工作"), Path.GetDirectoryName(note.FilePath));
+        Assert.True(File.Exists(note.FilePath));
+
+        // 根目录下不该多出一份。
+        Assert.Empty(Directory.GetFiles(notes.Path));
+    }
+
+    [Fact]
+    public async Task 目标文件夹逃出笔记目录时退回到根目录()
+    {
+        using var local = new TempDirectory();
+        using var notes = new TempDirectory();
+
+        Note note = await CreateRepository(PathsFor(local, notes), new FakeClock(SampleTime))
+            .CreateAsync(targetFolder: @"..\..\Windows", ct: Ct);
+
+        // §19.4：不许写到笔记目录外面去。NoteFileNameBuilder 里那道校验只护住文件名，
+        // 目录这一层得仓储自己拦——否则它会老老实实拼出
+        // {笔记目录}\..\..\Windows\untitled-xxxx.md，然后真的写出去。
+        Assert.True(NoteFileNameBuilder.IsInsideNotesRoot(note.FilePath, notes.Path));
+        Assert.Single(Directory.GetFiles(notes.Path));
+    }
+
+    [Fact]
+    public async Task 尚未选定笔记目录时拒绝新建且磁盘上什么都没建()
+    {
+        using var local = new TempDirectory();
+
+        // §8.6：首次运行还没选目录。这是合法状态，但新建便签没有地方落。
+        var paths = new AppPaths(local.Path);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => CreateRepository(paths, new FakeClock(SampleTime)).CreateAsync(ct: Ct));
+
+        Assert.Empty(Directory.GetFiles(local.Path, "*", SearchOption.AllDirectories));
+    }
+
+    [Fact]
+    public async Task 笔记目录不存在时拒绝新建而不是凭空把目录造出来()
+    {
+        using var local = new TempDirectory();
+
+        // 拔掉的移动盘就是这个样子：设置里还记着那个路径，目录已经没了。
+        string missing = Path.Combine(local.Path, "已经拔掉的盘");
+        var paths = new AppPaths(local.Path);
+        paths.SetNotesFolder(missing);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => CreateRepository(paths, new FakeClock(SampleTime)).CreateAsync(ct: Ct));
+
+        // AtomicFileWriter 写之前会 CreateDirectory。不在这一层拦住的话，目录会被凭空造出来，
+        // 本次新建「成功」，而用户看不到自己原有的任何一张便签。
+        Assert.False(Directory.Exists(missing));
+    }
+
     // ---- 辅助 ----
 
     private static AppPaths PathsFor(TempDirectory local, TempDirectory notes)

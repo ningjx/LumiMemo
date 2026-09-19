@@ -192,9 +192,26 @@ public sealed class NoteService : INoteService
     // ---- 业务操作 ----
 
     /// <inheritdoc />
-    /// <exception cref="NotSupportedException">本轮不含新建便签。</exception>
-    public Task<Note> CreateNoteAsync(NoteColor? color = null, string? targetFolder = null) =>
-        throw new NotSupportedException("新建便签尚未接入（需要文件名分配与首次写盘）。");
+    /// <remarks>
+    /// <para>
+    /// 只做编排：文件名的分配、首次写盘、编码档的登记全在
+    /// <see cref="INoteRepository.CreateAsync"/> 里。Core 不碰文件系统（§3.1）。
+    /// </para>
+    /// <para>
+    /// <strong>不建布局条目</strong>。布局是设备状态，谁开窗谁负责（§8.3）——
+    /// 管理器走 <c>LayoutService.GetOrCreate</c>，<c>OpenNote</c> 那条路也是各自管各自的。
+    /// 在这里顺手建一条，会让「只是新建、还没决定开不开窗」的情形多出一条布局垃圾。
+    /// </para>
+    /// </remarks>
+    public async Task<Note> CreateNoteAsync(NoteColor? color = null, string? targetFolder = null)
+    {
+        Note note = await _repository.CreateAsync(color, targetFolder).ConfigureAwait(true);
+
+        _store.Add(note);
+        _index.OnNoteAdded(note);
+
+        return note;
+    }
 
     /// <inheritdoc />
     /// <exception cref="NotSupportedException">本轮不含移动便签。</exception>

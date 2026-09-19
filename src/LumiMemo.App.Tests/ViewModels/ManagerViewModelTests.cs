@@ -1121,6 +1121,51 @@ public sealed class ManagerViewModelTests
         Assert.Contains("没有写权限", error, StringComparison.Ordinal);
     }
 
+    // ================= 新建便签（§3.3 流 3） =================
+
+    [Fact]
+    public async Task 新建便签_开出一张窗口并把它列进列表()
+    {
+        using var h = new ManagerHarness();
+
+        await h.Vm.NewNoteAsync();
+
+        Note created = Assert.Single(h.Vm.Notes).Note;
+
+        // 「点一下就有地方打字」是新建这个动作的全部意义，所以两件事都得发生：
+        // 窗口开出来了，而且开的正是刚建的那一张——不是随便一张。
+        Assert.Equal($"ShowNote({created.Id})", Assert.Single(h.Windows.Calls));
+        Assert.Same(created, h.Windows.LastShownViewModel?.Note);
+
+        // 初始正文为空（本轮裁决）。标题不在这里断言——它由 Note.Title 从正文派生，
+        // 拿同一条派生规则反着验自己等于什么都没验。
+        Assert.Equal(string.Empty, created.Content);
+    }
+
+    [Fact]
+    public async Task 新建便签失败_提示用户而不是把异常抛出去()
+    {
+        using var h = new ManagerHarness();
+
+        // 笔记目录没配、或者配的那个目录已经不在了（拔掉的移动盘）时，
+        // 仓储抛的就是这个类型，§11.5 给的处置是「提示并引导去设置里重新选择目录」。
+        h.NoteService.CreateNoteHandler = () => throw new InvalidOperationException("笔记目录不存在。");
+
+        // 「不抛」是这条用例的全部要点。这条命令由按钮直接触发，
+        // 异常逃出去就落到 §17.5 第一层，而那一层只能说出「程序遇到了一个问题」，
+        // 说不出「笔记目录可在设置里更改」这句能让人照做的话。
+        await h.Vm.NewNoteAsync();
+
+        string error = Assert.Single(h.Dialogs.ErrorRequests);
+
+        Assert.StartsWith("新建便签|", error, StringComparison.Ordinal);
+        Assert.Contains("笔记目录不存在。", error, StringComparison.Ordinal);
+
+        // 什么都没建出来：列表里不该凭空多一行，也不该开出一扇没有内容的空窗口。
+        Assert.Empty(h.Vm.Notes);
+        Assert.Empty(h.Windows.Calls);
+    }
+
     // ================= 列表项上的标签与颜色 =================
 
     [Fact]

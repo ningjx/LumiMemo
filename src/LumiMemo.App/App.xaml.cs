@@ -48,6 +48,15 @@ public partial class App : Application
     /// </remarks>
     private static readonly TimeSpan SignalTimeout = TimeSpan.FromSeconds(2);
 
+    /// <summary>
+    /// 后台线程即将终止时，等日志落盘的上限（§17.5 第 2 层）。
+    /// </summary>
+    /// <remarks>
+    /// 进程已经没有别的出路，多等一会儿不亏；但也不能无限等——真卡住了，
+    /// 用户看到的就是一个永远关不掉的进程。
+    /// </remarks>
+    private static readonly TimeSpan FlushWait = TimeSpan.FromSeconds(2);
+
     private ServiceProvider? _provider;
     private StartupSequence? _startup;
     private SingleInstanceGuard? _singleInstance;
@@ -66,6 +75,10 @@ public partial class App : Application
         paths.EnsureLocalAppDataDirectories();
 
         _provider = BuildServiceProvider(paths);
+
+        // §17.5 的三层兜底。挂得这么早是因为下面那几行（取服务、开监听）本身就可能抛，
+        // 而它们是「打不开程序」这类问题里最该死得有记录的一段。
+        AttachUnhandledExceptionHandlers();
 
         // §17.2：单实例。判在启动序列之前——第二个实例要做的只是通知第一个然后退出，
         // 让它把设置读一遍、把笔记目录扫一遍再扔掉，纯属拿用户的磁盘开玩笑。
@@ -112,6 +125,67 @@ public partial class App : Application
         _provider?.Dispose();
 
         base.OnExit(e);
+    }
+
+    /// <summary>
+    /// 挂上 §17.5 的三层未处理异常兜底。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 三层各自的分工：UI 线程<strong>接住并继续</strong>（绑定错误、命令失败不该让人丢掉正在做的事）；
+    /// 后台线程<strong>拦不住退出</strong>，只能把现场留下；没人 <c>await</c> 的 Task
+    /// <strong>标记成已观察</strong>，别让它把进程掀掉。
+    /// </para>
+    /// <para>
+    /// <strong>闭包里只捕获局部变量，不捕获 <c>_provider</c>。</strong>
+    /// <see cref="OnExit"/> 会释放容器，而 <c>AppDomain.CurrentDomain.UnhandledException</c>
+    /// 完全可能在它之后才响——那一刻从容器里现取任何东西，拿到的都是已经死掉的对象。
+    /// </para>
+    /// <para>
+    /// 这里刻意<strong>传异常对象</strong>而不是只记类型名。仓库里其余地方按 §19.5
+    /// 一律只记 <c>ex.GetType().Name</c>，为的是不让便签正文顺着 Message 漏进日志；
+    /// 但未处理异常是它已经逃到进程边界上的时刻，堆栈与 Message 是判断「到底哪一行炸了」
+    /// 唯一的线索，不记就等于什么都没留下。日志留在本机 <c>%LOCALAPPDATA%</c>，不外发。
+    /// </para>
+    /// </remarks>
+    private void AttachUnhandledExceptionHandlers()
+    {
+        ServiceProvider provider = _provider!;
+
+        FileLoggerProvider logs = provider.GetRequiredService<FileLoggerProvider>();
+        ErrorReporter reporter = provider.GetRequiredService<ErrorReporter>();
+        ILogger<App> logger = provider.GetRequiredService<ILogger<App>>();
+
+        // ① UI 线程（§17.5 第 1 层）。
+        DispatcherUnhandledException += (_, e) =>
+        {
+            logger.LogError(e.Exception, "UI 线程未处理异常：{Type}", e.Exception.GetType().FullName);
+
+            e.Handled = true;
+
+            reporter.ReportRecoverable(e.Exception);
+        };
+
+        // ② 后台线程（§17.5 第 2 层）。
+        AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+        {
+            logger.LogError(
+                e.ExceptionObject as Exception,
+                "后台线程未处理异常，进程将终止。IsTerminating={IsTerminating}",
+                e.IsTerminating);
+
+            // 同步等而不是 await：调用它的这条线程正在死，排在它上面的续体未必还有机会被调度。
+            // 返回 false（等满上限）也只能认了——日志本身没有别的办法。
+            logs.Flush(FlushWait);
+        };
+
+        // ③ 没人 await 的 Task（§17.5 第 3 层）。
+        TaskScheduler.UnobservedTaskException += (_, e) =>
+        {
+            logger.LogError(e.Exception, "未观察的 Task 异常：{Type}", e.Exception.GetType().FullName);
+
+            e.SetObserved();
+        };
     }
 
     /// <summary>
@@ -276,6 +350,10 @@ public partial class App : Application
         services.AddSingleton<IDialogService, DialogService>();
         services.AddSingleton<IFolderPicker, FolderPickerDialog>();
         services.AddSingleton<IShellLauncher, ExplorerShellLauncher>();
+
+        // 只有 App 一处用它（§17.5 第 1 层），但照样进容器：它依赖 IClock 与 IDialogService，
+        // 手工 new 一个就得在这里把这两个也手工拼出来，而那正是组合根要避免的事。
+        services.AddSingleton<ErrorReporter>();
 
         // 注册的是 WeakReferenceMessenger.Default，因此运行时行为与直接引用那个静态单例
         // 完全一致，但依赖关系是显式的：测试里可以注入一条全新的总线，

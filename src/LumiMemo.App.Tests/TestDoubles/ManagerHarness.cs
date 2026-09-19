@@ -43,6 +43,10 @@ public sealed class ManagerHarness : IDisposable
             Index.OnNoteRemoved(id);
         };
 
+        // 同一个理由：真实现里「进 NoteStore、通知索引」是 NoteService.CreateNoteAsync
+        // 自己的两步，替身不做。「新建之后列表里多一条」要靠它才成立。
+        NoteService.CreateEffect = Add;
+
         Vm = new ManagerViewModel(
             Store,
             Index,

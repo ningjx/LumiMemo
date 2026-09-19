@@ -650,13 +650,28 @@ public sealed partial class ManagerViewModel : ObservableObject
     /// 全程<strong>不 <c>ConfigureAwait(false)</c></strong>：调用方在 UI 线程上，
     /// 而 <c>Refresh()</c> 要改被绑定的 <c>ObservableCollection</c>（§3.4 规则 T5）。
     /// </para>
+    /// <para>
+    /// 这里必须自己接住异常。「新建」是用户点一下就要有反应的动作，而它一次要动三样
+    /// 会失败的东西：笔记目录（可能未配置、可能随移动盘一起没了）、文件名分配（§5.6）、
+    /// 首次写盘（可能没权限、可能被占用）。裸抛出去就是 §17.5 那一层的活，
+    /// 但用户看到的会是一个「程序出错了」的框，而这里能告诉他到底哪一步不行、该怎么办。
+    /// </para>
     /// </remarks>
     [RelayCommand]
     public async Task NewNoteAsync()
     {
-        Note note = await _noteService.CreateNoteAsync();
+        try
+        {
+            Note note = await _noteService.CreateNoteAsync();
 
-        ShowNote(note, _layoutService.GetOrCreate(note.Id));
+            ShowNote(note, _layoutService.GetOrCreate(note.Id));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            await _dialogs.ShowErrorAsync(
+                "新建便签",
+                $"没能建出这张便签：\n{ex.Message}\n\n笔记目录可在设置里更改。");
+        }
 
         Refresh();
     }

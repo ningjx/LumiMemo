@@ -28,6 +28,15 @@ public sealed class FakeNoteRepository : INoteRepository
     /// <summary><see cref="LoadAllAsync"/> 被调了几次。</summary>
     public int LoadCallCount { get; private set; }
 
+    /// <summary>所有交给 <see cref="CreateAsync"/> 的参数，按发生顺序。</summary>
+    public List<(NoteColor? Color, string? TargetFolder)> CreateRequests { get; } = [];
+
+    /// <summary><see cref="CreateAsync"/> 要交出去的便签；不设时自己造一张。</summary>
+    public Func<Note>? CreateHandler { get; set; }
+
+    /// <summary><see cref="CreateAsync"/> 要抛的异常；不设时正常返回。</summary>
+    public Exception? CreateException { get; set; }
+
     /// <inheritdoc />
     public Task<IReadOnlyList<Note>> LoadAllAsync(CancellationToken ct = default)
     {
@@ -51,5 +60,33 @@ public sealed class FakeNoteRepository : INoteRepository
         Saved.Add(note);
 
         return Task.CompletedTask;
+    }
+
+    /// <inheritdoc />
+    public Task<Note> CreateAsync(
+        NoteColor? color = null, string? targetFolder = null, CancellationToken ct = default)
+    {
+        CreateRequests.Add((color, targetFolder));
+
+        if (CreateException is { } exception)
+        {
+            return Task.FromException<Note>(exception);
+        }
+
+        return Task.FromResult(CreateHandler is { } handler ? handler() : NewNote());
+    }
+
+    private static Note NewNote()
+    {
+        var id = Guid.NewGuid();
+
+        return new Note
+        {
+            Id = id,
+            FilePath = $@"D:\notes\{id:N}.md",
+            Content = string.Empty,
+            CreatedAt = DateTimeOffset.UnixEpoch,
+            UpdatedAt = DateTimeOffset.UnixEpoch,
+        };
     }
 }

@@ -43,4 +43,24 @@ public sealed class FakeNoteRepository : INoteRepository
 
         return Task.CompletedTask;
     }
+
+    /// <inheritdoc />
+    public Task<Note> CreateAsync(
+        NoteColor? color = null, string? targetFolder = null, CancellationToken ct = default)
+    {
+        var id = Guid.NewGuid();
+        var note = new Note
+        {
+            Id = id,
+            FilePath = $@"D:\notes\{id:N}.md",
+            Content = string.Empty,
+            Color = color ?? NoteColor.Yellow,
+            CreatedAt = DateTimeOffset.UnixEpoch,
+            UpdatedAt = DateTimeOffset.UnixEpoch,
+        };
+
+        NotesToLoad.Add(note);
+
+        return Task.FromResult(note);
+    }
 }

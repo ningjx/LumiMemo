@@ -149,26 +149,38 @@ public sealed class FakeNoteService : INoteService
     /// </remarks>
     public Func<Note>? CreateNoteHandler { get; set; }
 
+    /// <summary>便签建出来之后要发生的事，由装配处补上。</summary>
+    /// <remarks>
+    /// 真实现里「进 <c>NoteStore</c>、通知索引」是 <c>NoteService.CreateNoteAsync</c>
+    /// 自己做的两步。替身不碰那个 Store——它由装配处持有，与 <see cref="DeleteEffect"/>
+    /// 同一个理由，也让这里成为补上那两步的唯一地方。
+    /// </remarks>
+    public Action<Note>? CreateEffect { get; set; }
+
     /// <inheritdoc />
     public Task<Note> CreateNoteAsync(NoteColor? color = null, string? targetFolder = null)
     {
         CreatedNotes.Add((color, targetFolder));
 
-        if (CreateNoteHandler is { } handler)
-        {
-            return Task.FromResult(handler());
-        }
+        Note note = CreateNoteHandler is { } handler ? handler() : NewNote();
 
+        CreateEffect?.Invoke(note);
+
+        return Task.FromResult(note);
+    }
+
+    private static Note NewNote()
+    {
         var id = Guid.NewGuid();
 
-        return Task.FromResult(new Note
+        return new Note
         {
             Id = id,
             FilePath = $@"D:\notes\{id:N}.md",
             Content = string.Empty,
             CreatedAt = DateTimeOffset.UnixEpoch,
             UpdatedAt = DateTimeOffset.UnixEpoch,
-        });
+        };
     }
 
     /// <inheritdoc />

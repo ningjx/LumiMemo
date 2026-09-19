@@ -27,6 +27,17 @@ public sealed class RecordingDialogService : IDialogService
     /// <summary>所有的信息提示请求，格式为 <c>标题|正文</c>。</summary>
     public List<string> InfoRequests { get; } = [];
 
+    /// <summary>
+    /// 需要自己决定那次错误提示怎么结束时设置它（抛异常、或者一直不结束），
+    /// 优先级高于默认的「记一笔就返回」。
+    /// </summary>
+    /// <remarks>
+    /// 与 <see cref="ConfirmHandler"/> 那几个同一形状。用得着它的只有
+    /// <c>ErrorReporterTests</c>：「提示框自己炸了」和「上一个框还开着」这两种情形
+    /// 都要求那次 <c>ShowErrorAsync</c> 的行为不是默认的那一种。
+    /// </remarks>
+    public Func<string, string, Task>? ErrorHandler { get; set; }
+
     /// <summary>用户对确认框的回答。默认「是」。</summary>
     public bool ConfirmResult { get; set; } = true;
 
@@ -120,7 +131,7 @@ public sealed class RecordingDialogService : IDialogService
     {
         ErrorRequests.Add($"{title}|{message}");
 
-        return Task.CompletedTask;
+        return ErrorHandler?.Invoke(title, message) ?? Task.CompletedTask;
     }
 
     /// <inheritdoc />

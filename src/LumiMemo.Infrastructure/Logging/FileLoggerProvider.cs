@@ -55,6 +55,9 @@ public sealed class FileLoggerProvider : ILoggerProvider
     /// <summary>退出时等最后一批写完的上限。</summary>
     private static readonly TimeSpan DisposeWait = TimeSpan.FromSeconds(2);
 
+    /// <summary><see cref="Flush"/> 等 <see cref="_pending"/> 归零时的轮询间隔。</summary>
+    private const int PollIntervalMilliseconds = 20;
+
     /// <summary>通道容量。满了丢最旧的：留最新的是排查问题的常识。</summary>
     private const int QueueCapacity = 1000;
 
@@ -76,6 +79,16 @@ public sealed class FileLoggerProvider : ILoggerProvider
     private readonly Channel<string> _channel;
     private readonly Task _consumer;
     private int _disposed;
+
+    /// <summary>
+    /// 还排在通道里、没走完 <see cref="WriteBatch"/> 的行数。
+    /// </summary>
+    /// <remarks>
+    /// 给 <see cref="Flush"/> 用。到 0 的含义是「不再堵在通道里了」，
+    /// <strong>不是</strong>「已经成功落盘」——<see cref="WriteBatch"/> 自己吞异常，
+    /// 写不进去的行同样会把计数减掉。日志本身也没有别的办法。
+    /// </remarks>
+    private long _pending;
 
     /// <summary>本进程当前在写的槽（1 起数）；0 表示还没定过，只在消费线程上改。</summary>
     private int _slot;
@@ -189,6 +202,51 @@ public sealed class FileLoggerProvider : ILoggerProvider
         }
     }
 
+    /// <summary>
+    /// 等通道里排着的日志落盘，最多等 <paramref name="timeout"/>。
+    /// </summary>
+    /// <param name="timeout">等待上限。</param>
+    /// <returns>等到没有待写的行了为 <see langword="true"/>；等满了上限还没等到为 <see langword="false"/>。</returns>
+    /// <remarks>
+    /// <para>
+    /// 给 <c>AppDomain.CurrentDomain.UnhandledException</c> 那一层用（§17.5）：
+    /// 进程马上就要终止，而最后几条日志——正好是最要紧的现场——可能还排在通道里。
+    /// <see cref="Dispose"/> 也冲刷，但它 <c>TryComplete</c> 通道，是一次性的；
+    /// 崩溃发生在容器释放之前，等不到它。
+    /// </para>
+    /// <para>
+    /// <strong>刻意做成同步阻塞，而不是 async。</strong>调用它的是正在死去的线程：
+    /// 那上面 <c>await</c> 的续体未必还有机会被调度，而若续体要回到 UI 线程，
+    /// <c>GetAwaiter().GetResult()</c> 就是死锁。同步轮询把这个类问题整个绕开。
+    /// 消费循环本来就至少每 <c>flushInterval</c> 醒一次，所以 20ms 一轮足够灵敏。
+    /// </para>
+    /// <para>
+    /// 两次读计数之间不需要锁：这是一个「等它归零」的观察者，
+    /// 早一轮晚一轮都不影响结果，最坏只是白等满一个上限。
+    /// </para>
+    /// </remarks>
+    public bool Flush(TimeSpan timeout)
+    {
+        if (Interlocked.Read(ref _pending) == 0)
+        {
+            return true;
+        }
+
+        long deadline = Environment.TickCount64 + (long)timeout.TotalMilliseconds;
+
+        while (Interlocked.Read(ref _pending) > 0)
+        {
+            if (Environment.TickCount64 >= deadline)
+            {
+                return false;
+            }
+
+            Thread.Sleep(PollIntervalMilliseconds);
+        }
+
+        return true;
+    }
+
     /// <summary>不断把通道里的行成批取出来写盘，直到通道被关闭且取空。</summary>
     /// <remarks>
     /// 一批的结束条件有两个，谁先到算谁（§20.5）：攒满 <see cref="BatchSize"/> 条，
@@ -292,6 +350,12 @@ public sealed class FileLoggerProvider : ILoggerProvider
         catch (Exception)
         {
             // 见类说明：日志写不进去不能影响程序本身。
+        }
+        finally
+        {
+            // 放在这里而不是三个调用点：每一条读出来的行都恰好经过本方法一次，
+            // 记账与「读出来」因此永远配对，漏写一处也不会让 Flush 白等满一个上限。
+            Interlocked.Add(ref _pending, -lines.Count);
         }
     }
 
@@ -425,6 +489,13 @@ public sealed class FileLoggerProvider : ILoggerProvider
                 return;
             }
 
+            // 先记账再入队：反过来的话，消费线程可能在记账之前就把这一行写完并减掉，
+            // 计数会短暂为负。负值虽然也让 Flush 立刻返回，但那个瞬时状态没法解释。
+            Interlocked.Increment(ref provider._pending);
+
+            // 入队失败也不减回去。通道满时丢的是最旧的那条（DropOldest），而不是刚排进去的
+            // 这一条——那条被丢掉的已经记过账，却再也不会经过 WriteBatch。于是计数只会偏多，
+            // 而偏多的方向是安全的：Flush 最多白等满一个上限，不会提前放行走掉。
             provider._channel.Writer.TryWrite(
                 provider.FormatLine(logLevel, categoryName, formatter(state, exception), exception));
         }
