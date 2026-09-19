@@ -2464,6 +2464,21 @@ public IReadOnlyList<SearchHit> Search(string query)
 }
 ```
 
+**实现说明（与上面的骨架不同，已按实际约束修正）**：搜索不住在 `SearchIndex` 上，而是一个纯静态类 `Core/Search/NoteSearch.cs`，签名是：
+
+```csharp
+NoteSearch.Search(
+    IReadOnlyList<Note> notes,
+    string? query,
+    Func<Guid, string> plainTextOf,
+    IReadOnlySet<Guid>? topMostIds,
+    DateTimeOffset now)
+```
+
+骨架里 `_store.Snapshot()` 与 `_index.GetPlainText(...)` 那两行暗示搜索能自己够到这两个容器，但 `SearchIndex` 只是"从便签派生出来的、不落盘的"辅助索引（§9.4），**它没有便签列表**（在 `NoteStore`）、**也没有置顶状态**（在 `LayoutService`）。为了一次搜索去反向依赖两个上游容器，等于把索引从叶子变成枢纽，此后 `NoteStore` 一改就要复查索引。改成纯函数后，索引、存储、布局三者互不认识，组合交给管理器 ViewModel 做；`SearchIndex` 也不必为了可测性去造假便签列表。
+
+`now` 显式传入同理——真实时钟会让"7 天内 +30"这类用例在临界点上偶发失败。
+
 **空查询的语义**：`Search("")` 返回**空列表**——"没有搜索"不等于"匹配到全部"。管理器的列表在查询词为空时**不走 `Search`**，而是直接取 `NoteStore.Snapshot()` 按 `UpdatedAt` 降序展示（§15.8）。这条区分很重要：如果让空查询返回全部，那些"评分很低但确实匹配"的排序规则会把整个列表重排一遍，用户会看到列表在输入框被清空的瞬间跳动。这个模型是唯一的搜索入口，两个方法必须共用（`Rank` 也要能被列表复用），不能各写一套排序——那样会在两处给出不一致的顺序。
 **关于中文**：`IndexOf` 的子串匹配对中文是完全可用的（比分词或 bigram 更精确，不会出现"搜 Docker 命中了 Doc 和 ker"这种假阳性）。PinSlip 用 bigram 是因为它的搜索是增量的、需要跨词边界匹配；本项目是全量内存扫描，直接用子串匹配即可。
 
@@ -2497,6 +2512,13 @@ public IReadOnlyList<SearchHit> Search(string query)
 
 **排序稳定性**：评分相同时按 `UpdatedAt` 降序，再相同时按 `Id` 升序。**必须有确定性的最终排序键**，否则同一查询两次得到不同顺序，用户会觉得界面在乱跳。
 
+**两条式子上的裁决（表格没写清楚，实现时定下来的）**：
+
+1. **六条基础分取最高的一条，不相加。** 表一是一张优先级阶梯——"标题完全等于 1000"这个量级明显是要压过一切的信号。若相加，一条"标题包含 + 标签精确 + 正文命中"的便签会拿到 `600 + 500 + 200 = 1300`，反过来压过标题完全等于查询的那条，阶梯当场失效。
+2. **×1.5 只乘在"正文包含"那一条上，再参与取最高。** 若乘在总分上，一条"标题命中、正文恰好在开头也出现一次"的便签会平白多拿五成——可它排前面靠的是标题，与正文开头没关系。
+
+两个常数的量级都远大于各类修正项之和（`10 × 10 + 50 + 30 = 180`），所以"取最高"不会让修正项失去意义：同档位之间仍然靠修正项分高下。
+
 **第一阶段实现 6 条基础分 + 置顶/时间修正**（这几条成本极低）。"正文出现次数"和"开头加权"也在第一版做——它们是几行 LINQ 的事。
 
 ## 12.3 摘要与高亮
@@ -2512,6 +2534,10 @@ public IReadOnlyList<SearchHit> Search(string query)
 ```
 
 **实现方式**：ViewModel 暴露 `IReadOnlyList<Inline>` 或一个标记了高亮区间的结构，由 View 用 `TextBlock` + `Run` 渲染。**不要在 XAML 里拼接 HTML 或用 `TextBlock.Text` 加富文本标记**。
+
+**实现说明（已落地）**：那个"标记了高亮区间的结构"是 `Core/Search/SnippetSegment`，即 `readonly record struct SnippetSegment(string Text, bool IsMatch)`；生成它的纯函数在 `Core/Search/SnippetBuilder.cs`。省略号也是一段普通片段（`IsMatch` 为假），View 只需一个循环，不必在首尾单独判断"要不要画省略号"。核心不拼标记字符串有两个理由：拼出来的是给 WPF 看的标记，那就把界面技术漏进了零第三方依赖的 Core（§4.1）；而且用户正文里的尖括号会被当成标记解析。
+
+第 4 条（换行替空格）的实现要点：**先替换再找位置**。替换是一对一的（一个换行换一个空格，长度不变），所以算出来的下标对原文同样成立，不会出现"截到一半发现位置偏了"。若改成"整行拼接后再裁"，两者就会出现偏差。
 
 **第一阶段可以只做摘要不做高亮**（摘要的收益大于高亮），高亮放第二阶段。
 
@@ -3797,6 +3823,24 @@ Keyboard.Focus(_editor);
 **200 条上限的理由**：搜到一个常见词（比如"的"）可能命中上千条。全部渲染会让面板卡住，而用户也不会去看第 500 条。先给 200 条，让用户细化。
 
 **过滤条是"与"关系**：勾选了"置顶"和"最近 7 天"就是两个条件同时满足。
+
+**实现说明（本轮已落地）**：搜索框、150ms 去抖、副标题按有无查询词切换、200 条上限与溢出提示都已接上。落点如下。
+
+| 位置 | 内容 |
+|---|---|
+| `ViewModels/ManagerViewModel.cs` | `SearchQuery`（去抖入口）、`SearchDebounceMilliseconds`（由启动序列从 `AppSettings.SearchDebounceMs` 灌入）、`MaxRenderedResults = 200`、`HasOverflow` / `OverflowHint`、`EmptyHint` / `CountText` 按查询词切换 |
+| `Views/SnippetPresenter.cs` | 把 `IReadOnlyList<SnippetSegment>` 画成一行文字的自绘 `TextBlock` |
+| `ViewModels/NoteListItem.cs` | 副标题的片段由 `Query` 决定：`SnippetBuilder.Build` 摘得出就用摘要，摘不出退回「修改时间 · 字数」 |
+
+**两条路径不能合并。** 查询词为空时直接取 `NoteStore.Snapshot()` 按 `UpdatedAt` 降序（`NoteSearch.OrderForList`），有查询词时才走 `NoteSearch.Search` 的评分排序。若让空查询也走评分，那些"分数很低但确实匹配"的规则会把整个列表重排一遍，用户会在清空输入框的瞬间看到列表乱跳。
+
+**`SnippetPresenter` 为什么要派生一个类。** 摘要是一行连着排的文字，用 `ItemsControl` 会把每段变成独立的排版单元（段间多出间距、行尾省略号失效）。而 `TextBlock.Inlines` **不是依赖属性**，绑不上——只剩"派生一个类、在属性变更时自己重建 `Inlines`"这一条路。只有命中段设前景色，其余段一律不设、靠继承拿外层 `Foreground`，于是调用方在 XAML 上写一个 `Foreground` 就统一改掉了非命中部分的颜色。
+
+**副标题的"修改时间"用绝对时刻（`9/18 11:19`）而不是上面示意图里的「2 天前」。** 这是上一轮已定的裁决（相对时间要跟着"现在"变，列表刷新的时机就成了一件要额外定义的事），此处与示意图不一致，以裁决为准。字号那一截取的是 `Note.Content.Length`，**含 Markdown 标记**——用户看到的数与文件里的字节数一致。
+
+**本轮明确没做的**：过滤条（全部/置顶/有标签/最近 7 天）、结果项的颜色点与标签徽章、右键菜单、`[ + 新建 ]`、虚拟化的显式确认。**另外这一节里没有"排序字段"这一项**——上面表格里的「排序」是一条规定（按 §12.2 评分；无查询词按 `UpdatedAt` 降序），不是让用户选的字段，所以没有排序下拉框。
+
+**一处反直觉的结论，将来改 `SearchIndex.ToPlainText` 前先看这里**：标题那一行<strong>本身就在纯文本里</strong>（`GetPlainText` 拿的是整篇正文），所以「命中标题」必然同时是一次正文命中，摘要总是摘得出来、不会退回日期。想让它退回日期，得先让纯文本不含标题行——而那会连带影响 §12.2 的"出现次数加分"（标题命中的那一次就没了）。
 
 ## 15.9 托盘图标与菜单
 

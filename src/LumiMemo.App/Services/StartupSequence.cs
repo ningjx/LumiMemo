@@ -232,6 +232,7 @@ public sealed class StartupSequence
         _layoutService.ShowStatusBar = settings.ShowStatusBar;
         _autoSaveService.DelayMilliseconds = settings.AutoSaveDelayMs;
         _windowManager.RestoreAfterShowDesktop = settings.RestoreAfterShowDesktop;
+        _manager.SearchDebounceMilliseconds = settings.SearchDebounceMs;
     }
 
     /// <summary><c>我的文档\LumiMemo</c>。用户取消选择目录时的退路。</summary>

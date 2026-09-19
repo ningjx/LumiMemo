@@ -5,6 +5,8 @@ using LumiMemo.App.Abstractions;
 using LumiMemo.App.Services;
 using LumiMemo.Core.Abstractions;
 using LumiMemo.Core.Models;
+using LumiMemo.Core.Search;
+using LumiMemo.Core.Services;
 using LumiMemo.Core.Stores;
 
 namespace LumiMemo.App.ViewModels;
@@ -14,13 +16,16 @@ namespace LumiMemo.App.ViewModels;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <strong>本轮的范围</strong>：只做列表视图——把笔记目录里的便签按修改时间倒序列出来、
+/// <strong>本轮的范围</strong>：列表视图 + 搜索。把便签列出来、按查询词筛并排序、
 /// 双击开一张、批量显示/隐藏。三档视图切换按钮（列表/文件夹/标签）整个不出现，
 /// 因为另外两档还没实现；画出来却点不动比没有更糟。
 /// </para>
 /// <para>
-/// 搜索、排序控件、卡片副标题按查询词切换属于阶段 6/7，等 <c>SearchIndex.Search</c> 接上后再补。
-/// 在那之前 <see cref="NoteListItem.Subtitle"/> 恒为「时间 · 字数」。
+/// <strong>搜索的两条路径不能合并</strong>：查询词为空时直接取
+/// <see cref="NoteStore.Snapshot"/> 按修改时间倒序（<see cref="NoteSearch.OrderForList"/>），
+/// 有查询词时才走 <see cref="NoteSearch.Search"/> 的评分排序。让空查询也去走评分，
+/// 那些「分数很低但确实匹配」的规则会把整个列表重排一遍，
+/// 用户会在清空输入框的瞬间看到列表乱跳（§12.1）。
 /// </para>
 /// <para>
 /// 它<strong>不持有窗口引用</strong>（§18.3），开窗走 <see cref="IWindowManager"/>。
@@ -28,50 +33,121 @@ namespace LumiMemo.App.ViewModels;
 /// </remarks>
 public sealed partial class ManagerViewModel : ObservableObject
 {
+    /// <summary>单次渲染的结果上限（§15.8）。</summary>
+    /// <remarks>
+    /// 搜一个常见字可能命中上千条。全部渲染会让面板卡住，而用户也不会去看第 500 条。
+    /// 先给 200 条，超出的部分改成一句「请细化搜索词」。
+    /// </remarks>
+    public const int MaxRenderedResults = 200;
+
     private readonly NoteStore _store;
+    private readonly SearchIndex _index;
+    private readonly LayoutService _layoutService;
     private readonly INoteService _noteService;
     private readonly NoteViewModelFactory _viewModelFactory;
     private readonly IWindowManager _windowManager;
     private readonly IDispatcher _dispatcher;
+    private readonly IClock _clock;
+    private readonly IUiTimer _searchTimer;
+
+    /// <summary>当前查询词下命中的<strong>全部</strong>便签，未截断。见 <see cref="Notes"/>。</summary>
+    private readonly List<NoteListItem> _matches = [];
 
     public ManagerViewModel(
         NoteStore store,
+        SearchIndex index,
+        LayoutService layoutService,
         INoteService noteService,
         NoteViewModelFactory viewModelFactory,
         IWindowManager windowManager,
-        IDispatcher dispatcher)
+        IDispatcher dispatcher,
+        IClock clock,
+        IUiTimerFactory timers)
     {
         ArgumentNullException.ThrowIfNull(store);
+        ArgumentNullException.ThrowIfNull(index);
+        ArgumentNullException.ThrowIfNull(layoutService);
         ArgumentNullException.ThrowIfNull(noteService);
         ArgumentNullException.ThrowIfNull(viewModelFactory);
         ArgumentNullException.ThrowIfNull(windowManager);
         ArgumentNullException.ThrowIfNull(dispatcher);
+        ArgumentNullException.ThrowIfNull(clock);
+        ArgumentNullException.ThrowIfNull(timers);
 
         _store = store;
+        _index = index;
+        _layoutService = layoutService;
         _noteService = noteService;
         _viewModelFactory = viewModelFactory;
         _windowManager = windowManager;
         _dispatcher = dispatcher;
+        _clock = clock;
+        _searchTimer = timers.Create();
     }
 
     /// <summary>窗口标题。</summary>
     public string Title => "LumiMemo";
 
-    /// <summary>列表里的便签，按修改时间倒序。</summary>
+    /// <summary>列表里的便签。至多 <see cref="MaxRenderedResults"/> 条，见 <see cref="OverflowHint"/>。</summary>
     public ObservableCollection<NoteListItem> Notes { get; } = [];
 
     /// <summary>当前选中的行。批量操作作用在它上面。</summary>
     [ObservableProperty]
     private NoteListItem? _selectedNote;
 
-    /// <summary>列表为空时显示的提示。笔记目录选好了但里面一条便签都没有时会看到它。</summary>
-    public string EmptyHint => "这个文件夹里还没有便签。";
-
-    /// <summary>状态栏上的计数，形如「3 条便签」。</summary>
-    public string CountText => $"{Notes.Count} 条便签";
+    /// <summary>
+    /// 搜索框里的文字。界面必须用 <c>UpdateSourceTrigger=PropertyChanged</c> 绑定它，
+    /// 否则要等到焦点离开才更新，去抖就成了摆设。
+    /// </summary>
+    /// <remarks>
+    /// 初值是<strong>空串而不是 <c>null</c></strong>：它绑在 <c>TextBox.Text</c> 上，
+    /// 而那个属性永远给不出 <c>null</c>。若初值是 <c>null</c>，
+    /// "空"就有了两种表示，占位提示的可见性判断必须在两处各写一遍。
+    /// </remarks>
+    [ObservableProperty]
+    private string? _searchQuery = string.Empty;
 
     /// <summary>
-    /// 按 <see cref="NoteStore"/> 的当前内容重建列表。
+    /// 搜索输入停止多久之后执行（§15.8）。由启动序列从 <c>AppSettings.SearchDebounceMs</c> 灌进来。
+    /// </summary>
+    /// <remarks>
+    /// 做成可写属性而不是构造参数，与 <c>AutoSaveService.DelayMilliseconds</c>、
+    /// <c>WindowManager.RestoreAfterShowDesktop</c> 同一手法：设置是启动时才知道的，
+    /// 而它不该成为构造函数的一部分——那样测试里每造一个 ViewModel 都要先造一份设置。
+    /// </remarks>
+    public int SearchDebounceMilliseconds { get; set; } = 150;
+
+    /// <summary>列表为空时显示的提示。</summary>
+    public string EmptyHint =>
+        IsSearching ? "没有找到匹配的便签。" : "这个文件夹里还没有便签。";
+
+    /// <summary>状态栏上的计数，形如「3 条便签」，搜索时是「找到 2 条」。</summary>
+    public string CountText => IsSearching ? $"找到 {_matches.Count} 条" : $"{_matches.Count} 条便签";
+
+    /// <summary>结果超过渲染上限时状态栏上的提示。没超过时是空串。</summary>
+    public string OverflowHint =>
+        HasOverflow ? $"还有 {_matches.Count - MaxRenderedResults} 条结果，请细化搜索词" : string.Empty;
+
+    /// <summary>命中条数是否超过了单次渲染上限。</summary>
+    public bool HasOverflow => _matches.Count > MaxRenderedResults;
+
+    private bool IsSearching => !string.IsNullOrWhiteSpace(SearchQuery);
+
+    /// <summary>
+    /// 查询词变了：重新起一次去抖计时（§15.8 的「输入停止 150ms 后执行」）。
+    /// </summary>
+    /// <remarks>
+    /// <strong>重新计时而不是排队。</strong> 连打五个字只该搜最后一次；
+    /// 若做成排队，用户打完一个词要眼睁睁看着列表按五个中间状态依次抖过去。
+    /// <see cref="IUiTimer.Start"/> 的语义正是「从本次调用算起」。
+    /// </remarks>
+    partial void OnSearchQueryChanged(string? value)
+    {
+        _searchTimer.Start(TimeSpan.FromMilliseconds(SearchDebounceMilliseconds), Refresh);
+    }
+
+    /// <summary>
+    /// 按当前查询词重建列表。
     /// </summary>
     /// <remarks>
     /// <para>
@@ -82,7 +158,9 @@ public sealed partial class ManagerViewModel : ObservableObject
     /// <para>
     /// <see cref="IDispatcher.VerifyAccess"/> 不是装饰：<see cref="ObservableCollection{T}"/>
     /// 被 UI 绑定时跨线程改会抛异常或错乱（§3.4 规则 T5）。
-    /// 本轮调用方都在 UI 线程上，但将来文件监听接上后不一定——那时候这行会立刻抓出来。
+    /// 调用方一个在启动序列（UI 线程）、一个在去抖定时器（生产实现是
+    /// <c>DispatcherTimer</c>，本来就在 UI 线程），但将来文件监听接上后不一定——
+    /// 那时候这行会立刻抓出来。
     /// </para>
     /// </remarks>
     [RelayCommand]
@@ -90,14 +168,23 @@ public sealed partial class ManagerViewModel : ObservableObject
     {
         _dispatcher.VerifyAccess();
 
+        // 手动刷新时撤掉还没到期的去抖：它再跑一次只会得出同一个结果。
+        _searchTimer.Stop();
+
+        _matches.Clear();
+        _matches.AddRange(BuildItems());
+
         Notes.Clear();
 
-        foreach (Note note in _store.Snapshot().OrderByDescending(note => note.UpdatedAt))
+        foreach (NoteListItem item in _matches.Take(MaxRenderedResults))
         {
-            Notes.Add(new NoteListItem(note));
+            Notes.Add(item);
         }
 
         OnPropertyChanged(nameof(CountText));
+        OnPropertyChanged(nameof(EmptyHint));
+        OnPropertyChanged(nameof(HasOverflow));
+        OnPropertyChanged(nameof(OverflowHint));
     }
 
     /// <summary>
@@ -141,4 +228,43 @@ public sealed partial class ManagerViewModel : ObservableObject
     /// <summary>把所有便签窗口收起来（不改变数据，也不写 layout）。</summary>
     [RelayCommand]
     public void HideAll() => _windowManager.HideAllNotes();
+
+    /// <summary>按当前查询词算出要展示的行。</summary>
+    private List<NoteListItem> BuildItems()
+    {
+        IReadOnlyList<Note> notes = _store.Snapshot();
+
+        if (!IsSearching)
+        {
+            return [.. NoteSearch.OrderForList(notes)
+                                 .Select(note => new NoteListItem(note, _index.GetPlainText(note.Id)))];
+        }
+
+        // 查询词已经在 Search 里裁过空白，这里再裁一次只是为了把同一个词交给 NoteListItem
+        // ——留着两端的空格会让它拿 " docker " 去 IndexOf，摘要就永远摘不出来。
+        string query = SearchQuery!.Trim();
+
+        return
+        [
+            .. NoteSearch
+                .Search(notes, query, _index.GetPlainText, TopMostIds(), _clock.Now)
+                .Select(hit => new NoteListItem(hit.Note, _index.GetPlainText(hit.Note.Id), query))
+        ];
+    }
+
+    /// <summary>当前处于置顶的便签 id，交给 §12.2 的「置顶 +50」。</summary>
+    private HashSet<Guid> TopMostIds()
+    {
+        var ids = new HashSet<Guid>();
+
+        foreach (NoteLayout layout in _layoutService.All)
+        {
+            if (layout.IsTopMost)
+            {
+                ids.Add(layout.NoteId);
+            }
+        }
+
+        return ids;
+    }
 }
