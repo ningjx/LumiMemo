@@ -1,5 +1,6 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using CommunityToolkit.Mvvm.Messaging;
 using LumiMemo.App.Abstractions;
 using LumiMemo.App.Services;
 using LumiMemo.Core.Abstractions;
@@ -80,7 +81,8 @@ public sealed partial class SettingsViewModel : ObservableObject
         ISettingsApplier applier,
         IDialogService dialogs,
         IShellLauncher shell,
-        IDispatcher dispatcher)
+        IDispatcher dispatcher,
+        IMessenger messenger)
     {
         ArgumentNullException.ThrowIfNull(settingsStore);
         ArgumentNullException.ThrowIfNull(paths);
@@ -89,6 +91,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         ArgumentNullException.ThrowIfNull(dialogs);
         ArgumentNullException.ThrowIfNull(shell);
         ArgumentNullException.ThrowIfNull(dispatcher);
+        ArgumentNullException.ThrowIfNull(messenger);
 
         _settingsStore = settingsStore;
         _paths = paths;
@@ -97,7 +100,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         _shell = shell;
         _dispatcher = dispatcher;
 
-        Trash = new TrashViewModel(trashService, paths, dialogs, shell, dispatcher);
+        Trash = new TrashViewModel(trashService, paths, dialogs, shell, dispatcher, messenger);
     }
 
     /// <summary>窗口关闭请求。保存之后由窗口决定要不要自己关掉。</summary>

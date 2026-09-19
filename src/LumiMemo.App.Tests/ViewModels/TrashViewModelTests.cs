@@ -1,4 +1,6 @@
 using System.IO;
+using CommunityToolkit.Mvvm.Messaging;
+using LumiMemo.App.Messages;
 using LumiMemo.App.Tests.TestDoubles;
 using LumiMemo.App.ViewModels;
 using LumiMemo.Core.Models;
@@ -95,6 +97,43 @@ public sealed class TrashViewModelTests
 
         // RestoreAsync 内部会自己再刷新一次，不需要用例手动来一遍。
         Assert.Empty(h.Vm.Items);
+    }
+
+    [Fact]
+    public async Task 恢复_成功后会喊一声让管理器重读列表()
+    {
+        // 管理器的列表是 Refresh() 从 NoteStore 拷出来的快照，而 NoteStore 不是可观察的：
+        // 恢复回来的这一条对管理器而言是凭空多出来的，没有任何东西会自动通知它。
+        // 少了这一声，用户恢复完得自己点刷新才看得见（§18.2）。
+        using Harness h = CreateHarness();
+        h.Store.Add("周报.md");
+        await h.Vm.RefreshAsync(Ct);
+
+        var counter = new MessageCounter<NotesChangedMessage>();
+        h.Messenger.Register<NotesChangedMessage>(counter, static (recipient, _) =>
+            ((MessageCounter<NotesChangedMessage>)recipient).CountOne());
+
+        await h.Vm.RestoreAsync(h.Vm.Items[0], Ct);
+
+        Assert.Equal(1, counter.Count);
+    }
+
+    [Fact]
+    public async Task 恢复_取消或什么都不做时不会喊()
+    {
+        // 喊一声是有代价的：管理器那头会整表重扫一遍。没恢复成功还喊，
+        // 用户会在别处看到列表无端抖一下。
+        using Harness h = CreateHarness();
+        h.Store.Add("周报.md");
+        await h.Vm.RefreshAsync(Ct);
+
+        var counter = new MessageCounter<NotesChangedMessage>();
+        h.Messenger.Register<NotesChangedMessage>(counter, static (recipient, _) =>
+            ((MessageCounter<NotesChangedMessage>)recipient).CountOne());
+
+        await h.Vm.RestoreAsync(null, Ct);
+
+        Assert.Equal(0, counter.Count);
     }
 
     [Fact]
@@ -303,6 +342,20 @@ public sealed class TrashViewModelTests
     private static Harness CreateHarness(bool withNotesFolder = true) =>
         new(withNotesFolder ? NewTempFolder() : null);
 
+    /// <summary>
+    /// 数一数收了几条 <typeparamref name="TMessage"/>。
+    /// </summary>
+    /// <remarks>
+    /// 直接把它当接收者注册进 <c>WeakReferenceMessenger</c>：被测代码只关心
+    /// 「喊没喊、喊了几声」，而载荷是空的。
+    /// </remarks>
+    private sealed class MessageCounter<TMessage>
+    {
+        public int Count { get; private set; }
+
+        public void CountOne() => Count++;
+    }
+
     private static string NewTempFolder()
     {
         string path = Path.Combine(
@@ -323,8 +376,11 @@ public sealed class TrashViewModelTests
             var service = new TrashService(
                 Store, paths, new NoteStore(), new SearchIndex(), new FakeNoteRepository());
 
-            Vm = new TrashViewModel(service, paths, Dialogs, Shell, new ImmediateDispatcher());
+            Vm = new TrashViewModel(service, paths, Dialogs, Shell, new ImmediateDispatcher(), Messenger);
         }
+
+        /// <summary>本套装配自己的一只消息总线（理由同 <c>ManagerHarness.Messenger</c>）。</summary>
+        public IMessenger Messenger { get; } = new WeakReferenceMessenger();
 
         /// <summary>本用例的笔记目录；<see langword="null"/> 表示尚未选定。</summary>
         public string? NotesFolder { get; }

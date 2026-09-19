@@ -35,6 +35,14 @@ public sealed class ManagerHarness : IDisposable
         NoteService = new FakeNoteService();
         Windows = new RecordingWindowManager();
 
+        // 真实现里这两步在 TrashService.MoveNoteToTrashAsync 里，替身不碰 Store。
+        // 「删完之后列表里少一条」这条断言需要它真的发生，所以在装配处补上。
+        NoteService.DeleteEffect = id =>
+        {
+            Store.Remove(id);
+            Index.OnNoteRemoved(id);
+        };
+
         Vm = new ManagerViewModel(
             Store,
             Index,
@@ -46,13 +54,24 @@ public sealed class ManagerHarness : IDisposable
                 new ImmediateDispatcher(),
                 new RecordingDialogService(),
                 Windows,
-                new WeakReferenceMessenger()),
+                Messenger),
             Windows,
             Presenter,
             new ImmediateDispatcher(),
             Clock,
-            SearchTimers);
+            SearchTimers,
+            Messenger);
     }
+
+    /// <summary>
+    /// 本套装配<strong>自己的一只</strong>消息总线，不是 <c>WeakReferenceMessenger.Default</c>。
+    /// </summary>
+    /// <remarks>
+    /// 用全局那一只的话，同一进程里并跑的用例会互相收对方的
+    /// <c>NotesChangedMessage</c>——表现是某条用例的列表被另一条用例的恢复操作刷了一遍，
+    /// 而两条用例单独跑都绿。这类串台极难定位，隔离的代价只是一个字段。
+    /// </remarks>
+    public IMessenger Messenger { get; } = new WeakReferenceMessenger();
 
     public NoteStore Store { get; } = new();
 

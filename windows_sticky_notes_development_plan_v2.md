@@ -3867,9 +3867,24 @@ Keyboard.Focus(_editor);
 
 **副标题的"修改时间"用绝对时刻（`9/18 11:19`）而不是上面示意图里的「2 天前」。** 这是上一轮已定的裁决（相对时间要跟着"现在"变，列表刷新的时机就成了一件要额外定义的事），此处与示意图不一致，以裁决为准。字号那一截取的是 `Note.Content.Length`，**含 Markdown 标记**——用户看到的数与文件里的字节数一致。
 
-**本轮明确没做的**：过滤条（全部/置顶/有标签/最近 7 天）、结果项的颜色点与标签徽章、右键菜单、`[ + 新建 ]`、虚拟化的显式确认。**另外这一节里没有"排序字段"这一项**——上面表格里的「排序」是一条规定（按 §12.2 评分；无查询词按 `UpdatedAt` 降序），不是让用户选的字段，所以没有排序下拉框。
+**本轮明确没做的**：过滤条（全部/置顶/有标签/最近 7 天）、结果项的颜色点与标签徽章、`[ + 新建 ]`、虚拟化的显式确认。**另外这一节里没有"排序字段"这一项**——上面表格里的「排序」是一条规定（按 §12.2 评分；无查询词按 `UpdatedAt` 降序），不是让用户选的字段，所以没有排序下拉框。
 
 **工具条末尾有一个齿轮按钮**（打开设置窗口，§15.9 的补充）。它用齿轮而不是"设置"两个字，是因为它跟左边三个不属一类：那三个是"对便签做事"，它是"对程序做事"。这一段点击处理**放在代码后置而不是 ViewModel 命令里**——它不含任何状态判断（"已开着就唤到前面"这条规则在 `SettingsWindowLauncher` 里），跟列表项双击是同一档。真有一个"什么时候不该开"的条件时再挪进 ViewModel。
+
+**右键菜单已经接上，但眼下只有「移入回收站」一项。** 上面结果项规格里那一行列了五项（置顶 / 颜色 / 标签 / 在资源管理器中显示 / 移入回收站），另外四项都还没实现——先把点不动的死项放上来，比只有一项更糟。菜单挂在 `ListBox` 上而不是每一行上：每行一个的话，虚拟化列表滚一遍就造出一堆一模一样的实例。代价是 `ContextMenu` 是独立的 `Popup`、不在 `ListBox` 的视觉树里，靠继承拿不到 ViewModel，`DataContext` 得显式绑到 `PlacementTarget`。（试过改挂到 `ItemContainerStyle` 上，为的是免掉下面那一拦——行不通：`ItemContainerStyle` 里一个不带 `BasedOn` 的隐式 `Style` 会把 `ListBoxItem` 的默认样式整个替换掉，连 `Template` 一起，列表项当场就不正常了。真要挂得补 `BasedOn="{StaticResource {x:Type ListBoxItem}}"`。）
+
+**右键必须先把落在的那一行选中**（`ManagerWindow.OnListContextMenuOpening`）。WPF 的 `ListBox` **不会**因为右键而改变选中项，而菜单项作用在 `SelectedNote` 上——少了这一步，用户在一个没选中的行上点「移入回收站」，删掉的是他上一次选的那张，而且列表一刷新他连"刚才删的是谁"都无从对照。右键落在空白处或滚动条上时菜单整个不弹（`ContainerFromElement` 给不出容器），同理：那一个「移入回收站」会对着一个与鼠标位置无关的选中行执行。
+
+**双击开便签必须同时判「左键」与「落在某一行上」**（`ManagerWindow.OnListMouseDoubleClick`）。两条都不是多余的：
+
+- **判左右键**：`Control.MouseDoubleClick` 挂在 `Mouse.MouseDown` 上、只看 `ClickCount == 2`，**左右键都会触发**。少了这一条，用户在列表上右键连点两下（想调出菜单，或者只是手快）就会凭空开出一张便签窗口，连带管理器失焦——症状看着像"右键点一下窗口就没反应了"，很难联想到是双击。
+- **判落在哪一行**：这里早先只有「`SelectedNote` 非空」一个条件，理由是"双击空白处时它天然是 `null`"——**这个前提是错的**。`ListBox` 点空白处**不会**清空 `SelectedItem`，于是左键双击空白处照样会打开上一次选中的那张。判据改用 `ContainerFromElement`：空白处给不出容器，判断才有意义。
+
+**删除的三步顺序不能动**（`ManagerViewModel.DeleteNoteAsync`）：**补一次落盘 → 关窗 → 才搬文件**。便签窗口关闭时自己会存一次（§17.3），但那一次**靠不住**：`NoteWindow.OnClosing` 的做法是「取消这次关闭、把保存排进消息队列、再关一次」，于是 `CloseNote` 返回时那次保存还排在队列里没跑。此时若已经把文件搬进回收站，等它跑起来便签已不在 `NoteStore` 里，`SaveNoteAsync` 会静默返回（那是它刻意为之的行为，见 §11.3）——**用户最后半秒敲的字既没进文件也没进回收站，而他恢复出来的是一份旧内容**，界面上看不出任何异常。所以调用方在搬文件之前主动补一次保存：那一刻便签还在 `NoteStore` 里，写得进去。窗口没开着时不必补——编辑只可能来自一个开着的窗口，而它在关掉的时候已经存过了。
+
+**不弹确认对话框。** 进回收站是可逆的（§7.2 起能恢复），与「清空回收站」（§7.4，那才是 `IDialogService.ConfirmAsync` 的用武之地）不是一回事。
+
+**一处已知的粗糙，记在这里免得将来被当成 bug 查**：删一张**开着**的便签会走 `CloseNote`，于是 `OnNoteWindowClosed` 把 `layout.IsOpen` 置成 `false`——那个回写的语义是「用户关掉了这张便签」（§17.3），而用户其实是删了它。layout 条目本身按 §8.3 保留，位置、折叠、置顶因此都还在，只是从回收站恢复回来时它不会自己弹出来。本轮按"不弹"处理：用户刚恢复一张便签，先看到它在列表里，比它自己蹦到桌面上更合情理。
 
 **一处反直觉的结论，将来改 `SearchIndex.ToPlainText` 前先看这里**：标题那一行<strong>本身就在纯文本里</strong>（`GetPlainText` 拿的是整篇正文），所以「命中标题」必然同时是一次正文命中，摘要总是摘得出来、不会退回日期。想让它退回日期，得先让纯文本不含标题行——而那会连带影响 §12.2 的"出现次数加分"（标题命中的那一次就没了）。
 
@@ -4515,6 +4530,17 @@ WeakReferenceMessenger.Default.Register<NoteDeletedMessage>(this, (r, m) =>
 | `NoteExternalChangedMessage` | FileWatcher | NoteViewModel |
 | `ThemeChangedMessage` | SettingsViewModel | 所有便签窗口 |
 | `SettingsChangedMessage` | SettingsViewModel | 各处 |
+
+**实现说明（现状）**：上表里「发送方」一栏写的 `NoteService`，三条**都做不到**——`NoteService` 在 `LumiMemo.Core`，而 Core 零第三方依赖（§4.1），它调不到 `WeakReferenceMessenger`。消息只能从 App 层发。于是本轮落地的是一条 App 层的 `NotesChangedMessage`（无载荷，`LumiMemo.App/Messages/`），语义是「便签集合变了，持有列表的界面重读一遍」：
+
+| 发送点 | 接收方 | 为什么需要 |
+|---|---|---|
+| `TrashViewModel.RestoreAsync` | `ManagerViewModel` | 管理器绑的 `Notes` 是 `Refresh()` 从 `NoteStore` 拷出来的**快照**，不是 `NoteStore` 本身。`INotifyCollectionChanged` 只负责「我改了这份快照，界面跟着变」，**不管**「别人改了 `NoteStore`，我要不要重算快照」——而 `NoteStore`/`SearchIndex` 都不是可观察的。少了这一声，用户从回收站恢复一张便签后管理器毫无察觉，得手动刷新才看得见 |
+
+两条**有意没做**：
+
+1. **`NoteUpdatedMessage` 不接**。照表做的话，用户在便签里每敲一个字都会让管理器把整张列表重排一遍——而管理器的列表只关心**有哪些便签**，不关心某一张的正文。
+2. **`ManagerViewModel` 自己的增删不发消息**。新建（`NewNoteAsync`）、删除（`DeleteNoteAsync`）、重扫（`ReloadAllAsync`）各自直接调 `Refresh()`：自己改的自己知道，绕消息一圈只是多一层间接。发消息是留给「别人改了、我无从知道」那一种情形的。
 
 **注意 `WeakReferenceMessenger` 的一个陷阱**：注册时用的是 `this`，如果 `this` 被别处长期持有（比如被 register 到 messenger 之外的容器），弱引用就不起作用了。**ViewModel 只应该被它的 View 通过 `DataContext` 持有**。
 

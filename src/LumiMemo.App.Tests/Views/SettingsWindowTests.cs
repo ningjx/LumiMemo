@@ -1,3 +1,4 @@
+using CommunityToolkit.Mvvm.Messaging;
 using LumiMemo.App.Services;
 using LumiMemo.App.Tests.TestDoubles;
 using LumiMemo.App.ViewModels;
@@ -80,6 +81,7 @@ public sealed class SettingsWindowTests
             new RecordingSettingsApplier(),
             new RecordingDialogService(),
             new RecordingShellLauncher(),
-            new ImmediateDispatcher());
+            new ImmediateDispatcher(),
+            new WeakReferenceMessenger());
     }
 }

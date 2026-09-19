@@ -134,6 +134,7 @@
              ItemsSource="{Binding Notes}"
              SelectedItem="{Binding SelectedNote, Mode=TwoWay}"
              MouseDoubleClick="OnListMouseDoubleClick"
+             ContextMenuService.ContextMenuOpening="OnListContextMenuOpening"
              HorizontalContentAlignment="Stretch"
              BorderThickness="0"
              Background="Transparent"
@@ -184,6 +185,30 @@
           </Grid>
         </DataTemplate>
       </ListBox.ItemTemplate>
+
+      <!--
+        右键菜单（§15.8 结果项规格里的那一行）。挂在整个 ListBox 上而不是每一行上：
+        每行一个的话，虚拟化列表滚一遍就造出一堆一模一样的 ContextMenu 实例。
+        DataContext 显式绑到 PlacementTarget —— ContextMenu 是独立的 Popup，
+        不在 ListBox 的视觉树里，靠继承拿不到 ViewModel。
+
+        试过改挂到 ItemContainerStyle 上（那样空白处的右键就不必再拦），行不通：
+        ItemContainerStyle 里一个不带 BasedOn 的隐式 Style 会把 ListBoxItem 的
+        默认样式整个替换掉，连 Template 一起——列表项当场就不正常了。
+        要挂也行，得补 BasedOn="{StaticResource {x:Type ListBoxItem}}"，
+        但那是为了绕开一个本来就不存在的问题：空白处的右键已经有
+        ContextMenuOpening 在拦（见 ManagerWindow.xaml.cs）。
+
+        文档那一行还列着置顶 / 颜色 / 标签 / 在资源管理器中显示，那四项都还没实现。
+        先把点不动的死项放上来，比现在只有一项更糟。
+      -->
+      <ListBox.ContextMenu>
+        <ContextMenu DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
+          <MenuItem Header="移入回收站"
+                    Command="{Binding DeleteNoteCommand}"
+                    CommandParameter="{Binding SelectedNote}" />
+        </ContextMenu>
+      </ListBox.ContextMenu>
     </ListBox>
 
     <!-- 空列表提示与计数。两者都在同一行，靠可见性切换 -->

@@ -2,7 +2,9 @@ using System.Collections.ObjectModel;
 using System.IO;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using CommunityToolkit.Mvvm.Messaging;
 using LumiMemo.App.Abstractions;
+using LumiMemo.App.Messages;
 using LumiMemo.Core.Abstractions;
 using LumiMemo.Core.Models;
 using LumiMemo.Core.Services;
@@ -33,25 +35,29 @@ public sealed partial class TrashViewModel : ObservableObject
     private readonly IDialogService _dialogs;
     private readonly IShellLauncher _shell;
     private readonly IDispatcher _dispatcher;
+    private readonly IMessenger _messenger;
 
     public TrashViewModel(
         TrashService trash,
         IAppPaths paths,
         IDialogService dialogs,
         IShellLauncher shell,
-        IDispatcher dispatcher)
+        IDispatcher dispatcher,
+        IMessenger messenger)
     {
         ArgumentNullException.ThrowIfNull(trash);
         ArgumentNullException.ThrowIfNull(paths);
         ArgumentNullException.ThrowIfNull(dialogs);
         ArgumentNullException.ThrowIfNull(shell);
         ArgumentNullException.ThrowIfNull(dispatcher);
+        ArgumentNullException.ThrowIfNull(messenger);
 
         _trash = trash;
         _paths = paths;
         _dialogs = dialogs;
         _shell = shell;
         _dispatcher = dispatcher;
+        _messenger = messenger;
     }
 
     /// <summary>回收站里的条目，按删除时刻倒序（存储层已经排好）。</summary>
@@ -149,6 +155,12 @@ public sealed partial class TrashViewModel : ObservableObject
 
         await _trash.RestoreAsync(item.Entry, target, ct);
         await RefreshAsync(ct);
+
+        // 恢复回来的这张便签，管理器那边从「便签集合」的角度看是凭空多出来的：
+        // 它绑的列表是上一轮 Refresh() 拷出来的快照，而 NoteStore 不是可观察的，
+        // 没有任何东西会通知它重扫。不喊这一声，用户就得自己点一下刷新才看得见
+        // ——那正是这条消息存在的唯一理由。
+        _messenger.Send(new NotesChangedMessage());
     }
 
     /// <summary>

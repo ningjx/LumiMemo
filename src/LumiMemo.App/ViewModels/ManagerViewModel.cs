@@ -1,7 +1,9 @@
 using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using CommunityToolkit.Mvvm.Messaging;
 using LumiMemo.App.Abstractions;
+using LumiMemo.App.Messages;
 using LumiMemo.App.Services;
 using LumiMemo.Core.Abstractions;
 using LumiMemo.Core.Models;
@@ -64,7 +66,8 @@ public sealed partial class ManagerViewModel : ObservableObject
         IManagerWindowPresenter managerWindow,
         IDispatcher dispatcher,
         IClock clock,
-        IUiTimerFactory timers)
+        IUiTimerFactory timers,
+        IMessenger messenger)
     {
         ArgumentNullException.ThrowIfNull(store);
         ArgumentNullException.ThrowIfNull(index);
@@ -76,6 +79,7 @@ public sealed partial class ManagerViewModel : ObservableObject
         ArgumentNullException.ThrowIfNull(dispatcher);
         ArgumentNullException.ThrowIfNull(clock);
         ArgumentNullException.ThrowIfNull(timers);
+        ArgumentNullException.ThrowIfNull(messenger);
 
         _store = store;
         _index = index;
@@ -87,6 +91,16 @@ public sealed partial class ManagerViewModel : ObservableObject
         _dispatcher = dispatcher;
         _clock = clock;
         _searchTimer = timers.Create();
+
+        // 自己改的（新建 / 删除 / 重扫）各方法直接调 Refresh()，不绕消息一圈。
+        // 只有「别人改了便签集合、我无从知道」的那一处才需要这条线：
+        // 回收站恢复（TrashViewModel.RestoreAsync）。见 NotesChangedMessage 的说明。
+        //
+        // 不做 Unregister：本类是 DI 单例，与进程同寿（App.xaml.cs 的注册处写着这一条），
+        // 没有「先于消息源消失」的时刻。将来若改成非单例，这一条要跟着改。
+        messenger.Register<NotesChangedMessage>(
+            this,
+            static (recipient, _) => ((ManagerViewModel)recipient).Refresh());
     }
 
     /// <summary>窗口标题。</summary>
@@ -217,6 +231,53 @@ public sealed partial class ManagerViewModel : ObservableObject
         }
 
         ShowNote(request.Value.Note, request.Value.Layout);
+    }
+
+    /// <summary>
+    /// 把一张便签移入回收站（§7.1）。列表项的右键菜单走这里。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>三步的先后是有讲究的</strong>：补一次落盘 → 关窗 → 才搬文件。
+    /// 关窗自己也会存一次（§17.3），但那一次<strong>靠不住</strong>：
+    /// <c>NoteWindow.OnClosing</c> 的做法是「取消这次关闭、把保存排进消息队列、再关一次」，
+    /// 于是 <c>CloseNote</c> 返回时那次保存还排在队列里没跑。此时若已经把文件搬进回收站，
+    /// 等它跑起来便签已不在 <c>NoteStore</c> 里，<c>SaveNoteAsync</c> 会静默返回
+    /// （那是它刻意为之的行为）——用户最后半秒敲的字既没进文件也没进回收站，
+    /// 而他从回收站恢复出来的是一份旧内容。所以这里主动补一次保存：
+    /// <strong>此刻便签还在 Store 里，写得进去</strong>。
+    /// </para>
+    /// <para>
+    /// 窗口没开着时不必补。那种情况下内存里的内容与磁盘上的一致——
+    /// 编辑只可能来自一个开着的窗口，而它在关掉时已经存过了。
+    /// </para>
+    /// <para>
+    /// <strong>不弹确认对话框</strong>：进回收站可逆（§7.2 起能恢复），
+    /// 与「清空回收站」（§7.4，<c>ConfirmAsync</c> 的用武之地）不是一回事。
+    /// </para>
+    /// </remarks>
+    [RelayCommand]
+    public async Task DeleteNoteAsync(NoteListItem? item)
+    {
+        if (item is null || !_store.Contains(item.Id))
+        {
+            // 列表是上一轮的快照，这一条已经不在了（多半是别处刚删过）。
+            // 静默返回即可——用户再刷新一次列表就对了，与 OpenNote 的处理一致。
+            return;
+        }
+
+        if (_windowManager.IsNoteOpen(item.Id))
+        {
+            await _noteService.SaveNoteAsync(item.Id);
+
+            _windowManager.CloseNote(item.Id);
+        }
+
+        await _noteService.DeleteNoteAsync(item.Id);
+
+        // 重扫列表而不是把那一行摘掉：计数、空列表提示、溢出提示全挂在 Refresh 里，
+        // 只摘一行的话那三处都要各自维护一遍。
+        Refresh();
     }
 
     /// <summary>

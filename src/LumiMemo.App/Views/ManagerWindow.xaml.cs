@@ -1,4 +1,5 @@
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Input;
 using LumiMemo.App.Services;
 using LumiMemo.App.ViewModels;
@@ -30,20 +31,69 @@ public partial class ManagerWindow : Window
     }
 
     /// <summary>
-    /// 双击列表开一张便签。
+    /// 双击某一行开一张便签。
     /// </summary>
     /// <remarks>
-    /// 走 <see cref="ManagerViewModel.SelectedNote"/> 而不是从事件源里挖 DataContext：
-    /// 双击落在列表的空白处时不该做事，而那时 <c>SelectedNote</c> 是 <c>null</c>，
-    /// 于是这个判断天然成立。从 <c>e.OriginalSource</c> 反查则要为
-    /// 「点在 ScrollViewer 上」「点在 Border 上」各写一条分支。
+    /// <para>
+    /// <strong>「左键」与「落在某一行上」两个条件缺一不可</strong>，少了哪个都会出事：
+    /// </para>
+    /// <para>
+    /// <strong>① 判左右键。</strong> <c>Control.MouseDoubleClick</c> 挂在
+    /// <c>Mouse.MouseDown</c> 上、只看 <c>ClickCount == 2</c>，<strong>左右键都会触发</strong>。
+    /// 少了这一条，用户在列表上右键连点两下（想调出菜单、或者只是手快）就会把
+    /// 上一轮选中的那张便签打开——表现出来是「右键一下，凭空冒出一张便签窗口，
+    /// 管理器还失了焦」。
+    /// </para>
+    /// <para>
+    /// <strong>② 判落在哪一行。</strong> 早先这里只有 <c>SelectedNote</c> 非空这一个条件，
+    /// 理由是「双击空白处时它天然是 <c>null</c>」——<strong>这个前提是错的</strong>：
+    /// <c>ListBox</c> 点空白处<strong>不会</strong>清空 <c>SelectedItem</c>，
+    /// 于是左键双击空白处照样会把上一次选中的那张打开。
+    /// 用 <c>ContainerFromElement</c> 反查命中的容器，空白处给不出容器，判断才有意义。
+    /// </para>
     /// </remarks>
     private void OnListMouseDoubleClick(object sender, MouseButtonEventArgs e)
     {
+        if (e.ChangedButton != MouseButton.Left
+            || e.OriginalSource is not DependencyObject source
+            || NoteList.ContainerFromElement(source) is not ListBoxItem)
+        {
+            return;
+        }
+
         if (_viewModel.SelectedNote is { } item)
         {
             _viewModel.OpenNoteCommand.Execute(item);
         }
+    }
+
+    /// <summary>
+    /// 右键落在哪一行就先选中哪一行；落在空白处则整个菜单不弹。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 菜单项作用在 <see cref="ManagerViewModel.SelectedNote"/> 上，而 WPF 的
+    /// <c>ListBox</c> <strong>不会</strong>因为右键而改变选中项。少了这一步，
+    /// 用户在一个没选中的行上右键点「移入回收站」，删掉的是他上一次选的那张——
+    /// 而且删完列表一刷新，他连「刚才删的是谁」都无从对照。
+    /// </para>
+    /// <para>
+    /// 落在空白处（或滚动条上）时 <c>ContainerFromElement</c> 给不出容器，
+    /// 这时同样不能放行菜单：那一个「移入回收站」会对着一个与鼠标位置无关的选中行执行。
+    /// 憋回去比给一个会误伤的菜单好。
+    /// </para>
+    /// </remarks>
+    private void OnListContextMenuOpening(object sender, ContextMenuEventArgs e)
+    {
+        if (e.OriginalSource is DependencyObject source
+            && NoteList.ContainerFromElement(source) is ListBoxItem item)
+        {
+            item.IsSelected = true;
+
+            return;
+        }
+
+        e.Handled = true;
     }
 
     /// <summary>

@@ -1,3 +1,4 @@
+using CommunityToolkit.Mvvm.Messaging;
 using LumiMemo.App.Tests.TestDoubles;
 using LumiMemo.App.ViewModels;
 using LumiMemo.Core.Models;
@@ -311,7 +312,8 @@ public sealed class SettingsViewModelTests
                 Trash, paths, new NoteStore(), new SearchIndex(), new FakeNoteRepository());
 
             Vm = new SettingsViewModel(
-                Store, paths, trash, Applier, Dialogs, Shell, new ImmediateDispatcher());
+                Store, paths, trash, Applier, Dialogs, Shell, new ImmediateDispatcher(),
+                new WeakReferenceMessenger());
         }
 
         public FakeSettingsStore Store { get; } = new();

@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.IO;
 using System.Windows.Controls;
+using CommunityToolkit.Mvvm.Messaging;
 using LumiMemo.App.Services;
 using LumiMemo.App.Tests.TestDoubles;
 using LumiMemo.App.Tests.Views;
@@ -327,7 +328,8 @@ public sealed class TrayViewModelTests
             new RecordingSettingsApplier(),
             new RecordingDialogService(),
             new RecordingShellLauncher(),
-            new ImmediateDispatcher()));
+            new ImmediateDispatcher(),
+            new WeakReferenceMessenger()));
     }
 
     /// <summary>加一张便签，并让它出现在 <c>OpenAll</c> 的结果里。</summary>

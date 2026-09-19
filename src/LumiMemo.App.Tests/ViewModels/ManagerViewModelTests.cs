@@ -1,3 +1,5 @@
+using CommunityToolkit.Mvvm.Messaging;
+using LumiMemo.App.Messages;
 using LumiMemo.App.Tests.TestDoubles;
 using LumiMemo.App.ViewModels;
 using LumiMemo.Core.Abstractions;
@@ -392,5 +394,101 @@ public sealed class ManagerViewModelTests
 
         Assert.Equal(0, h.Presenter.BringToFrontCount);
         Assert.Contains($"ShowNote({note.Id})", h.Windows.Calls);
+    }
+
+    // ================= 删除（列表项右键菜单） =================
+
+    [Fact]
+    public async Task 删除没开窗的便签会移入回收站并刷新列表()
+    {
+        using var h = new ManagerHarness();
+        var note = ManagerHarness.NewNote("# 笔记");
+
+        h.Add(note);
+        h.Vm.Refresh();
+
+        await h.Vm.DeleteNoteAsync(h.Vm.Notes[0]);
+
+        Assert.Equal(new[] { note.Id }, h.NoteService.DeletedNoteIds);
+
+        // 窗口没开着就不必补落盘：编辑只可能来自一个开着的窗口，
+        // 而它在关掉的时候已经存过了。窗口层同样不该被打扰。
+        Assert.Empty(h.NoteService.SavedNoteIds);
+        Assert.Empty(h.Windows.Calls);
+
+        // 计数与空列表提示都挂在 Refresh 上，所以删除必须走它而不是只摘一行。
+        Assert.Empty(h.Vm.Notes);
+        Assert.Equal("0 条便签", h.Vm.CountText);
+    }
+
+    [Fact]
+    public async Task 删除开着的便签会赶在搬文件之前补一次落盘()
+    {
+        // 便签窗口关闭时自己会存一次（§17.3），但那一次排在消息队列里，
+        // 而 CloseNote 返回时它还没跑。若这时就把文件搬进回收站，等它跑起来
+        // 便签已经不在 NoteStore 里，SaveNoteAsync 会静默返回（那是它刻意为之的行为）
+        // ——用户最后半秒敲的字既没进文件也没进回收站。
+        using var h = new ManagerHarness();
+        var note = ManagerHarness.NewNote("# 笔记");
+
+        h.Add(note);
+        h.Vm.Refresh();
+        h.NoteService.OpenNoteHandler = id =>
+            id == note.Id ? new NoteOpenRequest(note, new NoteLayout { NoteId = note.Id }) : null;
+        h.Vm.OpenNote(h.Vm.Notes[0]);
+
+        await h.Vm.DeleteNoteAsync(h.Vm.Notes[0]);
+
+        // 搬走的那一刻，这张便签已经落过盘了。
+        Assert.Equal(new[] { true }, h.NoteService.SavedBeforeDelete);
+
+        // 窗口也要关掉。留着的话用户会对着一张已经删掉的便签继续打字，
+        // 而那些字哪儿都去不了——他会以为自己删失败了。
+        Assert.Contains($"CloseNote({note.Id})", h.Windows.Calls);
+        Assert.Equal(new[] { note.Id }, h.NoteService.DeletedNoteIds);
+    }
+
+    [Fact]
+    public async Task 删除一条列表里已经没有的便签时什么都不做()
+    {
+        // 列表是上一轮的快照，文件被别处删掉之后右键它就会走到这里。
+        using var h = new ManagerHarness();
+        var note = ManagerHarness.NewNote("# 笔记");
+
+        h.Add(note);
+        h.Vm.Refresh();
+
+        var stale = h.Vm.Notes[0];
+
+        h.Store.Remove(note.Id);
+
+        await h.Vm.DeleteNoteAsync(stale);
+
+        Assert.Empty(h.NoteService.DeletedNoteIds);
+    }
+
+    // ================= 别处改了便签集合 =================
+
+    [Fact]
+    public void 收到便签集合变更的消息会重扫列表()
+    {
+        // 回收站恢复走的就是这一条：管理器绑的列表是上一轮 Refresh() 拷出来的快照，
+        // 而 NoteStore 不是可观察的——它自己无从知道别处多了一张便签。
+        // 少了这条消息，用户恢复完得手动刷新才看得见（§18.2）。
+        using var h = new ManagerHarness();
+
+        h.Vm.Refresh();
+        Assert.Empty(h.Vm.Notes);
+
+        // 「别处」往 Store 里塞了一条，管理器毫无察觉。
+        h.Add(ManagerHarness.NewNote("# 恢复回来的"));
+
+        Assert.Empty(h.Vm.Notes);
+
+        h.Messenger.Send(new NotesChangedMessage());
+
+        // 计数与提示都跟着一起算了，不是只把那一行插进去。
+        Assert.Single(h.Vm.Notes);
+        Assert.Equal("1 条便签", h.Vm.CountText);
     }
 }
