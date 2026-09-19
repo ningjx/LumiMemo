@@ -262,6 +262,66 @@ public sealed class FileLoggerProviderTests
         }
     }
 
+    [Theory]
+    [InlineData("Warning", LogLevel.Warning)]
+    [InlineData("warning", LogLevel.Warning)]
+    [InlineData("  Debug  ", LogLevel.Debug)]
+    [InlineData("None", LogLevel.None)]
+    public void 认得出来的级别文本被解析(string text, LogLevel expected)
+    {
+        bool recognized = FileLoggerProvider.TryParseMinimumLevel(text, out LogLevel level);
+
+        Assert.True(recognized);
+        Assert.Equal(expected, level);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("瞎写的")]
+    [InlineData("99")]
+    public void 认不出来的级别文本退回信息级(string? text)
+    {
+        bool recognized = FileLoggerProvider.TryParseMinimumLevel(text, out LogLevel level);
+
+        Assert.False(recognized);
+        Assert.Equal(LogLevel.Information, level);
+    }
+
+    [Fact]
+    public void 级别在运行期改了之后立刻按新级别过滤()
+    {
+        using var temp = new TempDirectory();
+
+        // 间隔十分钟：读得到什么全由过滤决定，与定时器无关。
+        var provider = Create(temp.Path, Never);
+
+        ILogger logger = provider.CreateLogger("LumiMemo.Test");
+
+        logger.LogInformation("抬高之前的信息");
+        logger.LogWarning("抬高之前的警告");
+
+        provider.MinimumLevel = LogLevel.Warning;
+
+        logger.LogInformation("抬高之后的信息");
+        logger.LogWarning("抬高之后的警告");
+
+        provider.MinimumLevel = LogLevel.Debug;
+
+        logger.LogDebug("调低之后的调试");
+
+        provider.Dispose();
+
+        string log = ReadAll(temp.Path);
+
+        Assert.Contains("抬高之前的信息", log);
+        Assert.Contains("抬高之前的警告", log);
+        Assert.DoesNotContain("抬高之后的信息", log);
+        Assert.Contains("抬高之后的警告", log);
+        Assert.Contains("调低之后的调试", log);
+    }
+
     private static FileLoggerProvider Create(
         string logDirectory,
         TimeSpan flushInterval) =>

@@ -66,8 +66,11 @@ public sealed class FileLoggerProvider : ILoggerProvider
 
     private readonly string _logDirectory;
     private readonly IClock _clock;
-    private readonly LogLevel _minimumLevel;
     private readonly TimeSpan _flushInterval;
+
+    /// <summary>见 <see cref="MinimumLevel"/>。读它在任意线程、写它在 UI 线程，所以是 volatile。</summary>
+    private volatile LogLevel _minimumLevel;
+
     private readonly long _maxFileBytes;
     private readonly int _maxFiles;
     private readonly Channel<string> _channel;
@@ -113,6 +116,48 @@ public sealed class FileLoggerProvider : ILoggerProvider
         // 刻意走 Task.Run：这样消费循环里任何一个 await 的续体都落在池线程上，
         // 不会去捕捕获到 UI 线程的同步上下文（§20.4 要求日志写入在后台线程）。
         _consumer = Task.Run(ConsumeAsync);
+    }
+
+    /// <summary>低于它的级别直接丢掉。</summary>
+    /// <remarks>
+    /// <strong>可以在运行期改</strong>：<c>settings.json</c> 里的 <c>logLevel</c> 由
+    /// <c>StartupSequence.Apply</c> 推过来，而 Apply 在启动时与设置窗口保存后各走一次——
+    /// 于是「改了立刻生效」这条对日志级别同样成立，不必为它另开一条路。
+    /// </remarks>
+    public LogLevel MinimumLevel
+    {
+        get => _minimumLevel;
+        set => _minimumLevel = value;
+    }
+
+    /// <summary>
+    /// 解析 <c>settings.json</c> 里 <c>logLevel</c> 的文本；认不出来时返回
+    /// <see langword="false"/>，并把 <paramref name="level"/> 置为 <see cref="LogLevel.Information"/>。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>认不出来不抛异常</strong>：这个值可能被用户手改过。§8.4 已经定下这类字段用字符串 +
+    /// 读取时校验回退，而不是用枚举——枚举会让一个不认识的字符串把整份设置拖成解析失败，
+    /// 那等于「所有设置都丢了」。所以错的值只该让级别退回默认，由调用方记一条警告。
+    /// </para>
+    /// <para>
+    /// <see cref="Enum.IsDefined{T}(T)"/> 挡的是 <c>"99"</c> 这种数字文本：<c>Enum.TryParse</c> 认它，
+    /// 得到的却是个未定义的值——那会让每一条日志的级别都小于它，日志整个变哑。
+    /// </para>
+    /// </remarks>
+    /// <returns>文本认得出来时为 <see langword="true"/>。</returns>
+    public static bool TryParseMinimumLevel(string? text, out LogLevel level)
+    {
+        if (!string.IsNullOrWhiteSpace(text)
+            && Enum.TryParse(text.Trim(), ignoreCase: true, out level)
+            && Enum.IsDefined(level))
+        {
+            return true;
+        }
+
+        level = LogLevel.Information;
+
+        return false;
     }
 
     /// <inheritdoc />

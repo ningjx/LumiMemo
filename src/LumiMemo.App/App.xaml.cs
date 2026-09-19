@@ -214,11 +214,15 @@ public partial class App : Application
         // 而不是在这里直接 AddProvider(实例)：这样释放它的就是容器，而容器的释放在
         // ShutdownAndWait 之后——退出前那几条日志因此还能被写下去。
         //
+        // 具体类型与接口两个注册指向同一个实例：StartupSequence 要把 settings.json 里的
+        // logLevel 推给它（那是具体类型上的属性，不属于 ILoggerProvider）。
+        //
         // 不挂控制台/调试输出：用户双击 exe 时那两处都看不见，等于没写。
+        services.AddSingleton(sp => new FileLoggerProvider(
+            paths.LogDirectory,
+            sp.GetRequiredService<IClock>()));
         services.AddLogging(builder => builder.Services.AddSingleton<ILoggerProvider>(
-            sp => new FileLoggerProvider(
-                paths.LogDirectory,
-                sp.GetRequiredService<IClock>())));
+            sp => sp.GetRequiredService<FileLoggerProvider>()));
 
         // ---- 环境 ----
         services.AddSingleton<IClock, SystemClock>();

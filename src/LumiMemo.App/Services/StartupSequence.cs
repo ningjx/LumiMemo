@@ -6,6 +6,7 @@ using LumiMemo.Core.Abstractions;
 using LumiMemo.Core.Models;
 using LumiMemo.Core.Services;
 using LumiMemo.Infrastructure.Io;
+using LumiMemo.Infrastructure.Logging;
 using LumiMemo.Infrastructure.Settings;
 using LumiMemo.Infrastructure.Storage;
 using Microsoft.Extensions.Logging;
@@ -38,6 +39,7 @@ public sealed class StartupSequence : ISettingsApplier
 {
     private readonly AppPaths _paths;
     private readonly ISettingsStore _settingsStore;
+    private readonly FileLoggerProvider _fileLogger;
     private readonly JsonLayoutStore _layoutStore;
     private readonly LayoutService _layoutService;
     private readonly MarkdownNoteRepository _repository;
@@ -55,6 +57,7 @@ public sealed class StartupSequence : ISettingsApplier
     public StartupSequence(
         AppPaths paths,
         ISettingsStore settingsStore,
+        FileLoggerProvider fileLogger,
         JsonLayoutStore layoutStore,
         LayoutService layoutService,
         MarkdownNoteRepository repository,
@@ -71,6 +74,7 @@ public sealed class StartupSequence : ISettingsApplier
     {
         ArgumentNullException.ThrowIfNull(paths);
         ArgumentNullException.ThrowIfNull(settingsStore);
+        ArgumentNullException.ThrowIfNull(fileLogger);
         ArgumentNullException.ThrowIfNull(layoutStore);
         ArgumentNullException.ThrowIfNull(layoutService);
         ArgumentNullException.ThrowIfNull(repository);
@@ -87,6 +91,7 @@ public sealed class StartupSequence : ISettingsApplier
 
         _paths = paths;
         _settingsStore = settingsStore;
+        _fileLogger = fileLogger;
         _layoutStore = layoutStore;
         _layoutService = layoutService;
         _repository = repository;
@@ -311,6 +316,9 @@ public sealed class StartupSequence : ISettingsApplier
     {
         ArgumentNullException.ThrowIfNull(settings);
 
+        // 第一件事就是它：级别定下来之后，这一轮里后面几步的日志才按新级别记。
+        ApplyLogLevel(settings.LogLevel);
+
         _paths.SetAttachmentsFolderName(settings.AttachmentsFolderName);
 
         _layoutStore.DefaultWidth = settings.DefaultWidth;
@@ -331,6 +339,36 @@ public sealed class StartupSequence : ISettingsApplier
         _tray.SingleClickAction = settings.SingleClickTrayAction;
         _trayService.MinimizeToTrayOnClose = settings.MinimizeToTrayOnClose;
         _trayService.ShowTrayIcon = settings.ShowTrayIcon;
+    }
+
+    /// <summary>
+    /// 把 <c>settings.json</c> 里的日志级别推给日志 provider（§20.5）。
+    /// </summary>
+    /// <remarks>
+    /// 认不出来的文本退回 <see cref="LogLevel.Information"/> 并记一条警告：用户手改
+    /// <c>settings.json</c> 打错字时，得能从日志里看出「你写的那个级别没被认出来」，
+    /// 而不是默默按默认级别记流水。那条警告一定写得下去——退回去的级别就是 Information，
+    /// 而 Warning 比它高。
+    /// </remarks>
+    private void ApplyLogLevel(string? text)
+    {
+        bool recognized = FileLoggerProvider.TryParseMinimumLevel(text, out LogLevel level);
+
+        _fileLogger.MinimumLevel = level;
+
+        if (recognized)
+        {
+            _logger.LogInformation(
+                "日志级别：{Level}（来自 settings.json 的 logLevel）。",
+                level);
+
+            return;
+        }
+
+        _logger.LogWarning(
+            "settings.json 里的 logLevel 是 {Text}，认不出来，日志级别退回 {Fallback}。",
+            string.IsNullOrWhiteSpace(text) ? "（空）" : text,
+            level);
     }
 
     /// <summary><c>我的文档\LumiMemo</c>。用户取消选择目录时的退路。</summary>
