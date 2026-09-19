@@ -38,6 +38,16 @@ public partial class SettingsWindow : Window
         Loaded += OnLoaded;
     }
 
+    /// <summary>
+    /// 把窗口切到指定页签。
+    /// </summary>
+    /// <remarks>
+    /// 托盘菜单的「回收站（N）...」要求落在回收站那一页上（§15.9）。窗口已经开着时
+    /// <c>SettingsWindowLauncher</c> 会走这里切页，而不是关掉重开——重开会让用户
+    /// 在另一页上刚填了一半的东西凭空消失。
+    /// </remarks>
+    public void SelectTab(SettingsTab tab) => Tabs.SelectedIndex = (int)tab;
+
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
         // 只读一次：Loaded 在窗口生命期内可能再被触发（比如换了父级或重新挂到视觉树上）。

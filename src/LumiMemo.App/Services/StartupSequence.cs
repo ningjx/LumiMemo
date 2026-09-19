@@ -48,6 +48,8 @@ public sealed class StartupSequence : ISettingsApplier
     private readonly IFolderPicker _folderPicker;
     private readonly ManagerViewModel _manager;
     private readonly ManagerWindow _managerWindow;
+    private readonly TrayViewModel _tray;
+    private readonly TrayService _trayService;
     private readonly ILogger<StartupSequence> _logger;
 
     public StartupSequence(
@@ -63,6 +65,8 @@ public sealed class StartupSequence : ISettingsApplier
         IFolderPicker folderPicker,
         ManagerViewModel manager,
         ManagerWindow managerWindow,
+        TrayViewModel tray,
+        TrayService trayService,
         ILogger<StartupSequence> logger)
     {
         ArgumentNullException.ThrowIfNull(paths);
@@ -77,6 +81,8 @@ public sealed class StartupSequence : ISettingsApplier
         ArgumentNullException.ThrowIfNull(folderPicker);
         ArgumentNullException.ThrowIfNull(manager);
         ArgumentNullException.ThrowIfNull(managerWindow);
+        ArgumentNullException.ThrowIfNull(tray);
+        ArgumentNullException.ThrowIfNull(trayService);
         ArgumentNullException.ThrowIfNull(logger);
 
         _paths = paths;
@@ -91,6 +97,8 @@ public sealed class StartupSequence : ISettingsApplier
         _folderPicker = folderPicker;
         _manager = manager;
         _managerWindow = managerWindow;
+        _tray = tray;
+        _trayService = trayService;
         _logger = logger;
     }
 
@@ -132,7 +140,16 @@ public sealed class StartupSequence : ISettingsApplier
 
         _manager.Refresh();
 
-        // 管理器是程序的落脚点：关掉它才退出进程（本轮的临时语义，托盘接上后改为收进托盘）。
+        // 托盘必须在管理器显示之前建起来：关闭策略是「有图标才收得进去」，
+        // 反过来的话，用户在启动那一瞬间关掉管理器就真的退出了。
+        _trayService.Start();
+
+        // 菜单里的「回收站（N）」要一个数字，而它是从索引文件数出来的。
+        // 放在这里而不是 Start 里：那时笔记目录刚扫完，回收站目录也才存在。
+        await _tray.RefreshTrashCountAsync();
+
+        // 管理器是程序的落脚点（§17.3）：便签窗口全部关光不退出，管理器还在；
+        // 关掉管理器则收进托盘，真正的退出走托盘菜单。
         _managerWindow.Show();
         _managerWindow.Activate();
     }
@@ -259,6 +276,10 @@ public sealed class StartupSequence : ISettingsApplier
         _autoSaveService.DelayMilliseconds = settings.AutoSaveDelayMs;
         _windowManager.RestoreAfterShowDesktop = settings.RestoreAfterShowDesktop;
         _manager.SearchDebounceMilliseconds = settings.SearchDebounceMs;
+
+        _tray.SingleClickAction = settings.SingleClickTrayAction;
+        _trayService.MinimizeToTrayOnClose = settings.MinimizeToTrayOnClose;
+        _trayService.ShowTrayIcon = settings.ShowTrayIcon;
     }
 
     /// <summary><c>我的文档\LumiMemo</c>。用户取消选择目录时的退路。</summary>

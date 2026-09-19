@@ -78,9 +78,38 @@ public sealed class FakeNoteService : INoteService
     /// <inheritdoc />
     public Task SaveAllAsync(CancellationToken ct = default) => Task.CompletedTask;
 
+    /// <summary>所有 <see cref="CreateNoteAsync"/> 收到的参数，按发生顺序。</summary>
+    public List<(NoteColor? Color, string? TargetFolder)> CreatedNotes { get; } = [];
+
+    /// <summary><see cref="CreateNoteAsync"/> 的返回值来源。缺省时现造一张。</summary>
+    /// <remarks>
+    /// 缺省给一张真便签而不是抛异常：新建便签是托盘菜单与管理器的常规动作，
+    /// 大多数用例关心的只是「建完之后窗口有没有按预期开出来」，
+    /// 让它们每个都先配一次 <c>CreateNoteHandler</c> 纯属噪音。
+    /// </remarks>
+    public Func<Note>? CreateNoteHandler { get; set; }
+
     /// <inheritdoc />
-    public Task<Note> CreateNoteAsync(NoteColor? color = null, string? targetFolder = null) =>
-        throw new NotSupportedException("本替身不覆盖新建便签，需要时再补。");
+    public Task<Note> CreateNoteAsync(NoteColor? color = null, string? targetFolder = null)
+    {
+        CreatedNotes.Add((color, targetFolder));
+
+        if (CreateNoteHandler is { } handler)
+        {
+            return Task.FromResult(handler());
+        }
+
+        var id = Guid.NewGuid();
+
+        return Task.FromResult(new Note
+        {
+            Id = id,
+            FilePath = $@"D:\notes\{id:N}.md",
+            Content = string.Empty,
+            CreatedAt = DateTimeOffset.UnixEpoch,
+            UpdatedAt = DateTimeOffset.UnixEpoch,
+        });
+    }
 
     /// <inheritdoc />
     public Task MoveNoteAsync(Guid noteId, string targetFolder) => Task.CompletedTask;

@@ -3901,6 +3901,25 @@ Keyboard.Focus(_editor);
 
 **退出前必须 flush**（§17.4）——如果还有未保存的便签，退出流程会被拦下来。
 
+**实现说明（本轮已落地）**：拆成 `TrayViewModel`（菜单点了做什么，可测）+ `TrayService`（`TaskbarIcon` 与图标管线，不可测），分界线是"要不要真实消息循环"。
+
+实际条目与上面那张图差两条：
+
+| 差异 | 理由 |
+|---|---|
+| **"速记"不出现** | 速记浮窗（§15.7）还没做。摆一个点不动的菜单项比不摆更糟——与 §15.8 里那三档视图切换按钮同一个理由 |
+| **Ctrl+N / Ctrl+Shift+N / Ctrl+Alt+N / Ctrl+L 这些加速键不标** | 全局热键整体推迟（§17.6）。菜单上标一个按不出效果的键名是同一类谎话 |
+
+其余三处实现决定：
+
+- **图标是画出来的，不是打包的 `.ico`**：`GeneratedIconSource`，黄底（§15.3 的标题栏色）+ 黑体 `L`。托盘只有 16×16，一个带底色的字母在深色与浅色任务栏上都认得出，而多一个二进制资源就多一份维护成本。**字体必须显式指定**——它的默认值是图标字体（Segoe Fluent Icons），写字母会得到豆腐块。
+- **菜单在代码里建，不走 XAML**：`TaskbarIcon` 不在任何窗口的可视树上，声明成 `App.xaml` 的资源就得靠资源查找去够到 DI 造出来的 ViewModel。命令是现成的对象，直接赋给 `MenuItem.Command` 就够了。
+- **"回收站（N）"在菜单弹出那一刻刷新**（挂 `TrayContextMenuOpen`），也在启动跑完之后刷一次。不在每次删除/恢复之后逐个通知：那要让回收站那边反向依赖托盘，而用户看不到菜单的时候那个数字没人看。数不出来（索引损坏、目录被拔）时**归零并咽掉异常**——菜单弹不出来比数字不准严重得多。
+
+关掉管理器窗口 → 收进托盘这条策略在 `TrayService` 里（订阅 `ManagerWindow.Closing`），详见 §17.3。
+
+§8.2 的三个托盘设置（`singleClickTrayAction` / `minimizeToTrayOnClose` / `showTrayIcon`）已接上，由 `StartupSequence.Apply` 灌入。其中 `showTrayIcon` 只在 `Start()` 之前改才有效——图标建起来之后再关掉它，用户就没有任何入口了；设置窗口本轮也没暴露这一项。
+
 ### 设置窗口（§15.9 的补充，本轮已落地）
 
 `SettingsWindow` + `SettingsViewModel`，"回收站"是它的两个页签之一。托盘菜单「设置...」与管理器工具条上的齿轮按钮是它的两个入口。
@@ -3914,6 +3933,7 @@ Keyboard.Focus(_editor);
 | 主题（亮/深） | §15.3 的七色配色表还没落地，深色套更是一行没有 |
 | 开机自启动 | 属 §17.2 的启动编排，与单实例同一批 |
 | 托盘相关（单击行为、关闭时最小化） | 属阶段 9 的 `TrayService` |
+| 显示托盘图标 | 设置项本身已接上（§15.9 补充），但它**只在 `Start()` 之前改才有效**——图标建起来之后再关掉，用户就没有任何入口了。要真正可切换得先做"改完重建图标"，本轮不做 |
 | 全局速记热键 | 速记浮窗本身推迟了，配了也没有消费方 |
 | 日志级别 | `AddLogging()` 至今没接 provider，改了看日志的地方还是空的 |
 | 最大窗口数 | 没有任何消费方 |
@@ -4189,6 +4209,19 @@ private static readonly MarkdownPipeline Pipeline = new MarkdownPipelineBuilder(
 
 **第 11 步的要点**：打开窗口要**分批**。一次打开 20 个窗口会让界面卡顿几百毫秒。分批策略：第一帧打开前 3 个，之后每帧（`DispatcherPriority.Background`）再开 2 个。
 
+**实现说明（本轮已落地）**：跑的顺序与上面那张表有四处出入，都是核对真实约束后改的。
+
+1. **第 2 步（单实例）挪到"建完容器之后、启动序列之前"**，不由 `StartupSequence` 做。第二个实例要做的只有「通知第一个 + 退出」，让它把设置读一遍、把笔记目录扫一遍再扔掉，纯属拿用户的磁盘开玩笑。判完立刻 `Shutdown()`。
+2. **第 4 步的"首次运行向导"是一句话的文件夹选择框**（`IFolderPicker.PickFolder`），不是向导。用户取消时**不退程序**，退回 `我的文档\LumiMemo` 并建出来、记一条 Information——直接退出会留下一个「双击了但什么都没发生」的观感，而用户其实只是点错了按钮。
+3. **第 8 步（恢复托盘图标）排在"打开管理器"之前**。关闭策略是「有图标才收得进去」（§17.3），反过来的话，用户在启动那一瞬间关掉管理器就真的退出了。
+4. **第 5 步不在启动序列里**：`*.lumitmp` 的清理在 `MarkdownNoteRepository` 扫描时顺手做掉，不必单独走一趟目录。第 9 步（全局热键）、第 10 步（`FileSystemWatcher`）、第 12 步（开机自启动）整体推迟，见 §17.6 与 §10 的偏离说明。
+
+**第 11 步本轮不做**（用户已裁决首启不自动弹便签）：启动后只开管理器窗口。`IsOpen` 为真的便签等用户主动触发「显示全部便签」时才开出来（§17.6），那时它才有对应的手工入口可以验证。
+
+**新增一步"打开管理器窗口"**，排在托盘之后（§15.8 补充里的偏离 4）：管理器是程序的主界面，托盘菜单只是备用入口；首启时用户没有任何地方可点，让主界面自己出来是最自然的。原方案里那句「关掉最后一张便签就 `Shutdown()`」的临时 hack 随之彻底删掉。
+
+**单实例信号到达时走的是「显示全部便签」那条路**（`ManagerViewModel.ShowAll`），不是另写的"把窗口带到前台"。§17.2 已说明理由，实现上它还多一步：信号在监听线程上触发，必须先经 `IDispatcher.InvokeAsync` 封送到 UI 线程（§3.4 规则 T5）。
+
 ## 17.2 单实例
 
 **必须做单实例**。多个实例同时跑会有两个 `FileSystemWatcher`、两份 layout.json 的写入者、两个托盘图标——这是数据损坏的直接来源。
@@ -4213,6 +4246,13 @@ if (!createdNew)
 
 **必须处理 `AbandonedMutexException`**：上一个实例崩溃退出时 mutex 会被放弃，`WaitOne` 会抛这个异常。此时应当**继续启动**（视作没有其他实例），而不是崩溃。
 
+**实现说明（本轮已落地）**：`SingleInstanceGuard` 与上面的示例有两处实质差别。
+
+1. **认的是"命名对象在不在"，不是"锁归谁"**，因此**一行 `AbandonedMutexException` 的处理都不需要**。上面那段示例里那个坑其实是个伪问题：命名对象只要还有句柄开着就存在，进程一死（正常退出或崩溃）句柄全部关闭、对象随之销毁，下一个实例拿到的 `createdNew` 就是 `true`。**崩溃后的自愈是天然的。** 反过来，照示例那样走 `WaitOne` 会引入一个真实的坑——**互斥体的归属属于线程，不是对象**，用 `WaitOne` 拿到的锁必须由同一个线程 `ReleaseMutex`，而在异步代码里"哪条线程执行到 `Dispose`"根本不由我们说了算。于是这里用 `initiallyOwned: false`，只把句柄握住。
+2. **命名管道的协议是"握一次手"，不是"连上就算数"**。最初的实现只等 `WaitForConnectionAsync`，连上就发事件，结果测试里大概每三次红一次：客户端连上之后**立刻关掉句柄**时，服务端挂着的等待会以 `IOException: 管道正在被关闭` 收场——那一次连接本该算数，却变成了一次异常。改成**客户端写一个字节 → 服务端读到才发事件 → 服务端回写同一个字节 → 客户端读到回音才返回 `true`** 之后，客户端会一直握着句柄直到服务端确认，那个窗口就不存在了。信号方还带重试：监听方是"收一个连接、扔掉那个管道实例、再建一个新的"，换实例的那几毫秒里连接会撞上 `ERROR_PIPE_BUSY`——那正是"用户连点两下程序图标"最容易踩到的时机。
+
+**"通知已有实例"这一步有预算**：第二个实例等回音最多等 2 秒，超时就自己退出。这个延迟直接加在第二个实例的启动上，必须短——用户点两下图标，第二下得几乎立刻消失。通知失败**不提示用户**：第二个实例的窗口一闪而过，弹一个"已经有一个在跑了"只会让人以为自己按错了。
+
 ## 17.3 关闭窗口 vs 退出程序
 
 **这是用户最容易被搞混的地方，必须在 UI 上明确区分。**
@@ -4232,6 +4272,13 @@ if (!createdNew)
 只在第一次提示，之后不再打扰。
 
 **没有"主窗口"来承接关闭**：因为不需要主窗口（§13.10），"关闭最后一个便签窗口"不能导致程序退出。`ShutdownMode = OnExplicitShutdown` 正是为此。
+
+**实现说明（本轮已落地）**：
+
+- **关掉管理器窗口 → 收进托盘**（`minimizeToTrayOnClose` 默认为真），实现在 `TrayService` 里，订阅 `ManagerWindow.Closing`。放那里的理由是"收进托盘"这件事的两端就是托盘图标与管理器窗口——**没有图标就没有地方收，收进去就再也叫不出来**，所以那两个属性必须挨在一起。图标没建起来时（`showTrayIcon = false`）关闭照常发生，也就是真退出。
+- **必须是 `Hide()` 而不是 `Close()`**：WPF 的窗口一旦 `Close()` 过就不能再 `Show()`，"托盘菜单 → 便签列表"会直接抛 `InvalidOperationException`。这也让 `IManagerWindowPresenter.BringToFront` 里那句 `Show()` 是安全的重入。
+- **它依赖"`Application.Shutdown()` 会忽略 `Closing` 里的 `e.Cancel`"** 这行为（WPF 内部走的是 `Window.InternalClose(shutdown: true, ignoreCancel: true)`）。不成立的话，托盘菜单的「退出」会被这条策略挡下来——**这一条进 §22 的手工清单**，因为它只在真实进程里才验得到。
+- **"第一次点便签 ✕ 给一次性气泡"本轮推迟**：它需要一个 `AppSettings` 里不存在的"已提示过"字段，属于设置层的活。没有它也不会出错，只是用户少了那句解释。
 
 ## 17.4 退出序列
 
@@ -4263,6 +4310,32 @@ if (!createdNew)
 - **注销全局热键**（`UnregisterHotKey`）虽然进程退出后系统会自动清理，但显式注销可以避免"程序没退干净时热键被占住"。
 
 **"仍然退出"的对话框不接受回车作为默认按钮**。默认按钮是"重试"。用户需要明确地点击"仍然退出"才承担数据丢失。
+
+**实现说明（本轮已落地）**：上面那张表里 **4b 那一支（有便签没保存上时拦下退出）还没做**——它就落在"3"这一步的失败路径上，需要那个三选一对话框，属于 §11.5 的活。本轮落地的是 1→3 与 4a，加两步释放：
+
+```text
+用户触发退出（托盘菜单 → 退出 / 系统注销）
+  ↓
+App.OnStartup 里没有再挂任何 Closed 处理器
+  ↓
+Application.Shutdown() → 关掉全部窗口 → 触发 App.OnExit
+  ↓
+OnExit（UI 线程，可以阻塞）：
+  1. StartupSequence.ShutdownAndWait()
+       - AutoSaveService.Dispose()       停掉待处理计时器
+       - NoteService.SaveAllAsync()      flush 未落盘的便签
+       - LayoutService.FlushNowAsync()   写 layout.json，绕过节流
+  2. SingleInstanceGuard.Dispose()        放掉互斥体
+  3. TrayService.Dispose()                收掉托盘图标
+  4. ServiceProvider.Dispose()            兜底
+```
+
+三处值得记的：
+
+- **整体扔到线程池上跑**（`Task.Run(...).GetAwaiter().GetResult()`）。这些 `async` 方法的续体默认要回 UI 线程，而调用方正**阻塞**着 UI 线程等它完成——不脱离 UI 线程就是必然的死锁。名字带 `...AndWait` 是因为它真的阻塞调用线程，这在 WPF 里通常是禁忌，唯一能这么写的地方就是 `OnExit`。
+- **释放顺序有意义**：锁放得比 flush 晚。放早了，另一个实例就能在这一次还没写完 layout 时启动，两份 `layout.json` 于是重叠——那正是单实例要防的事。
+- **托盘图标必须显式收掉**，不能只靠容器兜底。留着它，用户点了"退出"之后还会看到一个点得动、但点了没反应的图标，直到鼠标划过才消失。
+- **`OnExit` 是唯一还留着 `Application` 的地方**：业务代码一律经 `IApplicationLifetime` 发起退出（托盘菜单、将来的热键），不直接调 `Shutdown()`——那样测试里能断言"点了退出"，而不必真的把测试进程关掉。而收尾本身只有一条路径，就是上面这一段。
 
 ## 17.5 未处理异常
 
@@ -5054,6 +5127,25 @@ await WaitUntilAsync(() => store.Contains(id), timeout: TimeSpan.FromSeconds(5))
 [单实例]
   - 双击两次图标 → 只有一个实例，第二次的调用把便签带到前台
   - 上一个实例被强杀（任务管理器结束进程） → 再启动正常
+  - 第一个实例刚启动、「正在载入」那一刻就再点一次图标 → 信号不丢（这正是握手协议要修的那个窗口）
+
+[托盘与退出]（阶段 9）
+  - 启动后托盘图标出现，悬停显示 "LumiMemo"，图标清晰（16×16 下那个字母认得出）
+  - 右键菜单弹出前先刷新「回收站（N）」：删一张便签后再弹 → 数字加了 1
+  - 单击图标（默认 toggleManager）→ 管理器窗口出现；再点一次 → 无异常
+  - 把 settings.json 的 singleClickTrayAction 改成 newNote 重启 → 单击是新建一张便签
+  - 双击图标 → 显示全部便签（且这一步不受 singleClickTrayAction 影响）
+  - 「收起全部便签」→ 便签窗口全部消失，**但管理器还在**（程序没退）
+  - 关掉管理器窗口 → **程序不退出**，收进托盘；从菜单「便签列表...」能再叫出来
+  - **托盘菜单「退出」→ 真的退出**（这一条在验 §17.3 里那句"`Shutdown()` 会忽略 `Closing` 的 `Cancel`"；不成立的话会被"收进托盘"挡下来）
+  - 有未保存内容时点退出 → flush 完成后再消失，重开内容还在
+  - 退出之后托盘图标**立刻**消失，不留一个点得动却没反应的幽灵图标
+  - 「回收站...」→ 设置窗口落在回收站那一页；窗口已开在常规页时也切过去
+  - 「设置...」→ 设置窗口落在常规页
+  - 「打开笔记文件夹」→ 资源管理器打开笔记目录（把目录改名后再点 → 有错误提示，不是静默无反应）
+  - 「重新加载全部便签」→ 在别的编辑器里改过的内容出现在列表里
+  - 「关于」→ 版本号形如 0.1.0（三段）
+  - showTrayIcon 改成 false 重启 → **没有托盘图标**，此时关掉管理器窗口 = 真退出
 ```
 
 ## 21.5 测试替身
@@ -5062,13 +5154,23 @@ await WaitUntilAsync(() => store.Contains(id), timeout: TimeSpan.FromSeconds(5))
 |---|---|---|
 | `IClock` | `SystemClock` | `FakeClock`（可手动推进时间） |
 | `INoteService` | `NoteService` | `FakeNoteService`（记录调用、可返回预置的 `NoteOpenRequest`） |
-| `IWindowManager` | `WindowManager` | `FakeWindowManager`（记录开/关窗调用，不创建真实窗口） |
+| `IWindowManager` | `WindowManager` | `RecordingWindowManager`（记录开/关窗调用，不创建真实窗口） |
 | `IDispatcher` | `WpfDispatcher` | `ImmediateDispatcher`（同步执行） |
-| `IFileSystem` | **不采用**（见下） | — |
 | `IDialogService` | `DialogService` | `RecordingDialogService`（记录调用） |
-| `ILogger<T>` | `FileLogger` | `NullLogger` 或 `ListLogger` |
+| `IShellLauncher` | `ExplorerShellLauncher` | `RecordingShellLauncher`（记录请求，不真的弹出资源管理器） |
+| `IFolderPicker` | `FolderPickerDialog` | `RecordingFolderPicker`（**还没写**，见下） |
+| `IApplicationLifetime` | `WpfApplicationLifetime` | `RecordingApplicationLifetime`（只记次数，不关掉测试进程） |
+| `IManagerWindowPresenter` | `ManagerWindowPresenter` | `RecordingManagerWindowPresenter` |
+| `IFileSystem` | **不采用**（见下） | — |
+| `ILogger<T>` | `FileLogger` | `NullLogger` 或 `RecordingLogger`（把日志原文留在内存里，断言「某条日志确实发生了」） |
 
 **`IClock` 是必须的**。去抖、抑制窗口、保留期判断全部依赖时间。用真实时间的测试会既慢又不稳定（flaky）。`FakeClock` 让"500ms 后自动保存"这样的测试变成确定性的。
+
+**阶段 9 的两处已知缺口**（都是刻意留下的，不是漏掉的）：
+
+- **`StartupSequence` 没有自动化测试**，`RecordingFolderPicker` 因此也还没写。它要造出真的窗口（`ManagerWindow`）并在 `RunAsync` 里 `Show()`，而那几个 `await` 的续体必须在同一个有消息泵的 STA 线程上跑完——**测试进程里没有一个能同时满足这两条的脚手架**，硬凑出来的东西比它要验的逻辑还长。§17.1 的验收因此就是 §21.4 里的手工首启清单，那条链本来就只能在真实进程上走。**这不是"以后补"**：如果哪天真的要为它写测试，正确的做法是先把窗口依赖变成可注入的接缝，而不是去搭那个脚手架。
+- **`TrayViewModel` 里"打开设置窗口"那两个用例跑在 STA 线程上**（要造出真的 `SettingsWindow` 才能读它落在哪一页）。这不是妥协——`SettingsTab` 的值就是 XAML 里 `TabControl` 的顺序，这个约定只有拿真窗口才验得到，而它正是最容易静默错位的地方。
+
 
 **关于 `InMemoryFileSystem`**：**不建议做**完整的文件系统抽象。理由是文件系统语义（锁定、权限、编码、原子性）恰恰是集成测试要验证的东西，抽象掉它就测不出真实问题了。策略是：
 

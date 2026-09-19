@@ -38,8 +38,21 @@ namespace LumiMemo.App;
 /// </remarks>
 public partial class App : Application
 {
+    /// <summary>
+    /// 第二个实例等回音最多等这么久。
+    /// </summary>
+    /// <remarks>
+    /// 这个延迟直接加在第二个实例的启动上——用户点两下图标，第二下要等这么久才消失。
+    /// 足够覆盖「第一个实例正在换管道实例」那几毫秒，又不至于让人以为程序卡住了。
+    /// </remarks>
+    private static readonly TimeSpan SignalTimeout = TimeSpan.FromSeconds(2);
+
     private ServiceProvider? _provider;
     private StartupSequence? _startup;
+    private SingleInstanceGuard? _singleInstance;
+    private TrayService? _tray;
+    private IDispatcher? _dispatcher;
+    private ManagerViewModel? _manager;
 
     /// <inheritdoc />
     protected override void OnStartup(StartupEventArgs e)
@@ -53,15 +66,23 @@ public partial class App : Application
 
         _provider = BuildServiceProvider(paths);
 
-        _startup = _provider.GetRequiredService<StartupSequence>();
+        // §17.2：单实例。判在启动序列之前——第二个实例要做的只是通知第一个然后退出，
+        // 让它把设置读一遍、把笔记目录扫一遍再扔掉，纯属拿用户的磁盘开玩笑。
+        if (!ClaimSingleInstance())
+        {
+            Shutdown();
 
-        // 管理器是程序的落脚点：关掉它才退出进程（§17.3）。
-        // 便签窗口全部关光不会退出——管理器还在。
-        //
-        // 本轮的临时语义：还没有托盘，所以关掉管理器就是真退出。
-        // 托盘接上后这里改成「收进托盘」，真正的退出走托盘菜单。
-        ManagerWindow manager = _provider.GetRequiredService<ManagerWindow>();
-        manager.Closed += (_, _) => Shutdown();
+            return;
+        }
+
+        // 单实例信号要经它们落到界面上。在这里取一次存起来，是因为事件处理器
+        // 跑在监听线程上、拿不到局部变量，而在处理器里现取容器等于把组合根
+        // 变成一个服务定位器（§4.3）。
+        _dispatcher = _provider.GetRequiredService<IDispatcher>();
+        _manager = _provider.GetRequiredService<ManagerViewModel>();
+        _tray = _provider.GetRequiredService<TrayService>();
+
+        _startup = _provider.GetRequiredService<StartupSequence>();
 
         // 启动序列是异步的（要读设置、扫磁盘），而 OnStartup 是同步的。
         // 不能阻塞在这里等：那会让 UI 线程在消息泵启动之前就被占住，
@@ -72,15 +93,70 @@ public partial class App : Application
     /// <inheritdoc />
     protected override void OnExit(ExitEventArgs e)
     {
-        // 顺序是 §17.4：停自动保存 → flush 未落盘的便签 → 写 layout.json。
+        // 顺序是 §17.4：停自动保存 → flush 未落盘的便签 → 写 layout.json → 释放 Mutex。
         // 这一段必须显式写出来；容器的释放顺序是「与注册顺序相反」，
         // 那和 §17.4 要的顺序毫无关系，只能当最后一道兜底。
         _startup?.ShutdownAndWait();
+
+        // 锁放得比 flush 晚：放早了，另一个实例就能在这一次还没写完 layout 时启动，
+        // 两份 layout.json 于是重叠——那正是单实例要防的事。
+        _singleInstance?.Dispose();
+        _singleInstance = null;
+
+        // 托盘图标同样要在这一步收掉。留着它，用户点了「退出」之后还会看到一个
+        // 点得动、但点了没反应的图标，直到鼠标划过才消失。
+        _tray?.Dispose();
+        _tray = null;
 
         _provider?.Dispose();
 
         base.OnExit(e);
     }
+
+    /// <summary>
+    /// 认领单实例的那把锁；不是第一个实例时通知已有的那个并返回 <see langword="false"/>。
+    /// </summary>
+    /// <remarks>
+    /// 通知失败<strong>不提示用户</strong>：第二个实例的窗口一闪而过，
+    /// 弹一个「已经有一个在跑了」只会让人以为自己按错了。用户再点一次就好。
+    /// </remarks>
+    private bool ClaimSingleInstance()
+    {
+        SingleInstanceGuard guard = _provider!.GetRequiredService<SingleInstanceGuard>();
+
+        if (!guard.IsFirstInstance)
+        {
+            _ = SingleInstanceChannel.TrySignal(SingleInstanceChannel.PipeName, SignalTimeout);
+
+            return false;
+        }
+
+        _singleInstance = guard;
+
+        // 先挂事件再开听：反过来的话，启动那一瞬间来的信号会掉在地上——
+        // 而「双击图标没反应」正是最难让用户复现再描述清楚的那类问题。
+        _singleInstance.SecondInstanceSignalled += OnSecondInstanceSignalled;
+        _singleInstance.StartListening();
+
+        return true;
+    }
+
+    /// <summary>
+    /// 又有人启动了程序：把本实例的便签全部亮出来（§17.2）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 在监听线程上触发，所以必须先封送到 UI 线程（§3.4 规则 T5）——
+    /// <c>ShowAll</c> 要开窗、要改被绑定的 <c>ObservableCollection</c>。
+    /// </para>
+    /// <para>
+    /// <strong>走的必须是「显示全部便签」那一条路</strong>，不能另写一套「把窗口带到前台」。
+    /// §17.2 明说了理由：两条路径的行为迟早会不一致，而单实例唤醒是低频操作，
+    /// 那种不一致要等到用户抱怨才会被发现。
+    /// </para>
+    /// </remarks>
+    private void OnSecondInstanceSignalled(object? sender, EventArgs e) =>
+        _dispatcher?.InvokeAsync(() => _manager?.ShowAllCommand.Execute(null));
 
     /// <summary>
     /// 发起启动序列，失败时让用户看见并退出进程。
@@ -216,6 +292,22 @@ public partial class App : Application
         services.AddTransient<SettingsWindow>();
         services.AddSingleton(sp => new SettingsWindowLauncher(
             sp.GetRequiredService<SettingsWindow>));
+
+        // ---- 单实例与托盘 ----
+        // 名字从 SingleInstanceChannel 取（它带着当前用户的 SID），这里显式写一个
+        // 工厂委托，好让「这个名字是谁定的」在注册处一眼可见。
+        services.AddSingleton(sp => new SingleInstanceGuard(
+            SingleInstanceChannel.MutexName,
+            SingleInstanceChannel.PipeName,
+            sp.GetRequiredService<ILogger<SingleInstanceGuard>>()));
+
+        // 托盘的两个对象都只建一份，而且必须是同一份：TrayService 建图标、挂菜单，
+        // TrayViewModel 是菜单那头；分两次注册的话，菜单项指向的会是一份
+        // 从没被灌过设置、也不知道管理器在哪的空壳。它们同时也被
+        // StartupSequence（灌设置、启动）与 App.OnExit（收图标）取用。
+        services.AddSingleton<IManagerWindowPresenter, ManagerWindowPresenter>();
+        services.AddSingleton<TrayViewModel>();
+        services.AddSingleton<TrayService>();
 
         // ---- 启动编排 ----
         services.AddSingleton<StartupSequence>();

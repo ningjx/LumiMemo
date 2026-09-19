@@ -25,9 +25,19 @@ public sealed class FakeTrashStore : ITrashStore
     /// <summary><see cref="EmptyAsync"/> 被调了几次。<c>0</c> 就说明用户没点到底。</summary>
     public int EmptyCallCount { get; private set; }
 
+    /// <summary>设成非 null 后 <see cref="ListAsync"/> 会抛出它。</summary>
+    /// <remarks>
+    /// 用来验「索引文件损坏 / 回收站目录被拔掉」时调用方有没有兜住——
+    /// 托盘那个计数是唯一一处<strong>必须</strong>吞掉这类异常的地方，
+    /// 否则一个数不出来的回收站会让右键菜单整个弹不出来。
+    /// </remarks>
+    public Exception? ListException { get; set; }
+
     /// <inheritdoc />
     public Task<IReadOnlyList<TrashEntry>> ListAsync(CancellationToken ct = default) =>
-        Task.FromResult<IReadOnlyList<TrashEntry>>([.. Entries]);
+        ListException is null
+            ? Task.FromResult<IReadOnlyList<TrashEntry>>([.. Entries])
+            : Task.FromException<IReadOnlyList<TrashEntry>>(ListException);
 
     /// <inheritdoc />
     public Task<TrashEntry> MoveFileToTrashAsync(

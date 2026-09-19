@@ -39,14 +39,17 @@ public sealed class SettingsWindowLauncher
     }
 
     /// <summary>
-    /// 打开设置窗口。已经开着就把它唤到前面，不再开第二个。
+    /// 打开设置窗口，落在指定页签上。已经开着就把它唤到前面并切页，不再开第二个。
     /// </summary>
     /// <returns>这一次调用真的新开了一个窗口时返回 <c>true</c>。</returns>
-    public bool Show()
+    public bool Show(SettingsTab tab = SettingsTab.General)
     {
         if (_current is { } existing)
         {
             // 只还原、不重开：重开会让用户刚填了一半的表单凭空消失。
+            // 切页也一样要在这里做——用户点「回收站（N）...」时窗口可能正开在另一页上。
+            existing.SelectTab(tab);
+
             if (existing.WindowState == WindowState.Minimized)
             {
                 existing.WindowState = WindowState.Normal;
@@ -58,6 +61,9 @@ public sealed class SettingsWindowLauncher
         }
 
         SettingsWindow window = _create();
+
+        // 在建好之后、显示之前就选好页：先显示再切会让用户看到它闪一下第一页。
+        window.SelectTab(tab);
 
         if (Owner() is { } owner)
         {

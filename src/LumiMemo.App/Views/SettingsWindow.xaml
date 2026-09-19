@@ -81,7 +81,13 @@
       <RowDefinition Height="Auto" />
     </Grid.RowDefinitions>
 
-    <TabControl Grid.Row="0"
+    <!--
+      取名是为了让托盘菜单的「回收站（N）...」能直接落到第二个页签上（§15.9）。
+      页签没有绑 ViewModel：选中哪一页是纯界面状态，而「打开时该选哪页」由
+      SettingsWindowLauncher 在 Show(tab) 里决定。
+    -->
+    <TabControl x:Name="Tabs"
+                Grid.Row="0"
                 Margin="10,10,10,0"
                 Background="Transparent"
                 BorderThickness="0">
