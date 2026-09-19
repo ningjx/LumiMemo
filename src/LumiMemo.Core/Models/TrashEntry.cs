@@ -26,4 +26,14 @@ public sealed class TrashEntry
 
     /// <summary>字节数，仅用于统计展示。</summary>
     public long Size { get; set; }
+
+    /// <summary>
+    /// 索引里有这一条，但 <c>trash/</c> 下已经找不到对应的文件或目录（§7.2）。
+    /// </summary>
+    /// <remarks>
+    /// <strong>运行时派生，不写进 <c>trash-index.json</c></strong>：它是「索引与目录对不上」
+    /// 这个瞬态事实的描述，下次一致性检查会重新算一遍。落盘只会有两种坏结果——
+    /// 要么用户手动把文件拖回来后它仍写着「已不在」，要么条目被当成了真数据。
+    /// </remarks>
+    public bool IsFileMissing { get; set; }
 }

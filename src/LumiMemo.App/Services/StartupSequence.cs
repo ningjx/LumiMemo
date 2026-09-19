@@ -34,13 +34,14 @@ namespace LumiMemo.App.Services;
 /// 恢复逻辑等托盘与「显示全部」接上后一并补，那时它才有对应的手工入口可以验证。
 /// </para>
 /// </remarks>
-public sealed class StartupSequence
+public sealed class StartupSequence : ISettingsApplier
 {
     private readonly AppPaths _paths;
     private readonly ISettingsStore _settingsStore;
     private readonly JsonLayoutStore _layoutStore;
     private readonly LayoutService _layoutService;
     private readonly MarkdownNoteRepository _repository;
+    private readonly TrashService _trashService;
     private readonly INoteService _noteService;
     private readonly AutoSaveService _autoSaveService;
     private readonly WindowManager _windowManager;
@@ -55,6 +56,7 @@ public sealed class StartupSequence
         JsonLayoutStore layoutStore,
         LayoutService layoutService,
         MarkdownNoteRepository repository,
+        TrashService trashService,
         INoteService noteService,
         AutoSaveService autoSaveService,
         WindowManager windowManager,
@@ -68,6 +70,7 @@ public sealed class StartupSequence
         ArgumentNullException.ThrowIfNull(layoutStore);
         ArgumentNullException.ThrowIfNull(layoutService);
         ArgumentNullException.ThrowIfNull(repository);
+        ArgumentNullException.ThrowIfNull(trashService);
         ArgumentNullException.ThrowIfNull(noteService);
         ArgumentNullException.ThrowIfNull(autoSaveService);
         ArgumentNullException.ThrowIfNull(windowManager);
@@ -81,6 +84,7 @@ public sealed class StartupSequence
         _layoutStore = layoutStore;
         _layoutService = layoutService;
         _repository = repository;
+        _trashService = trashService;
         _noteService = noteService;
         _autoSaveService = autoSaveService;
         _windowManager = windowManager;
@@ -118,7 +122,7 @@ public sealed class StartupSequence
 
         // 把设置灌进各个消费方。必须在任何一次 LoadAsync / SaveAsync 之前做完，
         // 否则第一次扫描出来的便签会用默认尺寸、默认颜色。
-        ApplySettings(settings);
+        Apply(settings);
 
         // §17.1 第 4 步：载入 layout.json（不存在时是正常的首发状态，什么都不做）。
         await _layoutService.LoadAsync(ct);
@@ -219,8 +223,26 @@ public sealed class StartupSequence
         await _settingsStore.SaveAsync(settings, ct);
     }
 
-    private void ApplySettings(AppSettings settings)
+    /// <summary>
+    /// 把一份设置灌进整张对象图。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>它是 <see cref="ISettingsApplier"/> 的唯一实现</strong>，因此也是设置窗口
+    /// 「保存完立刻生效」那一步。启动时走一次、保存时再走一次，且<strong>是同一段代码</strong>——
+    /// 分开写的话迟早会出现「启动时生效一个值、设置窗口里生效另一个值」这种
+    /// 只在特定路径下才暴露的不一致。
+    /// </para>
+    /// <para>
+    /// 这里<strong>不动笔记目录</strong>：换目录是 §8.6 那一整条流程的事，
+    /// 它要 flush 未保存内容、要处理 layout 与回收站的去留、要能在保存失败时中止。
+    /// 本方法只搬那些「赋值即生效」的值。
+    /// </para>
+    /// </remarks>
+    public void Apply(AppSettings settings)
     {
+        ArgumentNullException.ThrowIfNull(settings);
+
         _paths.SetAttachmentsFolderName(settings.AttachmentsFolderName);
 
         _layoutStore.DefaultWidth = settings.DefaultWidth;
@@ -228,6 +250,10 @@ public sealed class StartupSequence
         _layoutStore.DefaultContentScale = settings.DefaultContentScale;
 
         _repository.DefaultColor = settings.DefaultColor;
+
+        // 0 = 永不清理（§7.4）。「0 是策略而不是天数」的判断在 TrashService 里，
+        // 这里只把设置原样搬过去。
+        _trashService.RetentionDays = settings.TrashRetentionDays;
 
         _layoutService.ShowStatusBar = settings.ShowStatusBar;
         _autoSaveService.DelayMilliseconds = settings.AutoSaveDelayMs;

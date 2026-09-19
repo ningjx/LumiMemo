@@ -9,9 +9,11 @@ namespace LumiMemo.Core.Services;
 /// </summary>
 /// <remarks>
 /// <para>
-/// 本类只编排<strong>内存状态</strong>与<strong>调用顺序</strong>，三件事都不做：
+/// 本类只编排<strong>内存状态</strong>与<strong>调用顺序</strong>，四件事都不做：
 /// 不碰窗口（那是 App 层的 <c>WindowManager</c>）、不碰坐标（那是 <see cref="LayoutService"/>）、
-/// 不做文件解析（那是 Infrastructure 的仓储）。
+/// 不做文件解析（那是 Infrastructure 的仓储）、不搬回收站里的文件（那是 <see cref="TrashService"/>）。
+/// 删除与恢复因此只是一行转发——留着这个入口是为了让调用方按「便签 id」办事，
+/// 而不必认识回收站目录与索引。
 /// </para>
 /// <para>
 /// <strong>不注入 <c>ILogger</c></strong>：<c>LumiMemo.Core</c> 零第三方依赖（§4.1）。
@@ -26,6 +28,7 @@ public sealed class NoteService : INoteService
     private readonly SearchIndex _index;
     private readonly INoteRepository _repository;
     private readonly LayoutService _layout;
+    private readonly TrashService _trash;
     private readonly IClock _clock;
 
     public NoteService(
@@ -33,18 +36,21 @@ public sealed class NoteService : INoteService
         SearchIndex index,
         INoteRepository repository,
         LayoutService layout,
+        TrashService trash,
         IClock clock)
     {
         ArgumentNullException.ThrowIfNull(store);
         ArgumentNullException.ThrowIfNull(index);
         ArgumentNullException.ThrowIfNull(repository);
         ArgumentNullException.ThrowIfNull(layout);
+        ArgumentNullException.ThrowIfNull(trash);
         ArgumentNullException.ThrowIfNull(clock);
 
         _store = store;
         _index = index;
         _repository = repository;
         _layout = layout;
+        _trash = trash;
         _clock = clock;
     }
 
@@ -151,14 +157,29 @@ public sealed class NoteService : INoteService
         throw new NotSupportedException("移动便签尚未接入（需要重写正文里的附件相对链接）。");
 
     /// <inheritdoc />
-    /// <exception cref="NotSupportedException">本轮不含回收站。</exception>
-    public Task DeleteNoteAsync(Guid noteId) =>
-        throw new NotSupportedException("删除便签尚未接入（必须先有回收站，不能直接删文件）。");
+    /// <remarks>
+    /// 一张<strong>没有布局记录</strong>的便签被删掉时，这里什么都不额外做——
+    /// 布局条目不存在，就没有「删了还漏一条垃圾在 layout.json 里」的问题。
+    /// </remarks>
+    public Task DeleteNoteAsync(Guid noteId) => _trash.MoveNoteToTrashAsync(noteId);
 
     /// <inheritdoc />
-    /// <exception cref="NotSupportedException">本轮不含回收站。</exception>
-    public Task RestoreFromTrashAsync(Guid noteId, string? targetPath) =>
-        throw new NotSupportedException("从回收站恢复尚未接入。");
+    /// <remarks>
+    /// 找不到条目时抛异常而不是静默返回：调用方拿着的 id 来自它自己那份列表，
+    /// 对不上说明那份列表已经过期（比如回收站刚被清空），
+    /// 静默成功会让界面以为「恢复好了」而列表里什么都不出现。
+    /// </remarks>
+    public async Task RestoreFromTrashAsync(Guid noteId, string? targetPath)
+    {
+        TrashEntry? entry = await _trash.FindByNoteIdAsync(noteId);
+
+        if (entry is null)
+        {
+            throw new InvalidOperationException($"回收站里没有便签 {noteId} 对应的条目。");
+        }
+
+        await _trash.RestoreAsync(entry, targetPath);
+    }
 
     // ---- 窗口开关 ----
 

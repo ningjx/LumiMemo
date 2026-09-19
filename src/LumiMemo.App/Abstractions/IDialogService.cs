@@ -29,6 +29,26 @@ public interface IDialogService
     /// </remarks>
     Task<bool> ConfirmAsync(string title, string message, string confirmText, string cancelText);
 
+    /// <summary>
+    /// 让用户在若干选项里挑一个。
+    /// </summary>
+    /// <param name="title">对话框标题。</param>
+    /// <param name="message">说明正文。</param>
+    /// <param name="choices">选项文案，至少两项。</param>
+    /// <param name="defaultIndex">默认选中的那一项。</param>
+    /// <returns>选中项的下标；用户直接关掉对话框时返回 <c>-1</c>。</returns>
+    /// <remarks>
+    /// 为 §7.3 的恢复冲突而生：那里要的正是<strong>三选一</strong>
+    /// （重命名 / 恢复到笔记目录根 / 取消），而「是 / 否」表达不了。
+    /// 返回 <c>-1</c> 而不是抛异常：关掉对话框与点「取消」对调用方是同一件事，
+    /// 让它们走同一条分支比逼每个调用点各判一次要好。
+    /// </remarks>
+    Task<int> ChooseAsync(
+        string title,
+        string message,
+        IReadOnlyList<string> choices,
+        int defaultIndex = 0);
+
     /// <summary>提示错误。用于 §11.5 的保存失败、§10.4 的目录不可访问。</summary>
     Task ShowErrorAsync(string title, string message);
 

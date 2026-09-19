@@ -34,10 +34,35 @@ public interface ITrashStore
     Task<TrashEntry> MoveDirectoryToTrashAsync(string relativeDirectory, CancellationToken ct = default);
 
     /// <summary>
-    /// 恢复到原位置。若原位置已有同名文件，<strong>重命名而不是覆盖</strong>（§7.3）。
+    /// 把条目移回笔记目录。目标位置已被占用时<strong>重命名而不是覆盖</strong>（§7.3）。
     /// </summary>
-    /// <returns>实际恢复到的相对路径，可能与请求的不同。</returns>
-    Task<string> RestoreAsync(TrashEntry entry, CancellationToken ct = default);
+    /// <param name="entry">要恢复的条目。</param>
+    /// <param name="targetRelativePath">
+    /// 恢复到哪个相对路径。传 <see langword="null"/> 表示回到
+    /// <see cref="TrashEntry.OriginalRelativePath"/>。
+    /// </param>
+    /// <param name="ct">取消标记。</param>
+    /// <returns>实际恢复到的相对路径，可能与请求的不同（撞名时被加了序号）。</returns>
+    /// <remarks>
+    /// <strong>不做「恢复到根目录还是原地」的判断</strong>：§7.3 的三选一是给用户看的对话框，
+    /// 判断落点属于上层。这里只认「往哪放」这一个事实，两个选项于是共用同一条路径——
+    /// 差别只是 <paramref name="targetRelativePath"/> 传什么。
+    /// 目标路径<strong>必须落在笔记目录内</strong>（§19.4），越界时抛异常而不是照做。
+    /// </remarks>
+    Task<string> RestoreAsync(
+        TrashEntry entry,
+        string? targetRelativePath = null,
+        CancellationToken ct = default);
+
+    /// <summary>
+    /// 条目原本的位置现在被占着吗（§7.3）。
+    /// </summary>
+    /// <remarks>
+    /// 存在只为了让上层能在<strong>动手之前</strong>问用户「重命名 / 恢复到根目录 / 取消」。
+    /// 若没有这个方法，上层只能先恢复再看返回值变没变，那时文件已经挪回去了，
+    /// 「取消」这个选项就没了。
+    /// </remarks>
+    bool IsOriginalPathOccupied(TrashEntry entry);
 
     /// <summary>清空回收站，删除全部内容并清空索引。</summary>
     Task EmptyAsync(CancellationToken ct = default);

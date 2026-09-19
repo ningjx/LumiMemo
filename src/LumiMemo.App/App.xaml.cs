@@ -10,6 +10,7 @@ using LumiMemo.Core.Stores;
 using LumiMemo.Infrastructure.Io;
 using LumiMemo.Infrastructure.Settings;
 using LumiMemo.Infrastructure.Storage;
+using LumiMemo.Infrastructure.Trash;
 using LumiMemo.Infrastructure.Windows;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -164,6 +165,10 @@ public partial class App : Application
         services.AddSingleton<MarkdownNoteRepository>();
         services.AddSingleton<INoteRepository>(sp => sp.GetRequiredService<MarkdownNoteRepository>());
 
+        // 回收站与笔记同卷（§8.1），所以它跟笔记目录绑在一起，而不是跟设备状态绑在一起。
+        services.AddSingleton<FileSystemTrashStore>();
+        services.AddSingleton<ITrashStore>(sp => sp.GetRequiredService<FileSystemTrashStore>());
+
         // ---- 状态 ----
         // NoteStore 与 SearchIndex 都是纯内存状态，构造无依赖。
         services.AddSingleton<NoteStore>();
@@ -171,12 +176,17 @@ public partial class App : Application
 
         // ---- 核心业务 ----
         services.AddSingleton<LayoutService>();
+
+        // TrashService 必须排在 NoteService 前面：后者依赖它（删除与恢复都转发过去）。
+        // 容器其实不在意注册顺序，但读这一节的人在意。
+        services.AddSingleton<TrashService>();
         services.AddSingleton<INoteService, NoteService>();
         services.AddSingleton<AutoSaveService>();
 
         // ---- 界面基础设施 ----
         services.AddSingleton<IDialogService, DialogService>();
         services.AddSingleton<IFolderPicker, FolderPickerDialog>();
+        services.AddSingleton<IShellLauncher, ExplorerShellLauncher>();
 
         // 注册的是 WeakReferenceMessenger.Default，因此运行时行为与直接引用那个静态单例
         // 完全一致，但依赖关系是显式的：测试里可以注入一条全新的总线，
@@ -194,8 +204,25 @@ public partial class App : Application
         services.AddSingleton<ManagerViewModel>();
         services.AddSingleton<ManagerWindow>();
 
+        // SettingsWindow 则是「每次打开一个新的」，不能注册成单例：
+        // WPF 的 Window 一旦 Close() 过就不能再 Show()，第二次会抛异常。
+        // 「同时只能开一个」这条约束由 SettingsWindowLauncher 记着。
+        //
+        // 工厂委托是刻意的：SettingsWindowLauncher 若直接注入 IServiceProvider，
+        // 它会退化成一个谁也看不清依赖的服务定位器。注册顺序上它必须排在
+        // StartupSequence 之后——SettingsViewModel 依赖 ISettingsApplier，
+        // 而它的实现是 StartupSequence，读起来才是一条向下的链。
+        services.AddTransient<SettingsViewModel>();
+        services.AddTransient<SettingsWindow>();
+        services.AddSingleton(sp => new SettingsWindowLauncher(
+            sp.GetRequiredService<SettingsWindow>));
+
         // ---- 启动编排 ----
         services.AddSingleton<StartupSequence>();
+
+        // 设置窗口保存后靠它把值推下去。指向上面那同一个实例——两个注册各建一份的话，
+        // 「设置窗口里改了立刻生效」推的会是一个从没跑过启动、内部全是空状态的对象。
+        services.AddSingleton<ISettingsApplier>(sp => sp.GetRequiredService<StartupSequence>());
 
         return services.BuildServiceProvider();
     }

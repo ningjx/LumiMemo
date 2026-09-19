@@ -111,6 +111,19 @@
           <Button Style="{StaticResource ToolButton}"
                   Content="隐藏全部"
                   Command="{Binding HideAllCommand}" />
+
+          <!--
+            设置入口。用齿轮而不是「设置」两个字，是因为它跟左边三个不属一类：
+            那三个是「对便签做事」，它是「对程序做事」，字形不同比加一条竖线便宜。
+            ToolTip 补上文字，免得有人认不出这个字。
+          -->
+          <Button Style="{StaticResource ToolButton}"
+                  Content="⚙"
+                  FontSize="16"
+                  Padding="10,2"
+                  Margin="8,0,0,0"
+                  ToolTip="设置"
+                  Click="OnSettingsClick" />
         </StackPanel>
       </Grid>
     </Border>

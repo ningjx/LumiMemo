@@ -55,10 +55,24 @@ public interface INoteService
     /// <summary>移动便签到另一个文件夹，并重写正文里的附件相对链接（§6.3）。</summary>
     Task MoveNoteAsync(Guid noteId, string targetFolder);
 
-    /// <summary>删除便签，即把 Markdown 文件移到回收站（§7.1）。不等于关闭窗口。</summary>
+    /// <summary>
+    /// 删除便签，即把 Markdown 文件移到回收站（§7.1）。不等于关闭窗口。
+    /// </summary>
+    /// <remarks>
+    /// 真正的搬运与内存摘除都在 <c>TrashService</c>，这里只转发。
+    /// 保留这个入口是为了让「按便签 id 办事」的调用方（管理器）不必认识回收站。
+    /// 关窗与撤掉待落盘的那一轮保存由调用方接着做——那两件事一件在 App 层、
+    /// 一件在便签自己的 ViewModel 里，都不属于本层。
+    /// </remarks>
     Task DeleteNoteAsync(Guid noteId);
 
-    /// <param name="targetPath">恢复到的位置。缺省时回到 <c>OriginalRelativePath</c>（§7.3）。</param>
+    /// <summary>把回收站里的便签恢复到笔记目录（§7.3）。</summary>
+    /// <param name="noteId">便签 id。回收站索引里按它找条目。</param>
+    /// <param name="targetPath">
+    /// 恢复到哪个相对路径。缺省时回到 <c>OriginalRelativePath</c>；
+    /// 给一个值就是 §7.3 对话框里「恢复到笔记目录根」那一档。
+    /// 目标已被占用时是<strong>重命名</strong>而不是覆盖。
+    /// </param>
     Task RestoreFromTrashAsync(Guid noteId, string? targetPath);
 
     // ---- 窗口开关：业务判断在这里，真正的开/关窗口由 App 层发起方接着调用 IWindowManager ----

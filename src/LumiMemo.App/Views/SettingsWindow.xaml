@@ -1,0 +1,358 @@
+<Window x:Class="LumiMemo.App.Views.SettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="设置"
+        Width="600"
+        Height="540"
+        MinWidth="520"
+        MinHeight="420"
+        WindowStartupLocation="CenterOwner"
+        Background="#FFFDFBF3"
+        FontFamily="Microsoft YaHei UI"
+        FontSize="14">
+
+  <!--
+    设置窗口用**标准窗口 chrome**，与管理器同一条路（§15.8 的裁决）：
+    它是个普通的表单窗口，没有无边框的必要。便签窗口那套 WindowChrome + 自绘标题条
+    是另一条路，两者的窗口层代码刻意不共享。
+
+    回收站是它的一个页签，不是独立窗口（§15.9 写死）。
+  -->
+  <Window.Resources>
+    <Style x:Key="FieldLabel" TargetType="TextBlock">
+      <Setter Property="VerticalAlignment" Value="Center" />
+      <Setter Property="Margin" Value="0,0,12,0" />
+    </Style>
+
+    <Style x:Key="SectionTitle" TargetType="TextBlock">
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="Margin" Value="0,0,0,10" />
+    </Style>
+
+    <Style x:Key="Hint" TargetType="TextBlock">
+      <Setter Property="FontSize" Value="12" />
+      <Setter Property="Opacity" Value="0.6" />
+      <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+
+    <Style x:Key="FieldBox" TargetType="TextBox">
+      <Setter Property="Width" Value="80" />
+      <Setter Property="Padding" Value="6,3" />
+      <Setter Property="Background" Value="#FFFFFDF6" />
+      <Setter Property="BorderBrush" Value="#FFD9D2B8" />
+      <Setter Property="BorderThickness" Value="1" />
+    </Style>
+
+    <Style x:Key="ToolButton" TargetType="Button">
+      <Setter Property="Padding" Value="12,6" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderBrush" Value="#FFD9D2B8" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="Cursor" Value="Hand" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="Chrome"
+                    Background="{TemplateBinding Background}"
+                    BorderBrush="{TemplateBinding BorderBrush}"
+                    BorderThickness="{TemplateBinding BorderThickness}"
+                    CornerRadius="4">
+              <ContentPresenter Margin="{TemplateBinding Padding}"
+                                HorizontalAlignment="Center"
+                                VerticalAlignment="Center" />
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="Chrome" Property="Background" Value="#FFF7E9A0" />
+              </Trigger>
+              <Trigger Property="IsEnabled" Value="False">
+                <Setter Property="Opacity" Value="0.45" />
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+  </Window.Resources>
+
+  <Grid>
+    <Grid.RowDefinitions>
+      <RowDefinition Height="*" />
+      <RowDefinition Height="Auto" />
+    </Grid.RowDefinitions>
+
+    <TabControl Grid.Row="0"
+                Margin="10,10,10,0"
+                Background="Transparent"
+                BorderThickness="0">
+
+      <!-- ============ 常规 ============ -->
+      <TabItem Header="常规" Padding="12,6">
+        <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="4,14,10,4">
+          <StackPanel>
+
+            <!-- 笔记文件夹：只读显示 + 打开。换目录是 §8.6 的一整条流程，不在这里 -->
+            <TextBlock Text="笔记文件" Style="{StaticResource SectionTitle}" />
+
+            <Grid Margin="0,0,0,6">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+              </Grid.ColumnDefinitions>
+
+              <TextBox Grid.Column="0"
+                       Text="{Binding NotesFolderText, Mode=OneWay}"
+                       IsReadOnly="True"
+                       Padding="6,4"
+                       Background="#FFF2EDDC"
+                       BorderBrush="#FFD9D2B8"
+                       BorderThickness="1"
+                       Foreground="#FF6B6552" />
+
+              <Button Grid.Column="1"
+                      Margin="8,0,0,0"
+                      Style="{StaticResource ToolButton}"
+                      Content="打开文件夹"
+                      Command="{Binding OpenNotesFolderCommand}" />
+            </Grid>
+
+            <TextBlock Style="{StaticResource Hint}"
+                       Margin="0,0,0,22"
+                       Text="每张便签是这里的一个 .md 文件，可以用任何编辑器直接打开。" />
+
+            <!-- 新便签的默认尺寸 -->
+            <TextBlock Text="新便签" Style="{StaticResource SectionTitle}" />
+
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+              <TextBlock Text="默认宽度" Style="{StaticResource FieldLabel}" />
+              <TextBox Style="{StaticResource FieldBox}"
+                       Text="{Binding DefaultWidth, UpdateSourceTrigger=PropertyChanged}" />
+              <TextBlock Text="  ×  " Style="{StaticResource FieldLabel}" Margin="8,0" />
+              <TextBox Style="{StaticResource FieldBox}"
+                       Text="{Binding DefaultHeight, UpdateSourceTrigger=PropertyChanged}" />
+              <TextBlock Text="DIP" Style="{StaticResource FieldLabel}" Margin="8,0,0,0" />
+            </StackPanel>
+
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+              <TextBlock Text="内容缩放" Style="{StaticResource FieldLabel}" />
+              <TextBox Style="{StaticResource FieldBox}"
+                       Text="{Binding ContentScale, UpdateSourceTrigger=PropertyChanged}" />
+              <TextBlock Text="倍" Style="{StaticResource FieldLabel}" Margin="8,0,0,0" />
+            </StackPanel>
+
+            <CheckBox Content="显示状态条"
+                      IsChecked="{Binding ShowStatusBar}"
+                      Margin="0,4,0,6" />
+
+            <CheckBox Content="按「显示桌面」后自动把便签放回来"
+                      IsChecked="{Binding RestoreAfterShowDesktop}"
+                      Margin="0,0,0,22" />
+
+            <!-- 性能参数 -->
+            <TextBlock Text="性能" Style="{StaticResource SectionTitle}" />
+
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+              <TextBlock Text="自动保存延迟" Style="{StaticResource FieldLabel}" />
+              <TextBox Style="{StaticResource FieldBox}"
+                       Text="{Binding AutoSaveDelayMs, UpdateSourceTrigger=PropertyChanged}" />
+              <TextBlock Style="{StaticResource FieldLabel}"
+                         Margin="8,0,0,0"
+                         Text="毫秒" />
+            </StackPanel>
+
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+              <TextBlock Text="搜索去抖" Style="{StaticResource FieldLabel}" />
+              <TextBox Style="{StaticResource FieldBox}"
+                       Text="{Binding SearchDebounceMs, UpdateSourceTrigger=PropertyChanged}" />
+              <TextBlock Style="{StaticResource FieldLabel}"
+                         Margin="8,0,0,0"
+                         Text="毫秒" />
+            </StackPanel>
+
+            <TextBlock Style="{StaticResource Hint}"
+                       Margin="0,0,0,8">
+              <Run Text="自动保存延迟限" />
+              <Run Text="{Binding MinAutoSaveDelayMs, Mode=OneWay}" />
+              <Run Text="–" />
+              <Run Text="{Binding MaxAutoSaveDelayMs, Mode=OneWay}" />
+              <Run Text="，搜索去抖限" />
+              <Run Text="{Binding MinSearchDebounceMs, Mode=OneWay}" />
+              <Run Text="–" />
+              <Run Text="{Binding MaxSearchDebounceMs, Mode=OneWay}" />
+              <Run Text="，超出的值保存时会自动收到范围内。" />
+            </TextBlock>
+          </StackPanel>
+        </ScrollViewer>
+      </TabItem>
+
+      <!-- ============ 回收站 ============ -->
+      <!--
+        保留期这一行绑到 Window 的 DataContext（SettingsViewModel），
+        因为设置是它保存的；下面那个列表和命令绑到 Trash 上。
+        两段一起保存，用户不会遇到「改了保留期忘了按保存」以外的第二种意外。
+      -->
+      <TabItem Header="回收站" Padding="12,6">
+        <Grid Margin="4,14,4,4">
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+          </Grid.RowDefinitions>
+
+          <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,12">
+            <TextBlock Text="删除的便签保留"
+                       VerticalAlignment="Center"
+                       Margin="0,0,8,0" />
+            <ComboBox ItemsSource="{Binding RetentionOptions}"
+                      SelectedItem="{Binding SelectedRetention, Mode=TwoWay}"
+                      DisplayMemberPath="Name"
+                      Width="120"
+                      Padding="6,3" />
+            <TextBlock Style="{StaticResource Hint}"
+                       VerticalAlignment="Center"
+                       Margin="10,0,0,0"
+                       Text="过期后启动时自动清理。要立刻腾出空间，就手动清空。" />
+          </StackPanel>
+
+          <ListBox Grid.Row="1"
+                   ItemsSource="{Binding Trash.Items}"
+                   SelectedItem="{Binding Trash.SelectedItem, Mode=TwoWay}"
+                   BorderBrush="#FFD9D2B8"
+                   BorderThickness="1"
+                   Background="#FFFFFDF6"
+                   HorizontalContentAlignment="Stretch"
+                   ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+            <ListBox.ItemTemplate>
+              <DataTemplate>
+                <Grid Margin="6,5">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                  </Grid.ColumnDefinitions>
+                  <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                  </Grid.RowDefinitions>
+
+                  <StackPanel Grid.Row="0" Grid.Column="0" Orientation="Horizontal">
+                    <TextBlock Text="{Binding Title}" FontWeight="SemiBold" />
+                    <TextBlock Text="{Binding KindText}"
+                               FontSize="12"
+                               Opacity="0.55"
+                               Margin="8,1,0,0" />
+                  </StackPanel>
+
+                  <!-- 「文件已不在回收站里」要显眼：这条是索引里的孤儿，恢复它没有意义 -->
+                  <TextBlock Grid.Row="0"
+                             Grid.Column="1"
+                             Text="已不在回收站里"
+                             FontSize="12"
+                             Foreground="#FFB58900"
+                             Margin="10,0,0,0">
+                    <TextBlock.Style>
+                      <Style TargetType="TextBlock">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                        <Style.Triggers>
+                          <DataTrigger Binding="{Binding IsFileMissing}" Value="True">
+                            <Setter Property="Visibility" Value="Visible" />
+                          </DataTrigger>
+                        </Style.Triggers>
+                      </Style>
+                    </TextBlock.Style>
+                  </TextBlock>
+
+                  <TextBlock Grid.Row="1"
+                             Grid.Column="0"
+                             Grid.ColumnSpan="2"
+                             FontSize="12"
+                             Opacity="0.6"
+                             Margin="0,3,0,0"
+                             TextTrimming="CharacterEllipsis">
+                    <Run Text="{Binding DeletedAtText, Mode=OneWay}" />
+                    <Run Text=" · " />
+                    <Run Text="{Binding SizeText, Mode=OneWay}" />
+                    <Run Text=" · 原位置 " />
+                    <Run Text="{Binding LocationText, Mode=OneWay}" />
+                  </TextBlock>
+                </Grid>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+
+          <!-- 空列表与「正在加载」在界面上长得一样，靠这行字区分 -->
+          <TextBlock Grid.Row="1"
+                     Text="{Binding Trash.EmptyHint}"
+                     HorizontalAlignment="Center"
+                     VerticalAlignment="Center"
+                     Opacity="0.5"
+                     IsHitTestVisible="False">
+            <TextBlock.Style>
+              <Style TargetType="TextBlock">
+                <Setter Property="Visibility" Value="Collapsed" />
+                <Style.Triggers>
+                  <DataTrigger Binding="{Binding Trash.Items.Count}" Value="0">
+                    <Setter Property="Visibility" Value="Visible" />
+                  </DataTrigger>
+                </Style.Triggers>
+              </Style>
+            </TextBlock.Style>
+          </TextBlock>
+
+          <Grid Grid.Row="2" Margin="0,12,0,0">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*" />
+              <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <TextBlock Grid.Column="0"
+                       Text="{Binding Trash.CountText}"
+                       FontSize="12"
+                       Opacity="0.7"
+                       VerticalAlignment="Center" />
+
+            <StackPanel Grid.Column="1" Orientation="Horizontal">
+              <Button Style="{StaticResource ToolButton}"
+                      Content="恢复"
+                      Margin="0,0,8,0"
+                      Command="{Binding Trash.RestoreCommand}"
+                      CommandParameter="{Binding Trash.SelectedItem}" />
+              <Button Style="{StaticResource ToolButton}"
+                      Content="打开回收站目录"
+                      Margin="0,0,8,0"
+                      Command="{Binding Trash.OpenTrashFolderCommand}" />
+              <Button Style="{StaticResource ToolButton}"
+                      Content="清空回收站"
+                      Command="{Binding Trash.EmptyCommand}" />
+            </StackPanel>
+          </Grid>
+        </Grid>
+      </TabItem>
+    </TabControl>
+
+    <!-- 底部：状态文字 + 保存 / 关闭 -->
+    <Border Grid.Row="1" Background="#FFF2EDDC" Padding="16,10">
+      <Grid>
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="*" />
+          <ColumnDefinition Width="Auto" />
+        </Grid.ColumnDefinitions>
+
+        <TextBlock Grid.Column="0"
+                   Text="{Binding StatusText}"
+                   VerticalAlignment="Center"
+                   FontSize="12"
+                   Foreground="#FF6B6552" />
+
+        <StackPanel Grid.Column="1" Orientation="Horizontal">
+          <Button Style="{StaticResource ToolButton}"
+                  Content="保存"
+                  Margin="0,0,8,0"
+                  Command="{Binding SaveCommand}" />
+          <Button Style="{StaticResource ToolButton}"
+                  Content="关闭"
+                  Command="{Binding CloseCommand}" />
+        </StackPanel>
+      </Grid>
+    </Border>
+  </Grid>
+</Window>

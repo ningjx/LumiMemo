@@ -123,6 +123,124 @@ public sealed class NoteServiceTests
         Assert.Equal(2, harness.Repository.Saved.Count);
     }
 
+    // ================= 删除与恢复 =================
+
+    [Fact]
+    public async Task 删除便签_走回收站而不是直接删文件()
+    {
+        // §7.1：删掉的便签必须还能捞回来。这里若直接 File.Delete，
+        // 用户按一次 Delete 就永久丢了内容，而菜单上写着的是「移到回收站」。
+        var harness = CreateHarness();
+        Note note = NewNote("要删的");
+        harness.Store.Add(note);
+
+        await harness.Service.DeleteNoteAsync(note.Id);
+
+        TrashEntry entry = Assert.Single(harness.Trash.Entries);
+        Assert.Equal(note.Id, entry.NoteId);
+        Assert.Equal(Path.GetFileName(note.FilePath), Path.GetFileName(entry.OriginalRelativePath));
+    }
+
+    [Fact]
+    public async Task 删除便签_把它从内存与索引里摘掉()
+    {
+        // 不摘内存的话，管理器的列表里还留着一条，用户点开就会看到自己刚删掉的便签。
+        var harness = CreateHarness();
+        Note note = NewNote("# 会议记录");
+        harness.Store.Add(note);
+        harness.Index.OnNoteAdded(note);
+
+        await harness.Service.DeleteNoteAsync(note.Id);
+
+        Assert.Null(harness.Store.TryGet(note.Id));
+
+        // 索引里也得干干净净，否则搜索框还能搜到一张已经不在列表上的便签。
+        Assert.Empty(harness.Index.GetPlainText(note.Id));
+    }
+
+    [Fact]
+    public async Task 删除便签_内存里没有这张便签时抛异常()
+    {
+        // 调用方拿着的 id 来自它自己那份列表。对不上说明那份列表已经过期，
+        // 静默返回会让界面以为「删掉了」而回收站里什么都没有。
+        var harness = CreateHarness();
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => harness.Service.DeleteNoteAsync(Guid.NewGuid()));
+    }
+
+    [Fact]
+    public async Task 删除便签_不碰布局记录()
+    {
+        // §7.3：按 id 索引的窗口位置在删除时不清除，恢复之后折叠状态、置顶、
+        // 位置全都自己回来。删的时候顺手清掉的话，用户会以为「回收站只还回了内容」。
+        var harness = CreateHarness();
+        Note note = NewNote("内容");
+        harness.Store.Add(note);
+        _ = harness.Service.OpenNote(note.Id);
+
+        await harness.Service.DeleteNoteAsync(note.Id);
+
+        Assert.True(harness.Layouts.TryGet(note.Id)!.IsOpen);
+    }
+
+    [Fact]
+    public async Task 恢复便签_按id找到条目再交给回收站()
+    {
+        var harness = CreateHarness();
+        Guid noteId = Guid.NewGuid();
+        TrashEntry entry = new()
+        {
+            TrashName = "20260101-000000-周报.md",
+            OriginalRelativePath = "周报.md",
+            NoteId = noteId,
+            DeletedAt = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero),
+            Kind = TrashEntryKind.File,
+        };
+
+        harness.Trash.Entries.Add(entry);
+
+        await harness.Service.RestoreFromTrashAsync(noteId, targetPath: null);
+
+        // 传 null 表示「回原位」——具体落到哪个路径由存储层拿 OriginalRelativePath 解出来，
+        // 这一层只负责把「按 id 找到的那一条」交下去。
+        var restore = Assert.Single(harness.Trash.Restores);
+        Assert.Same(entry, restore.Entry);
+        Assert.Null(restore.Target);
+    }
+
+    [Fact]
+    public async Task 恢复便签_把目标路径原样传给回收站()
+    {
+        // §7.3 的「恢复到笔记目录根」那一档就是不传原路径、改传一个新路径。
+        var harness = CreateHarness();
+        Guid noteId = Guid.NewGuid();
+        harness.Trash.Entries.Add(new TrashEntry
+        {
+            TrashName = "20260101-000000-周报.md",
+            OriginalRelativePath = "归档/周报.md",
+            NoteId = noteId,
+            DeletedAt = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero),
+            Kind = TrashEntryKind.File,
+        });
+
+        await harness.Service.RestoreFromTrashAsync(noteId, "周报.md");
+
+        var restore = Assert.Single(harness.Trash.Restores);
+        Assert.Equal("周报.md", restore.Target);
+    }
+
+    [Fact]
+    public async Task 恢复便签_回收站里没有这个id时抛异常()
+    {
+        // 拿着的 id 可能在回收站被清空之后就失效了。静默成功会让界面以为
+        // 「恢复好了」而列表里什么都不出现。
+        var harness = CreateHarness();
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => harness.Service.RestoreFromTrashAsync(Guid.NewGuid(), targetPath: null));
+    }
+
     // ================= 开窗判断 =================
 
     [Fact]
@@ -246,11 +364,17 @@ public sealed class NoteServiceTests
         var layouts = new InMemoryLayoutStore();
         var timers = new ManualUiTimerFactory();
         var clock = new FakeClock();
+        var trashStore = new FakeTrashStore();
 
         var layoutService = new LayoutService(layouts, FixedDisplayProvider.Single(), timers);
-        var service = new NoteService(store, index, repository, layoutService, clock);
 
-        return new Harness(service, store, index, repository, layouts, timers, clock);
+        // NoteService 的删除与恢复只是转发给 TrashService，所以这里要一整条真实的
+        // TrashService——用替身包替身的话，「转发到底通没通」就测不出来了。
+        var trashService = new TrashService(trashStore, new FakeAppPaths(), store, index, repository);
+
+        var service = new NoteService(store, index, repository, layoutService, trashService, clock);
+
+        return new Harness(service, store, index, repository, layouts, timers, clock, trashStore, trashService);
     }
 
     private static Note NewNote(string content, Guid? id = null)
@@ -274,5 +398,7 @@ public sealed class NoteServiceTests
         FakeNoteRepository Repository,
         InMemoryLayoutStore Layouts,
         ManualUiTimerFactory Timers,
-        FakeClock Clock);
+        FakeClock Clock,
+        FakeTrashStore Trash,
+        TrashService TrashService);
 }

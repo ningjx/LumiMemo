@@ -1,3 +1,4 @@
+using LumiMemo.App.Services;
 using LumiMemo.App.Tests.TestDoubles;
 using LumiMemo.App.Views;
 using Xunit;
@@ -31,7 +32,10 @@ public sealed class ManagerWindowTests
         Exception? failure = StaThread.Run(() =>
         {
             // 不 Show()：那样才需要消息泵，而构造过程已经跑完了 InitializeComponent。
-            var window = new ManagerWindow(h.Vm);
+            // 设置窗口的工厂故意做成会抛的：这个用例只验 XAML，
+            // 真要点到齿轮按钮开窗，那是 SettingsWindowTests 的事。
+            var window = new ManagerWindow(h.Vm, new SettingsWindowLauncher(
+                () => throw new InvalidOperationException("本用例不该开设置窗口。")));
 
             Assert.NotNull(window.Content);
             Assert.Same(h.Vm, window.DataContext);
