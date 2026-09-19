@@ -222,6 +222,10 @@ public partial class App : Application
             new DispatcherTimerFactory(Current.Dispatcher));
         services.AddSingleton<IDispatcher, WpfDispatcher>();
 
+        // 退出请求抽成接口只为一件事：托盘菜单的「退出」在生产实现里会真的把测试进程关掉。
+        // 生产实现只调 Application.Shutdown()，收尾一律交给 OnExit（见该类的说明）。
+        services.AddSingleton<IApplicationLifetime, WpfApplicationLifetime>();
+
         // 同时注册具体类型与接口：设置载入流程需要调用 SetNotesFolder / SetAttachmentsFolderName，
         // 那两个是具体类型上的方法，不属于只读的 IAppPaths。
         services.AddSingleton(paths);
@@ -305,7 +309,11 @@ public partial class App : Application
         // TrayViewModel 是菜单那头；分两次注册的话，菜单项指向的会是一份
         // 从没被灌过设置、也不知道管理器在哪的空壳。它们同时也被
         // StartupSequence（灌设置、启动）与 App.OnExit（收图标）取用。
-        services.AddSingleton<IManagerWindowPresenter, ManagerWindowPresenter>();
+        // 工厂委托是刻意的：ManagerViewModel 也要用它（一张便签都没打开时把自己带出来），
+        // 而直接注入 ManagerWindow 会形成 ManagerWindow → ManagerViewModel →
+        // ManagerWindowPresenter → ManagerWindow 的环。工厂是惰性的，那条边在构造期就断了。
+        services.AddSingleton<IManagerWindowPresenter>(
+            sp => new ManagerWindowPresenter(() => sp.GetRequiredService<ManagerWindow>()));
         services.AddSingleton<TrayViewModel>();
         services.AddSingleton<TrayService>();
 
@@ -316,6 +324,10 @@ public partial class App : Application
         // 「设置窗口里改了立刻生效」推的会是一个从没跑过启动、内部全是空状态的对象。
         services.AddSingleton<ISettingsApplier>(sp => sp.GetRequiredService<StartupSequence>());
 
-        return services.BuildServiceProvider();
+        // ValidateOnBuild：建容器时就把整张对象图走一遍，缺哪个注册当场抛出来。
+        // 这不是多余的谨慎——「接口写了、实现写了、注册漏了」在这个仓库里真实发生过一次
+        // （IApplicationLifetime），而它在运行时的表现是双击图标毫无反应、
+        // 事件日志里连一条记录都没有，排查成本远高于这里多跑的几毫秒。
+        return services.BuildServiceProvider(new ServiceProviderOptions { ValidateOnBuild = true });
     }
 }

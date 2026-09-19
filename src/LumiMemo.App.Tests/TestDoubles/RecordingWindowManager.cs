@@ -96,4 +96,7 @@ public sealed class RecordingWindowManager : IWindowManager
 
     /// <inheritdoc />
     public bool IsNoteOpen(Guid noteId) => _openNotes.Contains(noteId);
+
+    /// <inheritdoc />
+    public void BeginShutdown() => Calls.Add("BeginShutdown()");
 }

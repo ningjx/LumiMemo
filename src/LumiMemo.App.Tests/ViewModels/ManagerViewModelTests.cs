@@ -358,4 +358,39 @@ public sealed class ManagerViewModelTests
 
         Assert.Empty(h.Windows.Calls);
     }
+
+    // ================= 「显示全部便签」的零窗口兜底 =================
+
+    [Fact]
+    public void 一张便签都没打开时显示全部会退回到管理器窗口()
+    {
+        // §17.6 那三步只覆盖了「有便签可显示」的情形。而这条路有两个入口用户换不掉
+        // ——双击托盘图标与再启动一个实例——所以一张窗口都亮不出来时必须给点反应，
+        // 否则程序没有任何界面时点桌面图标毫无动静，与「坏了」没有区别。
+        using var h = new ManagerHarness();
+
+        Assert.Empty(h.NoteService.OpenAllResult);
+
+        h.Vm.ShowAll();
+
+        Assert.Equal(1, h.Presenter.BringToFrontCount);
+
+        // 窗口层那一步照走：兜底是加在原有的两步之后，不是替换掉它们。
+        Assert.Contains("ShowAllNotes()", h.Windows.Calls);
+    }
+
+    [Fact]
+    public void 有便签打开时显示全部不碰管理器窗口()
+    {
+        using var h = new ManagerHarness();
+        var note = ManagerHarness.NewNote("# 笔记");
+
+        h.Add(note);
+        h.NoteService.OpenAllResult.Add(new NoteOpenRequest(note, new NoteLayout { NoteId = note.Id }));
+
+        h.Vm.ShowAll();
+
+        Assert.Equal(0, h.Presenter.BringToFrontCount);
+        Assert.Contains($"ShowNote({note.Id})", h.Windows.Calls);
+    }
 }

@@ -69,4 +69,26 @@ public interface IWindowManager
 
     /// <summary>查询某个便签是否有打开的窗口。</summary>
     bool IsNoteOpen(Guid noteId);
+
+    /// <summary>
+    /// 告诉窗口层「进程要退出了」：此后关掉的每一个便签窗口都不是用户关的。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 只为一件事存在：<c>Application.Shutdown()</c> 会把每个便签窗口都走一遍 <c>Closed</c>，
+    /// 而那个事件里本来要做的是「用户把这张便签关掉了」——于是 <c>IsOpen</c> 被置为 <see langword="false"/>。
+    /// 不做这个区分的话，<strong>每一次正常退出都会把全部便签记成已关闭</strong>，
+    /// §17.3 承诺的「退出后下次启动自动恢复」就再也回不来。
+    /// </para>
+    /// <para>
+    /// <strong>必须在 <c>Application.Shutdown()</c> 之前调用</strong>，不能在 <c>App.OnExit</c> 里补——
+    /// 关窗发生在 <c>OnExit</c> <em>之前</em>（§17.4），那时候一颗窗口都不剩了。
+    /// 生产实现里那个「之前」在 <c>WpfApplicationLifetime</c>。
+    /// </para>
+    /// <para>
+    /// 不可撤销，也没有配套的「退出被取消」。§17.4 的 4b 分支（有便签没保存上、
+    /// 用户可以反悔）目前止步于 <c>StartupSequence</c> 内部，走不到这里。
+    /// </para>
+    /// </remarks>
+    void BeginShutdown();
 }

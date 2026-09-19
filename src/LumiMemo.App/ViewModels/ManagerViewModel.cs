@@ -46,6 +46,7 @@ public sealed partial class ManagerViewModel : ObservableObject
     private readonly INoteService _noteService;
     private readonly NoteViewModelFactory _viewModelFactory;
     private readonly IWindowManager _windowManager;
+    private readonly IManagerWindowPresenter _managerWindow;
     private readonly IDispatcher _dispatcher;
     private readonly IClock _clock;
     private readonly IUiTimer _searchTimer;
@@ -60,6 +61,7 @@ public sealed partial class ManagerViewModel : ObservableObject
         INoteService noteService,
         NoteViewModelFactory viewModelFactory,
         IWindowManager windowManager,
+        IManagerWindowPresenter managerWindow,
         IDispatcher dispatcher,
         IClock clock,
         IUiTimerFactory timers)
@@ -70,6 +72,7 @@ public sealed partial class ManagerViewModel : ObservableObject
         ArgumentNullException.ThrowIfNull(noteService);
         ArgumentNullException.ThrowIfNull(viewModelFactory);
         ArgumentNullException.ThrowIfNull(windowManager);
+        ArgumentNullException.ThrowIfNull(managerWindow);
         ArgumentNullException.ThrowIfNull(dispatcher);
         ArgumentNullException.ThrowIfNull(clock);
         ArgumentNullException.ThrowIfNull(timers);
@@ -80,6 +83,7 @@ public sealed partial class ManagerViewModel : ObservableObject
         _noteService = noteService;
         _viewModelFactory = viewModelFactory;
         _windowManager = windowManager;
+        _managerWindow = managerWindow;
         _dispatcher = dispatcher;
         _clock = clock;
         _searchTimer = timers.Create();
@@ -258,18 +262,35 @@ public sealed partial class ManagerViewModel : ObservableObject
     /// <c>ShowAllNotes()</c> 只负责「把已经有的窗口亮出来并激活第一个」。
     /// 前者不做后者的事，后者也不知道该显示哪些便签。
     /// </para>
+    /// <para>
+    /// <strong>一张都没得亮时退回到管理器窗口</strong>（最后一小段）。
+    /// §17.6 那三步只覆盖了「有便签可显示」的情形，而这条路有两个入口是用户换不掉的：
+    /// 双击托盘图标（§15.9 固定走它）与再启动一个实例（§17.2 的原话是「通知它把自己带到前台」）。
+    /// 若用户把每张便签都点过 ✕，程序就一个界面都没有了，那时点桌面图标毫无反应，
+    /// 在他眼里与「程序坏了」没有区别。
+    /// </para>
     /// </remarks>
     [RelayCommand]
     public void ShowAll()
     {
         _dispatcher.VerifyAccess();
 
-        foreach (NoteOpenRequest request in _noteService.OpenAll())
+        List<NoteOpenRequest> requests = [.. _noteService.OpenAll()];
+
+        foreach (NoteOpenRequest request in requests)
         {
             ShowNote(request.Note, request.Layout);
         }
 
         _windowManager.ShowAllNotes();
+
+        // 判据取 OpenAll() 的结果，而不是去问窗口层有几个窗口：§17.6 说
+        // 「OpenAll() 决定『应该有哪些窗口』」，它为空就是「没有该显示的」。
+        // 「窗口存在 ⟺ IsOpen 为真」是业务层与窗口层之间那条不变式，两边是同一件事。
+        if (requests.Count == 0)
+        {
+            _managerWindow.BringToFront();
+        }
     }
 
     /// <summary>把所有便签窗口收起来（不改变数据，也不写 layout）。</summary>

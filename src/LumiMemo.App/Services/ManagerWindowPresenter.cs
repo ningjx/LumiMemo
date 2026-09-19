@@ -9,6 +9,14 @@ namespace LumiMemo.App.Services;
 /// </summary>
 /// <remarks>
 /// <para>
+/// <strong>收的是工厂而不是窗口实例</strong>，这是被迫的：
+/// <see cref="ViewModels.ManagerViewModel.ShowAll"/> 在一条便签都没打开时要用它
+/// 把管理器自己带出来，于是依赖成了
+/// <c>ManagerViewModel</c> → 本类 → <c>ManagerWindow</c> → <c>ManagerViewModel</c>，
+/// 一个容器解不开的环。换成 <see cref="Func{TResult}"/> 之后这条边在构造期就断了，
+/// 而窗口仍然是那个单例——工厂每次返回的都是同一个对象。
+/// </para>
+/// <para>
 /// <strong>它调 <c>Show()</c> 而不担心「窗口已经关掉了」</strong>：管理器的关闭策略
 /// 走的是 <see cref="Window.Hide"/>（见 <c>TrayService</c>），它从来没有被
 /// <c>Close()</c> 过，因此可以反复 <c>Show()</c>。若哪天有人把那条策略改成
@@ -24,25 +32,27 @@ namespace LumiMemo.App.Services;
 /// </remarks>
 public sealed class ManagerWindowPresenter : IManagerWindowPresenter
 {
-    private readonly ManagerWindow _window;
+    private readonly Func<ManagerWindow> _windowFactory;
 
-    public ManagerWindowPresenter(ManagerWindow window)
+    public ManagerWindowPresenter(Func<ManagerWindow> windowFactory)
     {
-        ArgumentNullException.ThrowIfNull(window);
+        ArgumentNullException.ThrowIfNull(windowFactory);
 
-        _window = window;
+        _windowFactory = windowFactory;
     }
 
     /// <inheritdoc />
     public void BringToFront()
     {
-        if (_window.WindowState == WindowState.Minimized)
+        ManagerWindow window = _windowFactory();
+
+        if (window.WindowState == WindowState.Minimized)
         {
-            _window.WindowState = WindowState.Normal;
+            window.WindowState = WindowState.Normal;
         }
 
-        _window.Show();
+        window.Show();
 
-        _ = _window.Activate();
+        _ = window.Activate();
     }
 }

@@ -48,6 +48,7 @@ public sealed class ManagerHarness : IDisposable
                 Windows,
                 new WeakReferenceMessenger()),
             Windows,
+            Presenter,
             new ImmediateDispatcher(),
             Clock,
             SearchTimers);
@@ -67,6 +68,15 @@ public sealed class ManagerHarness : IDisposable
     public RecordingUiTimer SearchTimer => SearchTimers.Last;
 
     public RecordingWindowManager Windows { get; }
+
+    /// <summary>
+    /// 「把管理器窗口带出来」的记录型替身。
+    /// </summary>
+    /// <remarks>
+    /// 用得着它的用例只有一条：一张便签都没打开时 <c>ShowAll</c> 会不会退回到管理器。
+    /// 真去 <c>Show()</c> 一个窗口需要 STA 线程与消息泵，在测试进程里建不起来。
+    /// </remarks>
+    public RecordingManagerWindowPresenter Presenter { get; } = new();
 
     /// <summary>
     /// 拨到 <c>2026-09-19 12:00Z</c>。便签的时刻都取自同一套 <see cref="AtHours"/> 坐标，

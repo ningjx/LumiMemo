@@ -54,6 +54,9 @@ public sealed class WindowManager : IWindowManager, IDisposable
     private readonly ILogger<WindowManager> _logger;
     private readonly ShellForegroundWatcher _foreground = new();
 
+    /// <summary>进程正在退出：此后关掉的窗口都不算「用户关掉了这张便签」。见 <see cref="BeginShutdown"/>。</summary>
+    private bool _isShuttingDown;
+
     private readonly Dictionary<Guid, NoteWindow> _windows = [];
 
     /// <summary>
@@ -428,6 +431,9 @@ public sealed class WindowManager : IWindowManager, IDisposable
 
     /// <inheritdoc />
     public bool IsNoteOpen(Guid noteId) => _windows.ContainsKey(noteId);
+
+    /// <inheritdoc />
+    public void BeginShutdown() => _isShuttingDown = true;
 
     /// <summary>
     /// 按 §13.8 算好位置并写到窗口上。物理像素 → DIP 的换算就在这一行除法里。
@@ -829,7 +835,12 @@ public sealed class WindowManager : IWindowManager, IDisposable
         _lastKnownPredecessor.Remove(hwnd);
         _restorePending.Remove(hwnd);
 
-        _noteService.MarkNoteClosed(noteId);
+        // 退出过程中被关掉的那些，不算「用户关掉了这张便签」（见 BeginShutdown）。
+        // 退出时窗口仍然要解除映射、句柄仍然要清干净——跳过只是不回写 IsOpen。
+        if (!_isShuttingDown)
+        {
+            _noteService.MarkNoteClosed(noteId);
+        }
     }
 
     /// <inheritdoc />

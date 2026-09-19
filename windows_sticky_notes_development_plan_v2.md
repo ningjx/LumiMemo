@@ -4279,6 +4279,7 @@ if (!createdNew)
 - **必须是 `Hide()` 而不是 `Close()`**：WPF 的窗口一旦 `Close()` 过就不能再 `Show()`，"托盘菜单 → 便签列表"会直接抛 `InvalidOperationException`。这也让 `IManagerWindowPresenter.BringToFront` 里那句 `Show()` 是安全的重入。
 - **它依赖"`Application.Shutdown()` 会忽略 `Closing` 里的 `e.Cancel`"** 这行为（WPF 内部走的是 `Window.InternalClose(shutdown: true, ignoreCancel: true)`）。不成立的话，托盘菜单的「退出」会被这条策略挡下来——**这一条进 §22 的手工清单**，因为它只在真实进程里才验得到。
 - **"第一次点便签 ✕ 给一次性气泡"本轮推迟**：它需要一个 `AppSettings` 里不存在的"已提示过"字段，属于设置层的活。没有它也不会出错，只是用户少了那句解释。
+- **退出时关掉的窗口不算"用户关了这张便签"**：`Application.Shutdown()` 会把每个便签窗口都走一遍 `Closed` 事件，而 `WindowManager` 在那个事件里做的事是 `MarkNoteClosed`（`IsOpen = false`）。因此 `WpfApplicationLifetime` 在调 `Shutdown()` **之前**先调一次 `IWindowManager.BeginShutdown()`，让窗口层知道接下来这批关闭不是用户操作。**这一步不能挪到 `App.OnExit` 里补**——关窗发生在 `OnExit` 之前（§17.4），那时候窗口已经全关完了，标志设上也没有窗口可拦。少了它，每一次正常退出都会把全部便签记成已关闭，上面表格里"下次启动自动恢复"那一行就成了空话（本轮冒烟时实测到了：退出后 `layout.json` 里三张便签的 `isOpen` 全被清成 `false`）。
 
 ## 17.4 退出序列
 
@@ -4423,6 +4424,12 @@ IWindowManager.ShowAllNotes()             [App] 把已存在的窗口统一恢�
 ```
 
 **注意最后一步不是第一步**：`OpenAll()` 决定"应该有哪些窗口"，`ShowAllNotes()` 只负责"把已经有的窗口亮出来"（§14.2）。两者职责不能混。
+
+**实现说明（本轮已落地）**：上面那三步只覆盖了"有便签可显示"的情形，于是补了一条兜底——**`OpenAll()` 返回空时，把管理器窗口带到前台**（`ManagerViewModel.ShowAll` 的最后一段）。
+
+不补的话，用户把每张便签都点过 ✕ 之后程序就一个界面都没有了，而此时这条路有两个入口是用户换不掉的：**双击托盘图标**（§15.9 固定走它）与**再启动一个实例**（§17.2 的原话是"通知它把自己带到前台"）。那两下于是毫无反应，在用户眼里与"程序坏了"没有区别。
+
+兜底写在 `ShowAll` 里而不是各个入口上，理由与本节开头那条一样：**入口可以多，路径只能有一条**。判据取 `OpenAll()` 的结果而不是去问窗口层有几个窗口——`OpenAll()` 为空就是"没有该显示的"，这与"窗口存在 ⟺ `IsOpen` 为真"是同一条不变式的两面。
 
 **`RegisterHotKey` 失败的处理**：见 §16.3。不阻塞启动，记日志 + 设置页标注 + 首次托盘气泡提示。
 
