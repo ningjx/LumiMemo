@@ -59,4 +59,11 @@ public sealed class ImmediateDispatcher : IDispatcher
 
         return Task.CompletedTask;
     }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// 立刻完成：这里没有帧可让。分批开窗口的用例只需要「批次之间确实交了手」，
+    /// 而这件事由 <see cref="RecordingDispatcher"/> 记下来，不靠真的等一帧。
+    /// </remarks>
+    public Task YieldAsync() => Task.CompletedTask;
 }

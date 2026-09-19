@@ -63,7 +63,7 @@ public sealed class ManagerHarness : IDisposable
             Presenter,
             Shell,
             Dialogs,
-            new ImmediateDispatcher(),
+            Dispatcher,
             Clock,
             SearchTimers,
             Messenger);
@@ -104,6 +104,16 @@ public sealed class ManagerHarness : IDisposable
     public RecordingDialogService Dialogs { get; } = new();
 
     public RecordingShellLauncher Shell { get; } = new();
+
+    /// <summary>
+    /// 喂给 <see cref="Vm"/> 的那只调度器。
+    /// </summary>
+    /// <remarks>
+    /// 行为与 <see cref="ImmediateDispatcher"/> 完全一致，多出来的只是「每一次让帧都留个记号」，
+    /// 分批开窗口（§17.1 第 11 步）靠它才验得动——只数最后开了几张窗口，
+    /// 一个把二十扇窗一口气开完的实现也会给出同样的数字。
+    /// </remarks>
+    public RecordingDispatcher Dispatcher { get; } = new();
 
     /// <summary>
     /// 「把管理器窗口带出来」的记录型替身。

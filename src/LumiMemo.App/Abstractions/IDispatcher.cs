@@ -48,4 +48,22 @@ public interface IDispatcher
     /// 结果通过这个方法回到 UI 线程再写进 <c>NoteStore</c>。
     /// </remarks>
     Task InvokeAsync(Action action);
+
+    /// <summary>
+    /// 把续体排到 UI 线程的<strong>低优先级</strong>上，让当前排队的工作先跑完。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 与 <see cref="InvokeAsync"/> 的区别只在于<strong>排在哪一档</strong>：
+    /// 这个走 <c>DispatcherPriority.Background</c>，而 <c>Background</c> 排在
+    /// <c>Render</c> <strong>之后</strong>——也就是说重绘先跑，我们排在它后面等。
+    /// </para>
+    /// <para>
+    /// <strong>为什么非要低不可</strong>：给它的用途是「一批一批地开窗口」（§17.1 第 11 步）。
+    /// 一次开二十扇窗会让界面卡住几百毫秒，所以要在批次之间松手。
+    /// 而若用 <see cref="InvokeAsync"/>（<c>Normal</c>，比 <c>Render</c> 高），
+    /// 下一批会抢在重绘前面执行，界面照样卡——松了等于没松。
+    /// </para>
+    /// </remarks>
+    Task YieldAsync();
 }

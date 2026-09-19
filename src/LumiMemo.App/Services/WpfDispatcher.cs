@@ -64,4 +64,8 @@ public sealed class WpfDispatcher : IDispatcher
 
         return _dispatcher.InvokeAsync(action).Task;
     }
+
+    /// <inheritdoc />
+    public Task YieldAsync() =>
+        _dispatcher.InvokeAsync(static () => { }, DispatcherPriority.Background).Task;
 }

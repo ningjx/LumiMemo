@@ -399,6 +399,80 @@ public sealed class ManagerViewModelTests
         Assert.Contains($"ShowNote({note.Id})", h.Windows.Calls);
     }
 
+    // ================= 启动恢复上次开着的便签（§17.1 第 11 步） =================
+
+    [Fact]
+    public async Task 启动恢复_分批开窗_让出控制权时已经开出来的张数按批次走()
+    {
+        // 这条用例验的不是「最后开了几张」——一个把七扇窗一口气开完的实现也开七张。
+        // 验的是批次之间真的松了手，以及松手时已经开到第几张：
+        // 第一帧三个，之后每帧两个（§17.1 第 11 步的要点）。
+        using var h = new ManagerHarness();
+
+        List<Note> notes = [.. Enumerable.Range(0, 7).Select(_ => ManagerHarness.NewNote("# 便签"))];
+
+        foreach (Note note in notes)
+        {
+            h.Add(note);
+            h.NoteService.OpenAllResult.Add(new NoteOpenRequest(note, new NoteLayout { NoteId = note.Id }));
+        }
+
+        List<int> openedWhenYielded = [];
+
+        h.Dispatcher.OnYield = () => openedWhenYielded.Add(ShownCount(h));
+
+        int restored = await h.Vm.RestoreOpenNotesAsync();
+
+        // 让帧两次：3 → 5。最后一批开完不再让（那时已经无事可做），
+        // 所以七张对应 [3, 5] 而不是 [3, 5, 7]。
+        Assert.Equal(new[] { 3, 5 }, openedWhenYielded);
+        Assert.Equal(7, restored);
+
+        // 开出来的正是 OpenAll() 给的那几张、顺序一致：恢复窗口不自己挑拣也不重排。
+        Assert.Equal(
+            notes.Select(note => $"ShowNote({note.Id})"),
+            h.Windows.Calls.Where(call => call.StartsWith("ShowNote(", StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public async Task 启动恢复_三张以内一次开完_批次之间不让帧()
+    {
+        // 边界：恰好一个批次。让帧的意义是「给界面喘口气」，没有下一批要跑的时候让它
+        // 只会让调用方白等一轮消息泵——而首启时多数用户就只有那么两三张便签。
+        using var h = new ManagerHarness();
+
+        for (int i = 0; i < 3; i++)
+        {
+            Note note = ManagerHarness.NewNote("# 便签");
+
+            h.Add(note);
+            h.NoteService.OpenAllResult.Add(new NoteOpenRequest(note, new NoteLayout { NoteId = note.Id }));
+        }
+
+        Assert.Equal(3, await h.Vm.RestoreOpenNotesAsync());
+        Assert.Empty(h.Dispatcher.YieldOrder);
+    }
+
+    [Fact]
+    public async Task 启动恢复_没有该恢复的便签时什么都不做()
+    {
+        // 首启就是这个样子：没有 layout.json，OpenAll() 返回空。
+        // 「不判断是不是第一次启动」这件事全靠这条——判据只有一个，
+        // 于是不可能出现「首启弹了」或「重开不恢复」这种一半对一半错的状态。
+        using var h = new ManagerHarness();
+
+        Assert.Empty(h.NoteService.OpenAllResult);
+
+        Assert.Equal(0, await h.Vm.RestoreOpenNotesAsync());
+        Assert.Empty(h.Windows.Calls);
+        Assert.Empty(h.Dispatcher.YieldOrder);
+
+        // 与 ShowAll 刻意不同：一张都没恢复时**不**去把管理器窗口带到前台。
+        // 那一步是给「用户主动要求显示全部便签」用的兜底，而启动时管理器
+        // 已经在 StartupSequence 里显示并且激活过了（§17.3）。
+        Assert.Equal(0, h.Presenter.BringToFrontCount);
+    }
+
     // ================= 删除（列表项右键菜单） =================
 
     [Fact]
@@ -1215,4 +1289,11 @@ public sealed class ManagerViewModelTests
         Assert.Single(h.Vm.Notes);
         Assert.Equal("1 条便签", h.Vm.CountText);
     }
+
+    /// <summary>到这一刻为止一共开出了几张便签窗口。</summary>
+    /// <remarks>
+    /// 只数 <c>ShowNote</c>：窗口层上别的方法也可能被调到，而分批策略只管开窗那一步。
+    /// </remarks>
+    private static int ShownCount(ManagerHarness h) =>
+        h.Windows.Calls.Count(call => call.StartsWith("ShowNote(", StringComparison.Ordinal));
 }

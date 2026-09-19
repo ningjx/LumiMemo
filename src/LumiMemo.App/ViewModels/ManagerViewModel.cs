@@ -50,6 +50,17 @@ public sealed partial class ManagerViewModel : ObservableObject
     /// </remarks>
     public const int MaxRenderedResults = 200;
 
+    /// <summary>启动恢复时第一批开几张（§17.1 第 11 步的「第一帧打开前 3 个」）。</summary>
+    private const int FirstBatchSize = 3;
+
+    /// <summary>启动恢复时每批开几张（§17.1 第 11 步的「之后每帧再开 2 个」）。</summary>
+    /// <remarks>
+    /// 这两个数字来自文档，不是调出来的经验值。要动它们的话，先看清
+    /// <see cref="RestoreOpenNotesAsync"/> 那条备注里「最后一批不让帧」的约定——
+    /// 它决定了「开 N 张会让几次帧」，而测试钉的正是那串数字。
+    /// </remarks>
+    private const int SubsequentBatchSize = 2;
+
     private readonly NoteStore _store;
     private readonly SearchIndex _index;
     private readonly LayoutService _layoutService;
@@ -720,6 +731,63 @@ public sealed partial class ManagerViewModel : ObservableObject
         {
             _managerWindow.BringToFront();
         }
+    }
+
+    /// <summary>§17.1 第 11 步：把上次退出时开着的便签重新开出来，分批进行。返回一共开了几张。</summary>
+    /// <remarks>
+    /// <para>
+    /// 「上次开着」完全由 <c>layout.json</c> 里的 <c>isOpen</c> 决定，判据只有一个——
+    /// 与 <see cref="ShowAll"/> 读的是同一个 <c>OpenAll()</c>。
+    /// <strong>因此不需要判断「这是不是第一次启动」</strong>：首启时没有布局档，
+    /// <c>OpenAll()</c> 自然返回空，这个方法就什么都不做，§17.1 的「首次启动不自动弹便签」
+    /// 因此不需要一条专门的规则。两件事共用一条判据，就不会出现「首启弹了」
+    /// 或「重开不恢复」这种一半对一半错的状态。
+    /// </para>
+    /// <para>
+    /// <strong>分批是必需的，不是优化</strong>（§17.1 要点）：一次开二十扇窗，每扇都要造
+    /// ViewModel、建 HWND、走布局，合起来会让第一帧卡住几百毫秒。所以第一批
+    /// <see cref="FirstBatchSize"/> 个，之后每批 <see cref="SubsequentBatchSize"/> 个，
+    /// 批次之间把控制权交还给消息泵。
+    /// </para>
+    /// <para>
+    /// 交还用的是 <c>YieldAsync</c>（<c>DispatcherPriority.Background</c>），
+    /// <strong>不是 <c>InvokeAsync</c></strong>：后者排在 <c>Normal</c>，比重绘所在的
+    /// <c>Render</c> 还高，下一批会抢在重绘前面执行，界面照样卡。细节见 <c>IDispatcher.YieldAsync</c> 的说明。
+    /// </para>
+    /// <para>
+    /// <strong>最后一批开完不再让帧</strong>：那时已经无事可做，白让一帧只会让调用方多等一轮消息泵。
+    /// 于是「开 N 张会让几次帧」的答案是 <c>ceil((N-3)/2)</c> 与 <c>0</c> 取大——
+    /// 三张以内一次都不让，七张让两次（3 与 5 那两个点上）。
+    /// </para>
+    /// <para>
+    /// 不 <c>ConfigureAwait(false)</c>：每一批都要开窗，而开窗必须在 UI 线程上（§3.4 规则 T1）。
+    /// </para>
+    /// </remarks>
+    public async Task<int> RestoreOpenNotesAsync()
+    {
+        _dispatcher.VerifyAccess();
+
+        List<NoteOpenRequest> requests = [.. _noteService.OpenAll()];
+
+        int opened = 0;
+
+        while (opened < requests.Count)
+        {
+            int batch = opened == 0 ? FirstBatchSize : SubsequentBatchSize;
+            int end = Math.Min(opened + batch, requests.Count);
+
+            for (; opened < end; opened++)
+            {
+                ShowNote(requests[opened].Note, requests[opened].Layout);
+            }
+
+            if (opened < requests.Count)
+            {
+                await _dispatcher.YieldAsync();
+            }
+        }
+
+        return opened;
     }
 
     /// <summary>把所有便签窗口收起来（不改变数据，也不写 layout）。</summary>
