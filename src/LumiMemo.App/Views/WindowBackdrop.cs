@@ -2,7 +2,6 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Interop;
 using System.Windows.Media;
-using System.Windows.Threading;
 using LumiMemo.Infrastructure.Windows;
 
 namespace LumiMemo.App.Views;
@@ -41,13 +40,6 @@ public static class WindowBackdrop
 
         if (e.NewValue is true)
         {
-            window.Activated -= OnActivationChanged;
-            window.Deactivated -= OnActivationChanged;
-            window.Closed -= OnWindowClosed;
-            window.Activated += OnActivationChanged;
-            window.Deactivated += OnActivationChanged;
-            window.Closed += OnWindowClosed;
-
             if (PresentationSource.FromVisual(window) is HwndSource)
             {
                 Apply(window);
@@ -60,40 +52,11 @@ public static class WindowBackdrop
         else
         {
             window.SourceInitialized -= OnSourceInitialized;
-            window.Activated -= OnActivationChanged;
-            window.Deactivated -= OnActivationChanged;
-            window.Closed -= OnWindowClosed;
             if (PresentationSource.FromVisual(window) is HwndSource)
             {
                 Remove(window);
             }
         }
-    }
-
-    private static void OnActivationChanged(object? sender, EventArgs e)
-    {
-        var window = (Window)sender!;
-
-        // DWM 会在激活状态切换完成时重新评估系统背景材质。若只在
-        // SourceInitialized 设置一次，某些系统版本会把失焦窗口退回实色后不再恢复。
-        // 排到本轮激活消息之后重申属性，避免与 DWM 自己的处理顺序互相覆盖。
-        window.Dispatcher.BeginInvoke(
-            DispatcherPriority.Background,
-            new Action(() =>
-            {
-                if (GetEnabled(window) && window.IsVisible)
-                {
-                    Apply(window);
-                }
-            }));
-    }
-
-    private static void OnWindowClosed(object? sender, EventArgs e)
-    {
-        var window = (Window)sender!;
-        window.Activated -= OnActivationChanged;
-        window.Deactivated -= OnActivationChanged;
-        window.Closed -= OnWindowClosed;
     }
 
     private static void OnSourceInitialized(object? sender, EventArgs e)
