@@ -16,6 +16,7 @@ public sealed partial class MainWindow : Window
 {
     private DesktopAcrylicController? _acrylicController;
     private SystemBackdropConfiguration? _backdropConfiguration;
+    private readonly AppWindow _appWindow;
     private readonly RichEditorHost _editor;
     private readonly Note _note;
     private readonly INoteRepository _repository;
@@ -50,6 +51,7 @@ public sealed partial class MainWindow : Window
         ArgumentNullException.ThrowIfNull(onNoteChanged);
 
         InitializeComponent();
+        _appWindow = AppWindow;
 
         _note = note;
         _repository = repository;
@@ -74,7 +76,8 @@ public sealed partial class MainWindow : Window
 
         TitleText.Text = note.Title;
         EditorHost.Loaded += OnEditorHostLoaded;
-        AppWindow.Closing += OnWindowClosing;
+        _appWindow.Closing += OnWindowClosing;
+        Closed += OnWindowClosed;
         UpdateStatus(note.Content);
     }
 
@@ -241,7 +244,14 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private void OnCloseClick(object sender, RoutedEventArgs e) => Close();
+    private void OnCloseClick(object sender, RoutedEventArgs e)
+    {
+        if (SavePendingOnClose())
+        {
+            CaptureLayout();
+            Close();
+        }
+    }
 
     public void ShowFromTray()
     {
@@ -267,32 +277,55 @@ public sealed partial class MainWindow : Window
     public void CloseForExit()
     {
         _isApplicationExiting = true;
-        Close();
+        if (SavePendingOnClose())
+        {
+            CaptureLayout();
+            Close();
+        }
     }
 
     public void HideWindow() => AppWindow.Hide();
 
     private void OnWindowClosing(AppWindow sender, AppWindowClosingEventArgs args)
     {
-        _saveTimer.Stop();
-        if (_hasPendingSave)
+        if (!SavePendingOnClose())
         {
-            try
-            {
-                _note.RichTextContent = _editor.SaveRtf();
-                _repository.SaveAsync(_note).GetAwaiter().GetResult();
-                _hasPendingSave = false;
-            }
-            catch (Exception)
-            {
-                args.Cancel = true;
-                StatusText.Text = $"保存失败 · {CountCharacters(_note.Content)} 字";
-                return;
-            }
+            args.Cancel = true;
+            return;
         }
 
-        AppWindow.Changed -= OnAppWindowChanged;
         CaptureLayout();
+    }
+
+    private bool SavePendingOnClose()
+    {
+        _saveTimer.Stop();
+        if (!_hasPendingSave)
+        {
+            return true;
+        }
+
+        try
+        {
+            _note.RichTextContent = _editor.SaveRtf();
+            _repository.SaveAsync(_note).GetAwaiter().GetResult();
+            _hasPendingSave = false;
+            return true;
+        }
+        catch (Exception)
+        {
+            StatusText.Text = $"保存失败 · {CountCharacters(_note.Content)} 字";
+            return false;
+        }
+    }
+
+    private void OnWindowClosed(object sender, WindowEventArgs args)
+    {
+        Closed -= OnWindowClosed;
+        _onClosed(_note.Id);
+        _appWindow.Changed -= OnAppWindowChanged;
+        _appWindow.Closing -= OnWindowClosing;
+        _saveTimer.Stop();
         if (!_isApplicationExiting)
         {
             _layout.IsOpen = false;
@@ -314,7 +347,6 @@ public sealed partial class MainWindow : Window
         _acrylicController?.Dispose();
         _acrylicController = null;
         _backdropConfiguration = null;
-        _onClosed(_note.Id);
     }
 
     private void OnAppWindowChanged(AppWindow sender, AppWindowChangedEventArgs args)
