@@ -109,7 +109,11 @@ public static class WindowBackdrop
         IntPtr hwnd = new WindowInteropHelper(window).Handle;
         WindowInterop.PreferRoundedCorners(hwnd);
 
-        if (!WindowInterop.TryEnableAcrylic(hwnd)
+        bool applied = window.IsActive
+            ? WindowInterop.TryEnableAcrylic(hwnd)
+            : WindowInterop.TryEnableInactiveAcrylic(hwnd);
+
+        if (!applied
             || HwndSource.FromHwnd(hwnd)?.CompositionTarget is not { } composition)
         {
             return;
