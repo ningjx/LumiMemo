@@ -11,6 +11,8 @@
 // ---- D.1 窗口外观与 DWM ----
 DwmSetWindowAttribute
 DwmExtendFrameIntoClientArea
+DWM_SYSTEMBACKDROP_TYPE
+DWM_WINDOW_CORNER_PREFERENCE
 // 附录 D.1 写的是 GetWindowLongPtr / SetWindowLongPtr（不带后缀）。CsWin32 的元数据里
 // 只有 GetWindowLongPtrW / GetWindowLongPtrA 这一对，它的友好名表没有收录这两个，
 // 直接写不带后缀的名字会报 PInvoke001。本项目只做 Unicode，因此固定用 W 版本。

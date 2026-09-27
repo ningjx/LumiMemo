@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Input;
 using System.Windows.Threading;
 using LumiMemo.App.Services;
+using LumiMemo.App.Text;
 using LumiMemo.App.ViewModels;
 
 namespace LumiMemo.App.Views;
@@ -86,6 +87,55 @@ public partial class NoteWindow : Window
     }
 
     private void OnCloseClick(object sender, RoutedEventArgs e) => Close();
+
+    private void OnFormatClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: string format })
+        {
+            ApplyFormat(format);
+        }
+    }
+
+    private void OnEditorPreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        ModifierKeys modifiers = Keyboard.Modifiers;
+        string? format = (e.Key, modifiers) switch
+        {
+            (Key.B, ModifierKeys.Control) => "Bold",
+            (Key.I, ModifierKeys.Control) => "Italic",
+            (Key.U, ModifierKeys.Control) => "Underline",
+            (Key.X, ModifierKeys.Control | ModifierKeys.Shift) => "Strikethrough",
+            _ => null,
+        };
+
+        if (format is null)
+        {
+            return;
+        }
+
+        e.Handled = true;
+        ApplyFormat(format);
+    }
+
+    /// <summary>把工具栏动作翻译成 Markdown 文本编辑，并恢复编辑器焦点与选区。</summary>
+    private void ApplyFormat(string format)
+    {
+        MarkdownTextEdit edit = format switch
+        {
+            "Bold" => MarkdownTextEditing.ToggleInline(Editor.Text, Editor.SelectionStart, Editor.SelectionLength, "**", "**"),
+            "Italic" => MarkdownTextEditing.ToggleInline(Editor.Text, Editor.SelectionStart, Editor.SelectionLength, "_", "_"),
+            // Markdown 没有原生下划线语法；内嵌 HTML 可被 Markdig 与常见 Markdown 编辑器识别。
+            "Underline" => MarkdownTextEditing.ToggleInline(Editor.Text, Editor.SelectionStart, Editor.SelectionLength, "<u>", "</u>"),
+            "Strikethrough" => MarkdownTextEditing.ToggleInline(Editor.Text, Editor.SelectionStart, Editor.SelectionLength, "~~", "~~"),
+            "TaskList" => MarkdownTextEditing.ToggleLinePrefix(Editor.Text, Editor.SelectionStart, Editor.SelectionLength, "- [ ] "),
+            "BulletList" => MarkdownTextEditing.ToggleLinePrefix(Editor.Text, Editor.SelectionStart, Editor.SelectionLength, "- "),
+            _ => throw new ArgumentOutOfRangeException(nameof(format), format, "未知的格式工具。"),
+        };
+
+        Editor.SetCurrentValue(System.Windows.Controls.TextBox.TextProperty, edit.Text);
+        Editor.Select(edit.SelectionStart, edit.SelectionLength);
+        _ = Editor.Focus();
+    }
 
     /// <summary>
     /// 关窗前把还没落盘的内容存掉（§17.3）。

@@ -4,14 +4,17 @@
         xmlns:conv="clr-namespace:LumiMemo.App.Views.Converters"
         xmlns:views="clr-namespace:LumiMemo.App.Views"
         xmlns:models="clr-namespace:LumiMemo.Core.Models;assembly=LumiMemo.Core"
+        xmlns:fx="clr-namespace:LumiMemo.App.Views"
         Title="LumiMemo"
         Width="720"
         Height="520"
         MinWidth="480"
         MinHeight="360"
         WindowStartupLocation="CenterScreen"
-        Background="#FFFDFBF3"
-        FontFamily="Microsoft YaHei UI"
+        fx:WindowBackdrop.Enabled="{DynamicResource LumiUseSystemBackdrop}"
+        Background="{DynamicResource LumiWindowSurfaceBrush}"
+        Foreground="{DynamicResource LumiTextBrush}"
+        FontFamily="{DynamicResource LumiFontFamily}"
         FontSize="14">
 
   <!--
@@ -42,7 +45,7 @@
         <Setter Property="Padding" Value="12,6" />
         <Setter Property="Margin" Value="0,0,8,0" />
         <Setter Property="Background" Value="Transparent" />
-        <Setter Property="BorderBrush" Value="#FFD9D2B8" />
+        <Setter Property="BorderBrush" Value="{DynamicResource LumiBorderBrush}" />
         <Setter Property="BorderThickness" Value="1" />
         <Setter Property="Cursor" Value="Hand" />
         <Setter Property="Template">
@@ -52,15 +55,18 @@
                       Background="{TemplateBinding Background}"
                       BorderBrush="{TemplateBinding BorderBrush}"
                       BorderThickness="{TemplateBinding BorderThickness}"
-                      CornerRadius="4">
+                      CornerRadius="10">
                 <ContentPresenter Margin="{TemplateBinding Padding}"
                                   HorizontalAlignment="Center"
                                   VerticalAlignment="Center" />
               </Border>
               <ControlTemplate.Triggers>
                 <Trigger Property="IsMouseOver" Value="True">
-                  <Setter TargetName="Chrome" Property="Background" Value="#FFF7E9A0" />
-                </Trigger>
+                  <Setter TargetName="Chrome" Property="Background" Value="{DynamicResource LumiHoverSurfaceBrush}" />
+              </Trigger>
+              <Trigger Property="IsPressed" Value="True">
+                <Setter TargetName="Chrome" Property="Background" Value="{DynamicResource LumiPressedSurfaceBrush}" />
+              </Trigger>
               </ControlTemplate.Triggers>
             </ControlTemplate>
           </Setter.Value>
@@ -77,23 +83,23 @@
         <Setter Property="Padding" Value="10,2" />
         <Setter Property="Margin" Value="0,0,6,0" />
         <Setter Property="FontSize" Value="12" />
-        <Setter Property="Foreground" Value="#FF6B6555" />
+        <Setter Property="Foreground" Value="{DynamicResource LumiFilterTextBrush}" />
         <Setter Property="Cursor" Value="Hand" />
         <Setter Property="Template">
           <Setter.Value>
             <ControlTemplate TargetType="ToggleButton">
               <Border x:Name="Chip"
-                      Background="#FFFFFDF6"
-                      BorderBrush="#FFD9D2B8"
+                      Background="{DynamicResource LumiControlSurfaceBrush}"
+                      BorderBrush="{DynamicResource LumiBorderBrush}"
                       BorderThickness="1"
-                      CornerRadius="10">
+                      CornerRadius="12">
                 <ContentPresenter Margin="{TemplateBinding Padding}"
                                   HorizontalAlignment="Center"
                                   VerticalAlignment="Center" />
               </Border>
               <ControlTemplate.Triggers>
                 <Trigger Property="IsMouseOver" Value="True">
-                  <Setter TargetName="Chip" Property="Background" Value="#FFF7E9A0" />
+                  <Setter TargetName="Chip" Property="Background" Value="{DynamicResource LumiToolbarSurfaceBrush}" />
                 </Trigger>
 
                 <!--
@@ -101,9 +107,9 @@
                   否则鼠标停在已勾中的那一颗上，它会退回悬停色，看着像被取消了。
                 -->
                 <Trigger Property="IsChecked" Value="True">
-                  <Setter TargetName="Chip" Property="Background" Value="#FFB58900" />
-                  <Setter TargetName="Chip" Property="BorderBrush" Value="#FFB58900" />
-                  <Setter Property="Foreground" Value="#FFFFFDF6" />
+                  <Setter TargetName="Chip" Property="Background" Value="{DynamicResource LumiAccentBrush}" />
+                  <Setter TargetName="Chip" Property="BorderBrush" Value="{DynamicResource LumiAccentBrush}" />
+                  <Setter Property="Foreground" Value="{DynamicResource LumiOnAccentBrush}" />
                 </Trigger>
               </ControlTemplate.Triggers>
             </ControlTemplate>
@@ -122,8 +128,8 @@
         <Setter Property="FontSize" Value="12" />
         <Style.Triggers>
           <DataTrigger Binding="{Binding IsFilterAll}" Value="True">
-            <Setter Property="Background" Value="#FFF7E9A0" />
-            <Setter Property="BorderBrush" Value="#FFB58900" />
+            <Setter Property="Background" Value="{DynamicResource LumiToolbarSurfaceBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource LumiAccentBrush}" />
           </DataTrigger>
         </Style.Triggers>
       </Style>
@@ -139,7 +145,7 @@
     </Grid.RowDefinitions>
 
     <!-- 工具条 -->
-    <Border Grid.Row="0" Background="#FFF7E9A0" Padding="12,10">
+    <Border Grid.Row="0" Background="{DynamicResource LumiToolbarSurfaceBrush}" Padding="12,10">
       <Grid>
         <Grid.ColumnDefinitions>
           <ColumnDefinition Width="Auto" />
@@ -158,17 +164,20 @@
           LostFocus，那样去抖定时器要等用户点到别处才起步，"输入停止 150ms 后搜索"就成了空话。
         -->
         <Grid Grid.Column="1" Margin="24,0,16,0" VerticalAlignment="Center">
+          <Border Background="{DynamicResource LumiControlSurfaceBrush}"
+                  BorderBrush="{DynamicResource LumiBorderBrush}"
+                  BorderThickness="1"
+                  CornerRadius="12" />
           <TextBox Text="{Binding SearchQuery, UpdateSourceTrigger=PropertyChanged}"
-                   Padding="6,4"
-                   Background="#FFFFFDF6"
-                   BorderBrush="#FFD9D2B8"
-                   BorderThickness="1" />
+                   Padding="11,7"
+                   Background="Transparent"
+                   BorderThickness="0" />
 
           <!-- 占位提示。WPF 的 TextBox 没有内置占位符，只能自己叠一层 -->
           <TextBlock Text="搜索便签…"
-                     Margin="9,0,0,0"
+                     Margin="12,0,0,0"
                      VerticalAlignment="Center"
-                     Foreground="#FF9A9484"
+                     Foreground="{DynamicResource LumiPlaceholderTextBrush}"
                      IsHitTestVisible="False">
             <TextBlock.Style>
               <Style TargetType="TextBlock">
@@ -221,7 +230,7 @@
       过滤条（§15.8）。三个条件是「与」关系：勾了"置顶"和"最近 7 天"就是两者同时满足。
       「全部」在语义上是"一个条件都不勾"，所以它不是第四个勾选框，见上面 FilterReset 的说明。
     -->
-    <Border Grid.Row="1" Background="#FFF2EDDC" Padding="12,7">
+    <Border Grid.Row="1" Background="{DynamicResource LumiSectionSurfaceBrush}" Padding="12,7">
       <StackPanel Orientation="Horizontal">
         <Button Style="{StaticResource FilterReset}"
                 Content="全部"
@@ -238,6 +247,9 @@
       </StackPanel>
     </Border>
 
+    <!-- 列表下方保持足够实的玻璃内容层，让正文不受桌面壁纸影响。 -->
+    <Border Grid.Row="2" Background="{DynamicResource LumiContentPanelBrush}" />
+
     <!-- 便签列表 -->
     <ListBox x:Name="NoteList"
              Grid.Row="2"
@@ -252,6 +264,34 @@
              ScrollViewer.CanContentScroll="True"
              VirtualizingStackPanel.IsVirtualizing="True"
              VirtualizingStackPanel.VirtualizationMode="Recycling">
+
+      <ListBox.ItemContainerStyle>
+        <Style TargetType="ListBoxItem">
+          <Setter Property="Padding" Value="0" />
+          <Setter Property="Margin" Value="10,3" />
+          <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+          <Setter Property="Template">
+            <Setter.Value>
+              <ControlTemplate TargetType="ListBoxItem">
+                <Border x:Name="ItemSurface" Background="Transparent" BorderBrush="Transparent" BorderThickness="1" CornerRadius="12">
+                  <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" />
+                </Border>
+                <ControlTemplate.Triggers>
+                  <Trigger Property="IsMouseOver" Value="True">
+                    <Setter TargetName="ItemSurface" Property="Background" Value="{DynamicResource LumiHoverSurfaceBrush}" />
+                  </Trigger>
+                  <Trigger Property="IsSelected" Value="True">
+                    <Setter TargetName="ItemSurface" Property="Background" Value="{DynamicResource LumiSelectedSurfaceBrush}" />
+                  </Trigger>
+                  <Trigger Property="IsKeyboardFocusWithin" Value="True">
+                    <Setter TargetName="ItemSurface" Property="BorderBrush" Value="{DynamicResource LumiAccentBrush}" />
+                  </Trigger>
+                </ControlTemplate.Triggers>
+              </ControlTemplate>
+            </Setter.Value>
+          </Setter>
+        </Style>
+      </ListBox.ItemContainerStyle>
 
       <!--
         虚拟化（§15.8 规格里要求"必须确认 IsVirtualizing 没被关掉"）。
@@ -300,15 +340,15 @@
               </ItemsControl.ItemsPanel>
               <ItemsControl.ItemTemplate>
                 <DataTemplate>
-                  <Border Background="#FFF0E8C8"
-                          BorderBrush="#FFE0D6B4"
+                  <Border Background="{DynamicResource LumiRaisedSurfaceBrush}"
+                          BorderBrush="{DynamicResource LumiSubtleBorderBrush}"
                           BorderThickness="1"
-                          CornerRadius="3"
+                          CornerRadius="8"
                           Padding="5,0"
                           Margin="0,0,4,0">
                     <TextBlock Text="{Binding}"
                                FontSize="11"
-                               Foreground="#FF7A7460" />
+                               Foreground="{DynamicResource LumiSecondaryTextBrush}" />
                   </Border>
                 </DataTemplate>
               </ItemsControl.ItemTemplate>
@@ -326,7 +366,7 @@
                                     Grid.Column="2"
                                     Segments="{Binding SubtitleSegments}"
                                     FontSize="12"
-                                    Foreground="#FF8A8578"
+                                    Foreground="{DynamicResource LumiTertiaryTextBrush}"
                                     MaxWidth="320"
                                     Margin="12,0,0,0"
                                     TextTrimming="CharacterEllipsis" />
@@ -362,12 +402,8 @@
         DataContext 显式绑到 PlacementTarget —— ContextMenu 是独立的 Popup，
         不在 ListBox 的视觉树里，靠继承拿不到 ViewModel。
 
-        试过改挂到 ItemContainerStyle 上（那样空白处的右键就不必再拦），行不通：
-        ItemContainerStyle 里一个不带 BasedOn 的隐式 Style 会把 ListBoxItem 的
-        默认样式整个替换掉，连 Template 一起——列表项当场就不正常了。
-        要挂也行，得补 BasedOn="{StaticResource {x:Type ListBoxItem}}"，
-        但那是为了绕开一个本来就不存在的问题：空白处的右键已经有
-        ContextMenuOpening 在拦（见 ManagerWindow.xaml.cs）。
+        圆角列表项通过上面的 ItemContainerStyle 提供完整模板；右键菜单仍只建一份。
+        空白处的右键由 ContextMenuOpening 拦截（见 ManagerWindow.xaml.cs）。
 
         规格那一行的五项如今齐了。分隔线以上是「改这张便签自己」，以下是「跟外头打交道」。
       -->
@@ -531,7 +567,7 @@
     </TextBlock>
 
     <!-- 状态栏 -->
-    <Border Grid.Row="3" Background="#FFF2EDDC" Padding="12,6">
+    <Border Grid.Row="3" Background="{DynamicResource LumiSectionSurfaceBrush}" Padding="12,6">
       <Grid>
         <TextBlock Text="{Binding CountText}" FontSize="12" Opacity="0.7" />
 
@@ -539,7 +575,7 @@
         <TextBlock Text="{Binding OverflowHint}"
                    HorizontalAlignment="Right"
                    FontSize="12"
-                   Foreground="#FFB58900"
+                   Foreground="{DynamicResource LumiAccentBrush}"
                    TextTrimming="CharacterEllipsis" />
       </Grid>
     </Border>
