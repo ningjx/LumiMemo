@@ -16,7 +16,7 @@ public sealed partial class MainWindow : Window
 {
     private DesktopAcrylicController? _acrylicController;
     private SystemBackdropConfiguration? _backdropConfiguration;
-    private readonly MarkdownEditorHost _editor;
+    private readonly NativeEditorHost _editor;
     private readonly Note _note;
     private readonly INoteRepository _repository;
     private readonly IClock _clock;
@@ -62,7 +62,7 @@ public sealed partial class MainWindow : Window
         };
         _saveTimer.Tick += OnSaveTimerTick;
 
-        _editor = new MarkdownEditorHost(EditorHost);
+        _editor = new NativeEditorHost(EditorHost);
 
         Title = "LumiMemo";
         ExtendsContentIntoTitleBar = true;
