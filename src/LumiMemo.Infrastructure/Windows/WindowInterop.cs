@@ -1,6 +1,8 @@
 // 命名空间与 CsWin32 的 Windows.Win32 撞名，只能用 global:: 前缀，理由见 MonitorEnumerator.cs 顶部。
 using global::Windows.Win32;
 using global::Windows.Win32.Foundation;
+using global::Windows.Win32.Graphics.Dwm;
+using global::Windows.Win32.UI.Controls;
 using global::Windows.Win32.UI.WindowsAndMessaging;
 
 namespace LumiMemo.Infrastructure.Windows;
@@ -16,6 +18,63 @@ namespace LumiMemo.Infrastructure.Windows;
 /// </remarks>
 public static class WindowInterop
 {
+    /// <summary>请求 Windows 11 的桌面 Acrylic；旧系统由调用方保留实色背景。</summary>
+    public static unsafe bool TryEnableAcrylic(IntPtr hwnd)
+    {
+        if (hwnd == IntPtr.Zero || !OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22621))
+        {
+            return false;
+        }
+
+        DWM_SYSTEMBACKDROP_TYPE backdrop = DWM_SYSTEMBACKDROP_TYPE.DWMSBT_TRANSIENTWINDOW;
+        if (PInvoke.DwmSetWindowAttribute(
+                new HWND(hwnd),
+                DWMWINDOWATTRIBUTE.DWMWA_SYSTEMBACKDROP_TYPE,
+                &backdrop,
+                (uint)sizeof(DWM_SYSTEMBACKDROP_TYPE)) != 0)
+        {
+            return false;
+        }
+
+        // 整个客户区都交给 DWM；WPF 再叠可读的半透明内容面板。
+        var margins = new MARGINS { cxLeftWidth = -1 };
+        return PInvoke.DwmExtendFrameIntoClientArea(new HWND(hwnd), in margins) == 0;
+    }
+
+    /// <summary>换成非玻璃主题时撤销系统背景材质。</summary>
+    public static unsafe void DisableAcrylic(IntPtr hwnd)
+    {
+        if (hwnd == IntPtr.Zero || !OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22621))
+        {
+            return;
+        }
+
+        DWM_SYSTEMBACKDROP_TYPE backdrop = DWM_SYSTEMBACKDROP_TYPE.DWMSBT_NONE;
+        _ = PInvoke.DwmSetWindowAttribute(
+            new HWND(hwnd),
+            DWMWINDOWATTRIBUTE.DWMWA_SYSTEMBACKDROP_TYPE,
+            &backdrop,
+            (uint)sizeof(DWM_SYSTEMBACKDROP_TYPE));
+        var margins = new MARGINS();
+        _ = PInvoke.DwmExtendFrameIntoClientArea(new HWND(hwnd), in margins);
+    }
+
+    /// <summary>要求系统绘制窗口圆角；被系统策略忽略时仍可正常使用窗口。</summary>
+    public static unsafe void PreferRoundedCorners(IntPtr hwnd)
+    {
+        if (hwnd == IntPtr.Zero || !OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000))
+        {
+            return;
+        }
+
+        DWM_WINDOW_CORNER_PREFERENCE corners = DWM_WINDOW_CORNER_PREFERENCE.DWMWCP_ROUND;
+        _ = PInvoke.DwmSetWindowAttribute(
+            new HWND(hwnd),
+            DWMWINDOWATTRIBUTE.DWMWA_WINDOW_CORNER_PREFERENCE,
+            &corners,
+            (uint)sizeof(DWM_WINDOW_CORNER_PREFERENCE));
+    }
+
     /// <summary>
     /// <c>HWND_TOPMOST</c>。出现在元数据里的只有它的兄弟 <c>HWND_TOP</c>，
     /// 而那两个"置顶档"的哨兵值是宏，CsWin32 不会为它们生成常量。

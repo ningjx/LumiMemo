@@ -87,6 +87,8 @@ public partial class NoteWindow : Window
 
     private void OnCloseClick(object sender, RoutedEventArgs e) => Close();
 
+    private void OnClosed(object? sender, EventArgs e) => Editor.Dispose();
+
     /// <summary>
     /// 关窗前把还没落盘的内容存掉（§17.3）。
     /// </summary>

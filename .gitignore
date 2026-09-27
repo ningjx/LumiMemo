@@ -30,6 +30,7 @@ coverage*.xml
 packages/
 !packages/build/
 .nuget/
+node_modules/
 
 # ---- 本程序的运行时数据（正常在 %LOCALAPPDATA%，防止误设在仓库内）----
 settings.json

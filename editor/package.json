@@ -1,0 +1,17 @@
+{
+  "name": "lumimemo-editor",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "build": "tsc --noEmit && vite build"
+  },
+  "dependencies": {
+    "@milkdown/crepe": "7.22.2",
+    "@milkdown/kit": "7.22.2"
+  },
+  "devDependencies": {
+    "typescript": "5.9.2",
+    "vite": "7.1.7"
+  }
+}

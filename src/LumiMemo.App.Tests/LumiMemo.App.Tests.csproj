@@ -7,7 +7,7 @@
       这不影响 §21.1 的前提——ViewModel 依然不依赖 WPF 的具体类型，
       只是测试宿主的 TFM 得对上。
     -->
-    <TargetFramework>net10.0-windows</TargetFramework>
+    <TargetFramework>net10.0-windows10.0.17763.0</TargetFramework>
     <UseWPF>true</UseWPF>
 
     <OutputType>Exe</OutputType>

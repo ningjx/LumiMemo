@@ -1,14 +1,17 @@
 <Window x:Class="LumiMemo.App.Views.SettingsWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:views="clr-namespace:LumiMemo.App.Views"
         Title="设置"
         Width="600"
         Height="540"
         MinWidth="520"
         MinHeight="420"
         WindowStartupLocation="CenterOwner"
-        Background="#FFFDFBF3"
-        FontFamily="Microsoft YaHei UI"
+        views:WindowBackdrop.Enabled="{DynamicResource LumiUseSystemBackdrop}"
+        Background="{DynamicResource LumiWindowSurfaceBrush}"
+        Foreground="{DynamicResource LumiTextBrush}"
+        FontFamily="{DynamicResource LumiFontFamily}"
         FontSize="14">
 
   <!--
@@ -35,18 +38,39 @@
       <Setter Property="TextWrapping" Value="Wrap" />
     </Style>
 
-    <Style x:Key="FieldBox" TargetType="TextBox">
-      <Setter Property="Width" Value="80" />
-      <Setter Property="Padding" Value="6,3" />
-      <Setter Property="Background" Value="#FFFFFDF6" />
-      <Setter Property="BorderBrush" Value="#FFD9D2B8" />
+    <Style x:Key="GlassTextBox" TargetType="TextBox">
+      <Setter Property="Padding" Value="9,6" />
+      <Setter Property="Background" Value="{DynamicResource LumiControlSurfaceBrush}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource LumiBorderBrush}" />
       <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="TextBox">
+            <Border x:Name="Chrome"
+                    Background="{TemplateBinding Background}"
+                    BorderBrush="{TemplateBinding BorderBrush}"
+                    BorderThickness="{TemplateBinding BorderThickness}"
+                    CornerRadius="10">
+              <ScrollViewer x:Name="PART_ContentHost" Margin="{TemplateBinding Padding}" />
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsKeyboardFocusWithin" Value="True">
+                <Setter TargetName="Chrome" Property="BorderBrush" Value="{DynamicResource LumiAccentBrush}" />
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <Style x:Key="FieldBox" TargetType="TextBox" BasedOn="{StaticResource GlassTextBox}">
+      <Setter Property="Width" Value="80" />
     </Style>
 
     <Style x:Key="ToolButton" TargetType="Button">
       <Setter Property="Padding" Value="12,6" />
       <Setter Property="Background" Value="Transparent" />
-      <Setter Property="BorderBrush" Value="#FFD9D2B8" />
+      <Setter Property="BorderBrush" Value="{DynamicResource LumiBorderBrush}" />
       <Setter Property="BorderThickness" Value="1" />
       <Setter Property="Cursor" Value="Hand" />
       <Setter Property="Template">
@@ -56,17 +80,41 @@
                     Background="{TemplateBinding Background}"
                     BorderBrush="{TemplateBinding BorderBrush}"
                     BorderThickness="{TemplateBinding BorderThickness}"
-                    CornerRadius="4">
+                    CornerRadius="10">
               <ContentPresenter Margin="{TemplateBinding Padding}"
                                 HorizontalAlignment="Center"
                                 VerticalAlignment="Center" />
             </Border>
             <ControlTemplate.Triggers>
               <Trigger Property="IsMouseOver" Value="True">
-                <Setter TargetName="Chrome" Property="Background" Value="#FFF7E9A0" />
+                <Setter TargetName="Chrome" Property="Background" Value="{DynamicResource LumiToolbarSurfaceBrush}" />
               </Trigger>
               <Trigger Property="IsEnabled" Value="False">
                 <Setter Property="Opacity" Value="0.45" />
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <Style x:Key="GlassTabItem" TargetType="TabItem">
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="TabItem">
+            <Border x:Name="TabSurface" Background="Transparent" CornerRadius="10">
+              <ContentPresenter ContentSource="Header"
+                                Margin="{TemplateBinding Padding}"
+                                HorizontalAlignment="Center"
+                                VerticalAlignment="Center" />
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsSelected" Value="True">
+                <Setter TargetName="TabSurface" Property="Background" Value="{DynamicResource LumiControlSurfaceBrush}" />
+              </Trigger>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="TabSurface" Property="BorderBrush" Value="{DynamicResource LumiAccentBrush}" />
+                <Setter TargetName="TabSurface" Property="BorderThickness" Value="1" />
               </Trigger>
             </ControlTemplate.Triggers>
           </ControlTemplate>
@@ -86,6 +134,11 @@
       页签没有绑 ViewModel：选中哪一页是纯界面状态，而「打开时该选哪页」由
       SettingsWindowLauncher 在 Show(tab) 里决定。
     -->
+    <Border Grid.Row="0"
+            Background="{DynamicResource LumiContentPanelBrush}"
+            CornerRadius="12"
+            Margin="10,10,10,0" />
+
     <TabControl x:Name="Tabs"
                 Grid.Row="0"
                 Margin="10,10,10,0"
@@ -93,7 +146,7 @@
                 BorderThickness="0">
 
       <!-- ============ 常规 ============ -->
-      <TabItem Header="常规" Padding="12,6">
+      <TabItem Header="常规" Padding="12,6" Style="{StaticResource GlassTabItem}">
         <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="4,14,10,4">
           <StackPanel>
 
@@ -107,13 +160,14 @@
               </Grid.ColumnDefinitions>
 
               <TextBox Grid.Column="0"
+                       Style="{StaticResource GlassTextBox}"
                        Text="{Binding NotesFolderText, Mode=OneWay}"
                        IsReadOnly="True"
                        Padding="6,4"
-                       Background="#FFF2EDDC"
-                       BorderBrush="#FFD9D2B8"
+                       Background="{DynamicResource LumiSectionSurfaceBrush}"
+                       BorderBrush="{DynamicResource LumiBorderBrush}"
                        BorderThickness="1"
-                       Foreground="#FF6B6552" />
+                       Foreground="{DynamicResource LumiMutedTextBrush}" />
 
               <Button Grid.Column="1"
                       Margin="8,0,0,0"
@@ -190,7 +244,7 @@
         因为设置是它保存的；下面那个列表和命令绑到 Trash 上。
         两段一起保存，用户不会遇到「改了保留期忘了按保存」以外的第二种意外。
       -->
-      <TabItem Header="回收站" Padding="12,6">
+      <TabItem Header="回收站" Padding="12,6" Style="{StaticResource GlassTabItem}">
         <Grid Margin="4,14,4,4">
           <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
@@ -216,11 +270,44 @@
           <ListBox Grid.Row="1"
                    ItemsSource="{Binding Trash.Items}"
                    SelectedItem="{Binding Trash.SelectedItem, Mode=TwoWay}"
-                   BorderBrush="#FFD9D2B8"
-                   BorderThickness="1"
-                   Background="#FFFFFDF6"
+                   BorderThickness="0"
+                   Background="Transparent"
                    HorizontalContentAlignment="Stretch"
                    ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+            <ListBox.Template>
+              <ControlTemplate TargetType="ListBox">
+                <Border Background="{DynamicResource LumiControlSurfaceBrush}"
+                        BorderBrush="{DynamicResource LumiBorderBrush}"
+                        BorderThickness="1"
+                        CornerRadius="12">
+                  <ScrollViewer Focusable="False">
+                    <ItemsPresenter />
+                  </ScrollViewer>
+                </Border>
+              </ControlTemplate>
+            </ListBox.Template>
+            <ListBox.ItemContainerStyle>
+              <Style TargetType="ListBoxItem">
+                <Setter Property="Margin" Value="5,2" />
+                <Setter Property="Template">
+                  <Setter.Value>
+                    <ControlTemplate TargetType="ListBoxItem">
+                      <Border x:Name="ItemSurface" Background="Transparent" CornerRadius="9">
+                        <ContentPresenter />
+                      </Border>
+                      <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                          <Setter TargetName="ItemSurface" Property="Background" Value="{DynamicResource LumiHoverSurfaceBrush}" />
+                        </Trigger>
+                        <Trigger Property="IsSelected" Value="True">
+                          <Setter TargetName="ItemSurface" Property="Background" Value="{DynamicResource LumiSelectedSurfaceBrush}" />
+                        </Trigger>
+                      </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                  </Setter.Value>
+                </Setter>
+              </Style>
+            </ListBox.ItemContainerStyle>
             <ListBox.ItemTemplate>
               <DataTemplate>
                 <Grid Margin="6,5">
@@ -246,7 +333,7 @@
                              Grid.Column="1"
                              Text="已不在回收站里"
                              FontSize="12"
-                             Foreground="#FFB58900"
+                             Foreground="{DynamicResource LumiAccentBrush}"
                              Margin="10,0,0,0">
                     <TextBlock.Style>
                       <Style TargetType="TextBlock">
@@ -329,7 +416,7 @@
     </TabControl>
 
     <!-- 底部：状态文字 + 保存 / 关闭 -->
-    <Border Grid.Row="1" Background="#FFF2EDDC" Padding="16,10">
+    <Border Grid.Row="1" Background="{DynamicResource LumiSectionSurfaceBrush}" Padding="16,10">
       <Grid>
         <Grid.ColumnDefinitions>
           <ColumnDefinition Width="*" />
@@ -340,7 +427,7 @@
                    Text="{Binding StatusText}"
                    VerticalAlignment="Center"
                    FontSize="12"
-                   Foreground="#FF6B6552" />
+                   Foreground="{DynamicResource LumiMutedTextBrush}" />
 
         <StackPanel Grid.Column="1" Orientation="Horizontal">
           <Button Style="{StaticResource ToolButton}"
