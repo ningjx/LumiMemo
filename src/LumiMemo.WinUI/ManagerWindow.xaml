@@ -26,6 +26,9 @@
                 <Button Width="36" Height="30" Content="＋" Click="OnNewNoteClick"
                         Background="Transparent" BorderBrush="Transparent"
                         ToolTipService.ToolTip="新建便笺" />
+                <Button Width="36" Height="30" Content="⚙" Click="OnLlmSettingsClick"
+                        Background="Transparent" BorderBrush="Transparent"
+                        ToolTipService.ToolTip="自动标题设置" />
                 <Button Width="36" Height="30" Content="×" Click="OnHideClick"
                         Background="Transparent" BorderBrush="Transparent"
                         ToolTipService.ToolTip="隐藏列表" />

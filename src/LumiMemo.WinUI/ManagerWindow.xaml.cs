@@ -14,15 +14,22 @@ namespace LumiMemo.WinUI;
 public sealed partial class ManagerWindow : Window
 {
     private readonly NoteWindowManager _windows;
+    private readonly AppSettings _settings;
+    private readonly LumiMemo.Core.Abstractions.ISettingsStore _settingsStore;
     private DesktopAcrylicController? _acrylicController;
     private SystemBackdropConfiguration? _backdropConfiguration;
     private bool _allowClose;
 
-    public ManagerWindow(NoteWindowManager windows)
+    public ManagerWindow(NoteWindowManager windows, AppSettings settings,
+        LumiMemo.Core.Abstractions.ISettingsStore settingsStore)
     {
         ArgumentNullException.ThrowIfNull(windows);
+        ArgumentNullException.ThrowIfNull(settings);
+        ArgumentNullException.ThrowIfNull(settingsStore);
         InitializeComponent();
         _windows = windows;
+        _settings = settings;
+        _settingsStore = settingsStore;
         _windows.NotesChanged += OnNotesChanged;
 
         ExtendsContentIntoTitleBar = true;
@@ -96,6 +103,19 @@ public sealed partial class ManagerWindow : Window
 
     private async void OnNewNoteClick(object sender, RoutedEventArgs e) =>
         await _windows.CreateNoteAsync();
+
+    private async void OnLlmSettingsClick(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            await LlmSettingsDialog.ShowAsync(Root.XamlRoot, _settings, _settingsStore);
+        }
+        catch (Exception exception)
+        {
+            await new ContentDialog { XamlRoot = Root.XamlRoot, Title = "设置保存失败",
+                Content = exception.Message, CloseButtonText = "确定" }.ShowAsync();
+        }
+    }
 
     private void OnHideClick(object sender, RoutedEventArgs e) => HideWindow();
 

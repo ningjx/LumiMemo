@@ -10,6 +10,7 @@ public sealed class NoteWindowManager
     private readonly IClock _clock;
     private readonly AppSettings _settings;
     private readonly ILayoutStore _layouts;
+    private readonly ITitleGenerator _titleGenerator;
     private readonly List<Note> _notes;
     private readonly Dictionary<Guid, MainWindow> _windows = [];
 
@@ -18,19 +19,22 @@ public sealed class NoteWindowManager
         INoteRepository repository,
         IClock clock,
         AppSettings settings,
-        ILayoutStore layouts)
+        ILayoutStore layouts,
+        ITitleGenerator titleGenerator)
     {
         ArgumentNullException.ThrowIfNull(notes);
         ArgumentNullException.ThrowIfNull(repository);
         ArgumentNullException.ThrowIfNull(clock);
         ArgumentNullException.ThrowIfNull(settings);
         ArgumentNullException.ThrowIfNull(layouts);
+        ArgumentNullException.ThrowIfNull(titleGenerator);
 
         _notes = [.. notes];
         _repository = repository;
         _clock = clock;
         _settings = settings;
         _layouts = layouts;
+        _titleGenerator = titleGenerator;
     }
 
     public event EventHandler? NotesChanged;
@@ -77,6 +81,7 @@ public sealed class NoteWindowManager
             _repository,
             _clock,
             _settings,
+            _titleGenerator,
             _layouts,
             layout,
             OnWindowClosed,

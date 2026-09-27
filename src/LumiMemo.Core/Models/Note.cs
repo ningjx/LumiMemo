@@ -63,7 +63,12 @@ public sealed class Note
     /// 标题完全派生、不存储，与 Obsidian 的「文件名即标题」心智模型一致：
     /// 用户在外部编辑器里改的正文立刻反映到标题，不需要同步 Front Matter。
     /// </remarks>
-    public string Title => _titleCache ??= TitleDeriver.Derive(_content);
+    public string Title => string.IsNullOrWhiteSpace(AutoTitle)
+        ? _titleCache ??= TitleDeriver.Derive(_content)
+        : AutoTitle;
+
+    /// <summary>富文本便笺可选的 AI 标题；空值时继续从正文派生。</summary>
+    public string? AutoTitle { get; set; }
 
     /// <summary>便签颜色。属于<strong>用户数据</strong>，跟着文件走（§5.3）。</summary>
     public NoteColor Color { get; set; } = NoteColor.Yellow;
@@ -130,6 +135,7 @@ public sealed class Note
 
         FilePath = other.FilePath;
         Content = other.Content;
+        AutoTitle = other.AutoTitle;
         RichTextContent = [.. other.RichTextContent];
         Color = other.Color;
         CreatedAt = other.CreatedAt;
@@ -169,6 +175,7 @@ public sealed class Note
 
         return Color == other.Color
             && string.Equals(Content, other.Content, StringComparison.Ordinal)
+            && string.Equals(AutoTitle, other.AutoTitle, StringComparison.Ordinal)
             && Tags.SequenceEqual(other.Tags, StringComparer.Ordinal);
     }
 }

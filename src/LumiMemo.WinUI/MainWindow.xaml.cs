@@ -5,6 +5,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using LumiMemo.Core.Abstractions;
 using LumiMemo.Core.Models;
+using LumiMemo.Core.Services;
 using LumiMemo.WinUI.Controls;
 using Windows.Graphics;
 using WinRT;
@@ -21,11 +22,17 @@ public sealed partial class MainWindow : Window
     private readonly Note _note;
     private readonly INoteRepository _repository;
     private readonly IClock _clock;
+    private readonly AppSettings _settings;
+    private readonly ITitleGenerator _titleGenerator;
     private readonly ILayoutStore _layoutStore;
     private readonly NoteLayout _layout;
     private readonly Action<Guid> _onClosed;
     private readonly Action _onNoteChanged;
     private readonly DispatcherTimer _saveTimer;
+    private readonly DispatcherTimer _titleTimer;
+    private CancellationTokenSource? _titleRequest;
+    private string _titleBaseline;
+    private bool _closed;
     private bool _hasPendingSave;
     private bool _saving;
     private int _documentRevision;
@@ -36,6 +43,7 @@ public sealed partial class MainWindow : Window
         INoteRepository repository,
         IClock clock,
         AppSettings settings,
+        ITitleGenerator titleGenerator,
         ILayoutStore layoutStore,
         NoteLayout layout,
         Action<Guid> onClosed,
@@ -45,6 +53,7 @@ public sealed partial class MainWindow : Window
         ArgumentNullException.ThrowIfNull(repository);
         ArgumentNullException.ThrowIfNull(clock);
         ArgumentNullException.ThrowIfNull(settings);
+        ArgumentNullException.ThrowIfNull(titleGenerator);
         ArgumentNullException.ThrowIfNull(layoutStore);
         ArgumentNullException.ThrowIfNull(layout);
         ArgumentNullException.ThrowIfNull(onClosed);
@@ -56,6 +65,9 @@ public sealed partial class MainWindow : Window
         _note = note;
         _repository = repository;
         _clock = clock;
+        _settings = settings;
+        _titleGenerator = titleGenerator;
+        _titleBaseline = note.Content;
         _layoutStore = layoutStore;
         _layout = layout;
         _onClosed = onClosed;
@@ -65,6 +77,8 @@ public sealed partial class MainWindow : Window
             Interval = TimeSpan.FromMilliseconds(settings.AutoSaveDelayMs)
         };
         _saveTimer.Tick += OnSaveTimerTick;
+        _titleTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(1400) };
+        _titleTimer.Tick += OnTitleTimerTick;
 
         _editor = new RichEditorHost(EditorHost);
 
@@ -152,6 +166,15 @@ public sealed partial class MainWindow : Window
     {
         _note.Content = _editor.PlainText;
         _note.UpdatedAt = _clock.Now;
+        _titleRequest?.Cancel();
+        _titleTimer.Stop();
+        if (_settings.Llm.Enabled
+            && !string.IsNullOrWhiteSpace(_settings.Llm.Model)
+            && TitleChangePolicy.ShouldGenerate(_titleBaseline, _note.Content,
+                !string.IsNullOrWhiteSpace(_note.AutoTitle)))
+        {
+            _titleTimer.Start();
+        }
         TitleText.Text = _note.Title;
         _onNoteChanged();
         _hasPendingSave = true;
@@ -231,6 +254,53 @@ public sealed partial class MainWindow : Window
         catch (Exception exception)
         {
             StatusText.Text = $"插入图片失败：{exception.Message}";
+        }
+    }
+
+    private async void OnTitleTimerTick(object? sender, object e)
+    {
+        _titleTimer.Stop();
+        string snapshot = _note.Content;
+        LlmSettings config = _settings.Llm;
+        if (_closed || !config.Enabled
+            || !TitleChangePolicy.ShouldGenerate(_titleBaseline, snapshot,
+                !string.IsNullOrWhiteSpace(_note.AutoTitle)))
+        {
+            return;
+        }
+
+        _titleRequest?.Dispose();
+        _titleRequest = new CancellationTokenSource();
+        CancellationToken token = _titleRequest.Token;
+        try
+        {
+            string title = await _titleGenerator.GenerateAsync(snapshot, config, token);
+            if (_closed || token.IsCancellationRequested || !_settings.Llm.Enabled
+                || _note.Content != snapshot)
+            {
+                return;
+            }
+
+            _note.AutoTitle = title;
+            _titleBaseline = snapshot;
+            _note.UpdatedAt = _clock.Now;
+            TitleText.Text = _note.Title;
+            _onNoteChanged();
+            _hasPendingSave = true;
+            _documentRevision++;
+            _saveTimer.Stop();
+            _saveTimer.Start();
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        {
+        }
+        catch (Exception exception)
+        {
+            System.Diagnostics.Debug.WriteLine($"自动标题生成失败：{exception}");
+            if (!_closed && !token.IsCancellationRequested)
+            {
+                StatusText.Text = "自动标题失败 · 请检查模型设置";
+            }
         }
     }
 
@@ -321,6 +391,11 @@ public sealed partial class MainWindow : Window
 
     private void OnWindowClosed(object sender, WindowEventArgs args)
     {
+        _closed = true;
+        _titleTimer.Stop();
+        _titleTimer.Tick -= OnTitleTimerTick;
+        _titleRequest?.Cancel();
+        _titleRequest?.Dispose();
         Closed -= OnWindowClosed;
         _onClosed(_note.Id);
         _appWindow.Changed -= OnAppWindowChanged;

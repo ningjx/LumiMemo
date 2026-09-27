@@ -170,6 +170,12 @@ public sealed class JsonSettingsStore : ISettingsStore
     private void Normalize(AppSettings settings, string path)
     {
         settings.Version = CurrentVersion;
+        settings.Llm ??= new LlmSettings();
+        settings.Llm.Endpoint ??= "https://api.openai.com/v1/chat/completions";
+        settings.Llm.Model ??= "";
+        settings.Llm.Prompt = string.IsNullOrWhiteSpace(settings.Llm.Prompt)
+            ? LlmSettings.DefaultPrompt : settings.Llm.Prompt;
+        settings.Llm.ApiKey ??= "";
 
         settings.AutoSaveDelayMs = Clamp(
             settings.AutoSaveDelayMs,

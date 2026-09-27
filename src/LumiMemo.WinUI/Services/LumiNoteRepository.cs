@@ -61,7 +61,7 @@ public sealed class LumiNoteRepository : INoteRepository
     {
         var file = new StoredNote(
             1, note.Id, note.Content, note.RichTextContent, note.Color, [.. note.Tags],
-            note.CreatedAt, note.UpdatedAt);
+            note.CreatedAt, note.UpdatedAt, note.AutoTitle);
         byte[] bytes = JsonSerializer.SerializeToUtf8Bytes(file);
         await _writer.WriteAsync(note.FilePath, bytes, note.UpdatedAt, ct).ConfigureAwait(false);
     }
@@ -125,6 +125,7 @@ public sealed class LumiNoteRepository : INoteRepository
             Id = stored.Id,
             FilePath = path,
             Content = stored.Text ?? string.Empty,
+            AutoTitle = stored.AutoTitle,
             RichTextContent = stored.Rtf ?? [],
             Color = stored.Color,
             Tags = stored.Tags ?? [],
@@ -135,5 +136,6 @@ public sealed class LumiNoteRepository : INoteRepository
 
     private sealed record StoredNote(
         int Version, Guid Id, string Text, byte[] Rtf, NoteColor Color,
-        List<string> Tags, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt);
+        List<string> Tags, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt,
+        string? AutoTitle = null);
 }

@@ -16,6 +16,7 @@ public partial class App : Application
     private TrayIconService? _trayIcon;
     private NoteWindowManager? _windowManager;
     private ManagerWindow? _managerWindow;
+    private HttpClient? _titleHttpClient;
 
     public App()
     {
@@ -28,11 +29,13 @@ public partial class App : Application
         try
         {
             (IReadOnlyList<Note> notes, INoteRepository repository, IClock clock,
-                AppSettings settings, ILayoutStore layoutStore) =
+                AppSettings settings, ILayoutStore layoutStore, ISettingsStore settingsStore) =
                 await LoadStartupDataAsync();
 
-            _windowManager = new NoteWindowManager(notes, repository, clock, settings, layoutStore);
-            _managerWindow = new ManagerWindow(_windowManager);
+            _titleHttpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(25) };
+            var titleGenerator = new OpenAiCompatibleTitleGenerator(_titleHttpClient);
+            _windowManager = new NoteWindowManager(notes, repository, clock, settings, layoutStore, titleGenerator);
+            _managerWindow = new ManagerWindow(_windowManager, settings, settingsStore);
 
             if (settings.ShowTrayIcon)
             {
@@ -98,6 +101,9 @@ public partial class App : Application
         _windowManager?.CloseAllForExit();
         _windowManager = null;
 
+        _titleHttpClient?.Dispose();
+        _titleHttpClient = null;
+
         Exit();
     }
 
@@ -106,7 +112,8 @@ public partial class App : Application
         INoteRepository Repository,
         IClock Clock,
         AppSettings Settings,
-        ILayoutStore LayoutStore)>
+        ILayoutStore LayoutStore,
+        ISettingsStore SettingsStore)>
         LoadStartupDataAsync()
     {
         var paths = new AppPaths();
@@ -150,7 +157,7 @@ public partial class App : Application
         };
         await layoutStore.LoadAsync();
 
-        return (notes, repository, clock, settings, layoutStore);
+        return (notes, repository, clock, settings, layoutStore, settingsStore);
     }
 
     private static void OnUnhandledException(object sender, Microsoft.UI.Xaml.UnhandledExceptionEventArgs e)
