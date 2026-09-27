@@ -62,7 +62,7 @@ public sealed partial class ManagerWindow : Window
         {
             XamlRoot = Root.XamlRoot,
             Title = "关于 LumiMemo",
-            Content = "鹿米便笺 WinUI 迁移版\nMarkdown 数据保存在本地笔记文件夹中。",
+            Content = "鹿米便笺 WinUI 富文本实验版\n便笺保存在本地 .lumi 文件中。",
             CloseButtonText = "确定"
         };
         await dialog.ShowAsync();

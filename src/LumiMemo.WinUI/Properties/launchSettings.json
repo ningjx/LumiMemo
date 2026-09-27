@@ -1,10 +1,8 @@
 {
   "profiles": {
-    "LumiMemo.WinUI (Package)": {
-      "commandName": "MsixPackage"
-    },
     "LumiMemo.WinUI (Unpackaged)": {
-      "commandName": "Project"
+      "commandName": "Project",
+      "nativeDebugging": true
     }
   }
 }

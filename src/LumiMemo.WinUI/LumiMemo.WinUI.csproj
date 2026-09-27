@@ -32,10 +32,6 @@
 
   <ItemGroup>
     <Content Include="Assets\AppIcon.ico" />
-    <Content Include="..\LumiMemo.App\EditorAssets\**\*"
-             Link="EditorAssets\%(RecursiveDir)%(Filename)%(Extension)">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
   </ItemGroup>
 
   <PropertyGroup>

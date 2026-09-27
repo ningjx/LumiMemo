@@ -53,6 +53,9 @@ public sealed class Note
     private string _content = string.Empty;
     private string? _titleCache;
 
+    /// <summary>WinUI 富文本便笺的 RTF 正文；Content 保留用于标题和搜索的纯文本。</summary>
+    public byte[] RichTextContent { get; set; } = [];
+
     /// <summary>
     /// 派生属性：不在存储中，<see cref="Content"/> 一变就重算（§5.4）。
     /// </summary>
@@ -127,6 +130,7 @@ public sealed class Note
 
         FilePath = other.FilePath;
         Content = other.Content;
+        RichTextContent = [.. other.RichTextContent];
         Color = other.Color;
         CreatedAt = other.CreatedAt;
         UpdatedAt = other.UpdatedAt;

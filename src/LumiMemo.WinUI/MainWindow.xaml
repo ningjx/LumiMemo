@@ -100,8 +100,7 @@
                         <TextBlock Text="S" FontSize="15" TextDecorations="Strikethrough" />
                     </Button>
                     <Rectangle Width="1" Height="18" Margin="3,0" Fill="#5075697C" />
-                    <Button Style="{StaticResource GlassButtonStyle}" Width="34" Height="30" Click="OnTaskListClick" ToolTipService.ToolTip="待办列表" Content="☑" />
-                    <Button Style="{StaticResource GlassButtonStyle}" Width="34" Height="30" Click="OnBulletListClick" ToolTipService.ToolTip="项目列表" Content="•≡" />
+                    <Button Style="{StaticResource GlassButtonStyle}" Width="34" Height="30" Click="OnInsertImageClick" ToolTipService.ToolTip="插入图片" Content="▧" />
                 </StackPanel>
                 <TextBlock x:Name="StatusText"
                            Grid.Column="1"

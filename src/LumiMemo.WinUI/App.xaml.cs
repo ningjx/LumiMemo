@@ -133,14 +133,8 @@ public partial class App : Application
         paths.SetNotesFolder(settings.NotesFolder);
         paths.SetAttachmentsFolderName(settings.AttachmentsFolderName);
 
-        var repository = new MarkdownNoteRepository(
-            paths,
-            clock,
-            writer,
-            NullLogger<MarkdownNoteRepository>.Instance)
-        {
-            DefaultColor = settings.DefaultColor
-        };
+        var repository = new LumiNoteRepository(
+            settings.NotesFolder, clock, writer, settings.DefaultColor);
 
         IReadOnlyList<Note> notes = await repository.LoadAllAsync();
 

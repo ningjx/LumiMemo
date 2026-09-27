@@ -16,7 +16,7 @@ public sealed partial class MainWindow : Window
 {
     private DesktopAcrylicController? _acrylicController;
     private SystemBackdropConfiguration? _backdropConfiguration;
-    private readonly NativeEditorHost _editor;
+    private readonly RichEditorHost _editor;
     private readonly Note _note;
     private readonly INoteRepository _repository;
     private readonly IClock _clock;
@@ -26,6 +26,8 @@ public sealed partial class MainWindow : Window
     private readonly Action _onNoteChanged;
     private readonly DispatcherTimer _saveTimer;
     private bool _hasPendingSave;
+    private bool _saving;
+    private int _documentRevision;
     private bool _isApplicationExiting;
 
     public MainWindow(
@@ -62,7 +64,7 @@ public sealed partial class MainWindow : Window
         };
         _saveTimer.Tick += OnSaveTimerTick;
 
-        _editor = new NativeEditorHost(EditorHost);
+        _editor = new RichEditorHost(EditorHost);
 
         Title = "LumiMemo";
         ExtendsContentIntoTitleBar = true;
@@ -71,10 +73,23 @@ public sealed partial class MainWindow : Window
         EnablePersistentAcrylic();
 
         TitleText.Text = note.Title;
-        _editor.Markdown = note.Content;
-        _editor.MarkdownChanged += OnMarkdownChanged;
+        EditorHost.Loaded += OnEditorHostLoaded;
         AppWindow.Closing += OnWindowClosing;
-        UpdateStatus(_editor.Markdown);
+        UpdateStatus(note.Content);
+    }
+
+    private async void OnEditorHostLoaded(object sender, RoutedEventArgs args)
+    {
+        EditorHost.Loaded -= OnEditorHostLoaded;
+        try
+        {
+            await _editor.LoadAsync(_note.RichTextContent);
+            _editor.DocumentChanged += OnDocumentChanged;
+        }
+        catch (Exception exception)
+        {
+            StatusText.Text = $"读取便笺失败：{exception.Message}";
+        }
     }
 
     private void ConfigureWindow()
@@ -130,19 +145,15 @@ public sealed partial class MainWindow : Window
         _acrylicController.SetSystemBackdropConfiguration(_backdropConfiguration);
     }
 
-    private void OnMarkdownChanged(object? sender, string markdown)
+    private void OnDocumentChanged(object? sender, EventArgs args)
     {
-        if (string.Equals(_note.Content, markdown, StringComparison.Ordinal))
-        {
-            return;
-        }
-
-        _note.Content = markdown;
+        _note.Content = _editor.PlainText;
         _note.UpdatedAt = _clock.Now;
         TitleText.Text = _note.Title;
         _onNoteChanged();
         _hasPendingSave = true;
-        StatusText.Text = $"正在保存 · {CountCharacters(markdown)} 字";
+        _documentRevision++;
+        StatusText.Text = $"正在保存 · {CountCharacters(_note.Content)} 字";
         _saveTimer.Stop();
         _saveTimer.Start();
     }
@@ -155,34 +166,70 @@ public sealed partial class MainWindow : Window
 
     private async Task SavePendingAsync()
     {
-        if (!_hasPendingSave)
+        if (!_hasPendingSave || _saving)
+        {
+            return;
+        }
+
+        _saving = true;
+        int revision = _documentRevision;
+        try
+        {
+            _note.RichTextContent = _editor.SaveRtf();
+            await _repository.SaveAsync(_note);
+            if (revision == _documentRevision)
+            {
+                _hasPendingSave = false;
+                UpdateStatus(_note.Content);
+            }
+        }
+        catch (Exception)
+        {
+            StatusText.Text = $"保存失败 · {CountCharacters(_note.Content)} 字";
+        }
+        finally
+        {
+            _saving = false;
+            if (_hasPendingSave && revision != _documentRevision)
+            {
+                _saveTimer.Stop();
+                _saveTimer.Start();
+            }
+        }
+    }
+
+    private void UpdateStatus(string text) =>
+        StatusText.Text = $"已保存 · {CountCharacters(text)} 字";
+
+    private static int CountCharacters(string text) => text.EnumerateRunes().Count();
+
+    private void OnBoldClick(object sender, RoutedEventArgs e) => _editor.ExecuteCommand("bold");
+    private void OnItalicClick(object sender, RoutedEventArgs e) => _editor.ExecuteCommand("italic");
+    private void OnUnderlineClick(object sender, RoutedEventArgs e) => _editor.ExecuteCommand("underline");
+    private void OnStrikeClick(object sender, RoutedEventArgs e) => _editor.ExecuteCommand("strikethrough");
+    private async void OnInsertImageClick(object sender, RoutedEventArgs e)
+    {
+        var picker = new Windows.Storage.Pickers.FileOpenPicker();
+        picker.FileTypeFilter.Add(".png");
+        picker.FileTypeFilter.Add(".jpg");
+        picker.FileTypeFilter.Add(".jpeg");
+        WinRT.Interop.InitializeWithWindow.Initialize(
+            picker, WinRT.Interop.WindowNative.GetWindowHandle(this));
+        Windows.Storage.StorageFile? file = await picker.PickSingleFileAsync();
+        if (file is null)
         {
             return;
         }
 
         try
         {
-            await _repository.SaveAsync(_note);
-            _hasPendingSave = false;
-            UpdateStatus(_note.Content);
+            await _editor.InsertImageAsync(file.Path);
         }
-        catch (Exception)
+        catch (Exception exception)
         {
-            StatusText.Text = $"保存失败 · {CountCharacters(_note.Content)} 字";
+            StatusText.Text = $"插入图片失败：{exception.Message}";
         }
     }
-
-    private void UpdateStatus(string markdown) =>
-        StatusText.Text = $"已保存 · {CountCharacters(markdown)} 字";
-
-    private static int CountCharacters(string markdown) => markdown.EnumerateRunes().Count();
-
-    private void OnBoldClick(object sender, RoutedEventArgs e) => _editor.ExecuteCommand("bold");
-    private void OnItalicClick(object sender, RoutedEventArgs e) => _editor.ExecuteCommand("italic");
-    private void OnUnderlineClick(object sender, RoutedEventArgs e) => _editor.ExecuteCommand("underline");
-    private void OnStrikeClick(object sender, RoutedEventArgs e) => _editor.ExecuteCommand("strikethrough");
-    private void OnTaskListClick(object sender, RoutedEventArgs e) => _editor.ExecuteCommand("taskList");
-    private void OnBulletListClick(object sender, RoutedEventArgs e) => _editor.ExecuteCommand("bulletList");
 
     private void OnPinClick(object sender, RoutedEventArgs e)
     {
@@ -211,7 +258,7 @@ public sealed partial class MainWindow : Window
         {
             XamlRoot = Root.XamlRoot,
             Title = "关于 LumiMemo",
-            Content = "鹿米便笺 WinUI 迁移版\nMarkdown 数据仍保存在本地笔记文件夹中。",
+            Content = "鹿米便笺 WinUI 富文本实验版\n便笺保存在本地 .lumi 文件中。",
             CloseButtonText = "确定"
         };
         await dialog.ShowAsync();
@@ -232,6 +279,7 @@ public sealed partial class MainWindow : Window
         {
             try
             {
+                _note.RichTextContent = _editor.SaveRtf();
                 _repository.SaveAsync(_note).GetAwaiter().GetResult();
                 _hasPendingSave = false;
             }
@@ -260,7 +308,8 @@ public sealed partial class MainWindow : Window
         }
 
         _saveTimer.Tick -= OnSaveTimerTick;
-        _editor.MarkdownChanged -= OnMarkdownChanged;
+        EditorHost.Loaded -= OnEditorHostLoaded;
+        _editor.DocumentChanged -= OnDocumentChanged;
         _editor.Dispose();
         _acrylicController?.Dispose();
         _acrylicController = null;
@@ -277,7 +326,6 @@ public sealed partial class MainWindow : Window
 
         CaptureLayout();
         _layoutStore.MarkDirty();
-        _editor.UpdateBounds();
     }
 
     private void CaptureLayout()
