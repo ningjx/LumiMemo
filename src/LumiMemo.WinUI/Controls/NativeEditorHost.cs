@@ -22,11 +22,18 @@ public sealed class NativeEditorHost : IDisposable
             TextWrapping = TextWrapping.Wrap,
             HorizontalAlignment = HorizontalAlignment.Stretch,
             VerticalAlignment = VerticalAlignment.Stretch,
-            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(30, 255, 255, 255)),
+            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0, 255, 255, 255)),
             Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 48, 43, 57)),
             BorderThickness = new Thickness(0),
             Padding = new Thickness(18, 16, 18, 16)
         };
+        var transparent = new SolidColorBrush(Windows.UI.Color.FromArgb(0, 255, 255, 255));
+        _editor.Resources["TextControlBackground"] = transparent;
+        _editor.Resources["TextControlBackgroundPointerOver"] = transparent;
+        _editor.Resources["TextControlBackgroundFocused"] = transparent;
+        _editor.Resources["TextControlBorderBrush"] = transparent;
+        _editor.Resources["TextControlBorderBrushPointerOver"] = transparent;
+        _editor.Resources["TextControlBorderBrushFocused"] = transparent;
         _editor.TextChanged += OnTextChanged;
         _host.Children.Add(_editor);
     }
