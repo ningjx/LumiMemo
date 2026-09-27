@@ -53,8 +53,9 @@ public sealed partial class MainWindow : Window
         };
         _saveTimer.Tick += OnSaveTimerTick;
 
-        _editor = new MarkdownEditorHost();
-        EditorHost.Children.Add(_editor);
+        _editor = new MarkdownEditorHost(
+            EditorHost,
+            WinRT.Interop.WindowNative.GetWindowHandle(this));
 
         Title = "LumiMemo";
         ExtendsContentIntoTitleBar = true;
@@ -235,6 +236,7 @@ public sealed partial class MainWindow : Window
 
         CaptureLayout();
         _layoutStore.MarkDirty();
+        _editor.UpdateBounds();
     }
 
     private void CaptureLayout()

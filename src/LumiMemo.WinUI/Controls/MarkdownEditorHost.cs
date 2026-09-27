@@ -7,8 +7,12 @@ using Microsoft.Web.WebView2.Core;
 
 namespace LumiMemo.WinUI.Controls;
 
-/// <summary>Hosts the existing Milkdown editor in a WinUI WebView2 control.</summary>
-public sealed class MarkdownEditorHost : Grid, IDisposable
+/// <summary>
+/// Hosts Milkdown through the HWND WebView2 controller. The WinUI XAML WebView2 wrapper
+/// flattens transparent pixels against an opaque island; the HWND controller preserves them
+/// so the window-level Acrylic remains visible through the editor.
+/// </summary>
+public sealed class MarkdownEditorHost : IDisposable
 {
     private const string EditorOrigin = "https://lumimemo-editor.local";
     private const int ProtocolVersion = 1;
@@ -17,37 +21,45 @@ public sealed class MarkdownEditorHost : Grid, IDisposable
         CreateEnvironmentAsync,
         LazyThreadSafetyMode.ExecutionAndPublication);
 
-    public static readonly DependencyProperty MarkdownProperty = DependencyProperty.Register(
-        nameof(Markdown),
-        typeof(string),
-        typeof(MarkdownEditorHost),
-        new PropertyMetadata(string.Empty, OnMarkdownChanged));
-
-    private readonly WebView2 _browser;
+    private readonly Grid _boundsHost;
+    private readonly nint _parentWindow;
+    private CoreWebView2Controller? _controller;
+    private CoreWebView2? _core;
+    private string _markdown = string.Empty;
     private bool _isReady;
-    private bool _isUpdatingFromEditor;
     private bool _isDisposed;
     private int _revision;
 
-    public MarkdownEditorHost()
+    public MarkdownEditorHost(Grid boundsHost, nint parentWindow)
     {
-        Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0, 0, 0, 0));
-        _browser = new WebView2
+        ArgumentNullException.ThrowIfNull(boundsHost);
+        if (parentWindow == 0)
         {
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-            VerticalAlignment = VerticalAlignment.Stretch,
-            DefaultBackgroundColor = Windows.UI.Color.FromArgb(0, 0, 0, 0)
-        };
-        Children.Add(_browser);
-        Loaded += OnLoaded;
+            throw new ArgumentException("WebView2 需要有效的父窗口句柄。", nameof(parentWindow));
+        }
+
+        _boundsHost = boundsHost;
+        _parentWindow = parentWindow;
+        _boundsHost.Loaded += OnLoaded;
+        _boundsHost.SizeChanged += OnHostSizeChanged;
     }
 
     public event EventHandler<string>? MarkdownChanged;
 
     public string Markdown
     {
-        get => (string)GetValue(MarkdownProperty);
-        set => SetValue(MarkdownProperty, value);
+        get => _markdown;
+        set
+        {
+            value ??= string.Empty;
+            if (string.Equals(_markdown, value, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            _markdown = value;
+            SendDocument();
+        }
     }
 
     public bool IsReady => _isReady;
@@ -55,26 +67,54 @@ public sealed class MarkdownEditorHost : Grid, IDisposable
     public void ExecuteCommand(string command) =>
         Post(new { version = ProtocolVersion, type = "executeCommand", command });
 
+    public void UpdateBounds()
+    {
+        if (_controller is null || _boundsHost.XamlRoot is null)
+        {
+            return;
+        }
+
+        Windows.Foundation.Point origin = _boundsHost
+            .TransformToVisual(null)
+            .TransformPoint(new Windows.Foundation.Point());
+        double scale = _boundsHost.XamlRoot.RasterizationScale;
+
+        _controller.Bounds = new Windows.Foundation.Rect(
+            Math.Round(origin.X * scale),
+            Math.Round(origin.Y * scale),
+            Math.Max(1, Math.Round(_boundsHost.ActualWidth * scale)),
+            Math.Max(1, Math.Round(_boundsHost.ActualHeight * scale)));
+        _controller.RasterizationScale = scale;
+        _controller.IsVisible = true;
+    }
+
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
-        Loaded -= OnLoaded;
+        _boundsHost.Loaded -= OnLoaded;
+
         try
         {
             CoreWebView2Environment environment = await SharedEnvironment.Value;
-            await _browser.EnsureCoreWebView2Async(environment);
+            CoreWebView2ControllerWindowReference parent =
+                CoreWebView2ControllerWindowReference.CreateFromWindowHandle(
+                    unchecked((ulong)_parentWindow.ToInt64()));
+            _controller = await environment.CreateCoreWebView2ControllerAsync(parent);
+            _controller.DefaultBackgroundColor = Windows.UI.Color.FromArgb(0, 0, 0, 0);
+            _core = _controller.CoreWebView2;
 
-            CoreWebView2 core = _browser.CoreWebView2;
-            ConfigureSecurity(core);
-            core.WebMessageReceived += OnWebMessageReceived;
-            core.NavigationStarting += OnNavigationStarting;
-            core.NewWindowRequested += OnNewWindowRequested;
+            ConfigureSecurity(_core);
+            _core.WebMessageReceived += OnWebMessageReceived;
+            _core.NavigationStarting += OnNavigationStarting;
+            _core.NewWindowRequested += OnNewWindowRequested;
 
             string assets = Path.Combine(AppContext.BaseDirectory, "EditorAssets");
-            core.SetVirtualHostNameToFolderMapping(
+            _core.SetVirtualHostNameToFolderMapping(
                 "lumimemo-editor.local",
                 assets,
                 CoreWebView2HostResourceAccessKind.DenyCors);
-            _browser.Source = new Uri($"{EditorOrigin}/index.html");
+
+            UpdateBounds();
+            _core.Navigate($"{EditorOrigin}/index.html");
         }
         catch (Exception exception)
         {
@@ -89,7 +129,13 @@ public sealed class MarkdownEditorHost : Grid, IDisposable
             "LumiMemo",
             "WebView2");
         Directory.CreateDirectory(userData);
-        return await CoreWebView2Environment.CreateAsync();
+
+        // Core WebView2 reads this before controller creation and avoids an initial white frame.
+        Environment.SetEnvironmentVariable("WEBVIEW2_DEFAULT_BACKGROUND_COLOR", "00000000");
+        return await CoreWebView2Environment.CreateWithOptionsAsync(
+            null,
+            userData,
+            new CoreWebView2EnvironmentOptions());
     }
 
     private static void ConfigureSecurity(CoreWebView2 core)
@@ -143,14 +189,12 @@ public sealed class MarkdownEditorHost : Grid, IDisposable
                     break;
                 case "contentChanged" when root.TryGetProperty("markdown", out JsonElement content):
                     string markdown = content.GetString() ?? string.Empty;
-                    if (markdown == Markdown)
+                    if (string.Equals(markdown, _markdown, StringComparison.Ordinal))
                     {
                         return;
                     }
 
-                    _isUpdatingFromEditor = true;
-                    Markdown = markdown;
-                    _isUpdatingFromEditor = false;
+                    _markdown = markdown;
                     MarkdownChanged?.Invoke(this, markdown);
                     break;
             }
@@ -160,18 +204,9 @@ public sealed class MarkdownEditorHost : Grid, IDisposable
         }
     }
 
-    private static void OnMarkdownChanged(DependencyObject sender, DependencyPropertyChangedEventArgs e)
-    {
-        var editor = (MarkdownEditorHost)sender;
-        if (!editor._isUpdatingFromEditor)
-        {
-            editor.SendDocument();
-        }
-    }
-
     private void SendDocument()
     {
-        if (!_isReady || _browser.CoreWebView2 is null)
+        if (!_isReady)
         {
             return;
         }
@@ -181,7 +216,7 @@ public sealed class MarkdownEditorHost : Grid, IDisposable
         {
             version = ProtocolVersion,
             type = "loadDocument",
-            markdown = Markdown ?? string.Empty,
+            markdown = _markdown,
             revision = _revision
         });
     }
@@ -201,16 +236,18 @@ public sealed class MarkdownEditorHost : Grid, IDisposable
 
     private void Post(object message)
     {
-        if (_isReady && _browser.CoreWebView2 is not null)
+        if (_isReady && _core is not null)
         {
-            _browser.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(message));
+            _core.PostWebMessageAsJson(JsonSerializer.Serialize(message));
         }
     }
 
+    private void OnHostSizeChanged(object sender, SizeChangedEventArgs e) => UpdateBounds();
+
     private void ShowInitializationError(Exception exception)
     {
-        Children.Clear();
-        Children.Add(new TextBlock
+        _boundsHost.Children.Clear();
+        _boundsHost.Children.Add(new TextBlock
         {
             Text = $"编辑器无法启动：{exception.Message}",
             Margin = new Thickness(14, 12, 14, 12),
@@ -227,12 +264,18 @@ public sealed class MarkdownEditorHost : Grid, IDisposable
         }
 
         _isDisposed = true;
-        if (_browser.CoreWebView2 is not null)
+        _boundsHost.Loaded -= OnLoaded;
+        _boundsHost.SizeChanged -= OnHostSizeChanged;
+
+        if (_core is not null)
         {
-            _browser.CoreWebView2.WebMessageReceived -= OnWebMessageReceived;
-            _browser.CoreWebView2.NavigationStarting -= OnNavigationStarting;
-            _browser.CoreWebView2.NewWindowRequested -= OnNewWindowRequested;
+            _core.WebMessageReceived -= OnWebMessageReceived;
+            _core.NavigationStarting -= OnNavigationStarting;
+            _core.NewWindowRequested -= OnNewWindowRequested;
         }
-        _browser.Close();
+
+        _controller?.Close();
+        _controller = null;
+        _core = null;
     }
 }
