@@ -19,7 +19,7 @@ public sealed class RichEditorHost : IDisposable
     private readonly RichEditBox _editor;
     private InMemoryRandomAccessStream? _loadedStream;
     private bool _loading;
-    private bool _textChangeStarted;
+    private string _lastEditorText = string.Empty;
 
     public RichEditorHost(Grid host)
     {
@@ -43,13 +43,13 @@ public sealed class RichEditorHost : IDisposable
             _editor.Resources[key] = Transparent();
         }
 
-        _editor.TextChanging += OnTextChanging;
         _editor.TextChanged += OnTextChanged;
         _editor.KeyDown += OnKeyDown;
         _host.Children.Add(_editor);
     }
 
-    public event EventHandler<RichDocumentChangedEventArgs>? DocumentChanged;
+    /// <summary>仅在正文实际变化或用户执行格式、插图命令时触发。</summary>
+    public event EventHandler? UserEdited;
 
     public string PlainText
     {
@@ -83,7 +83,7 @@ public sealed class RichEditorHost : IDisposable
                 _editor.Document.LoadFromStream(TextSetOptions.FormatRtf, stream);
                 _loadedStream = stream;
             }
-
+            _lastEditorText = PlainText;
         }
         finally
         {
@@ -124,7 +124,7 @@ public sealed class RichEditorHost : IDisposable
                 return;
         }
 
-        NotifyUserEdit(isUserCommand: true);
+        NotifyUserEdited();
         _editor.Focus(FocusState.Programmatic);
     }
 
@@ -139,7 +139,7 @@ public sealed class RichEditorHost : IDisposable
         stream.Seek(0);
         _editor.Document.Selection.InsertImage(
             width, height, 0, VerticalCharacterAlignment.Baseline, file.Name, stream);
-        NotifyUserEdit(isUserCommand: true);
+        NotifyUserEdited();
         _editor.Focus(FocusState.Programmatic);
     }
 
@@ -148,21 +148,12 @@ public sealed class RichEditorHost : IDisposable
 
     private void OnTextChanged(object sender, RoutedEventArgs args)
     {
-        if (!_textChangeStarted)
+        if (_loading || string.Equals(PlainText, _lastEditorText, StringComparison.Ordinal))
         {
             return;
         }
 
-        _textChangeStarted = false;
-        NotifyUserEdit(isUserCommand: false);
-    }
-
-    private void OnTextChanging(RichEditBox sender, RichEditBoxTextChangingEventArgs args)
-    {
-        if (!_loading)
-        {
-            _textChangeStarted = true;
-        }
+        NotifyUserEdited();
     }
 
     private void OnKeyDown(object sender, KeyRoutedEventArgs args)
@@ -187,15 +178,15 @@ public sealed class RichEditorHost : IDisposable
         }
     }
 
-    private void NotifyUserEdit(bool isUserCommand)
+    private void NotifyUserEdited()
     {
-        DocumentChanged?.Invoke(this, new RichDocumentChangedEventArgs(isUserCommand));
+        _lastEditorText = PlainText;
+        UserEdited?.Invoke(this, EventArgs.Empty);
     }
 
     public void Dispose()
     {
         _editor.TextChanged -= OnTextChanged;
-        _editor.TextChanging -= OnTextChanging;
         _editor.KeyDown -= OnKeyDown;
         _host.Children.Remove(_editor);
         _loadedStream?.Dispose();

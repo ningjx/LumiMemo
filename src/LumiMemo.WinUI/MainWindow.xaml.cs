@@ -32,7 +32,6 @@ public sealed partial class MainWindow : Window
     private bool _saving;
     private int _documentRevision;
     private bool _isApplicationExiting;
-    private string _lastEditorText = string.Empty;
 
     public MainWindow(
         Note note,
@@ -97,8 +96,7 @@ public sealed partial class MainWindow : Window
         try
         {
             await _editor.LoadAsync(_note.RichTextContent);
-            _lastEditorText = _editor.PlainText;
-            _editor.DocumentChanged += OnDocumentChanged;
+            _editor.UserEdited += OnUserEdited;
         }
         catch (Exception exception)
         {
@@ -159,16 +157,9 @@ public sealed partial class MainWindow : Window
         _acrylicController.SetSystemBackdropConfiguration(_backdropConfiguration);
     }
 
-    private void OnDocumentChanged(object? sender, RichDocumentChangedEventArgs args)
+    private void OnUserEdited(object? sender, EventArgs args)
     {
-        string content = _editor.PlainText;
-        if (!args.IsUserCommand && string.Equals(content, _lastEditorText, StringComparison.Ordinal))
-        {
-            return;
-        }
-
-        _lastEditorText = content;
-        _note.Content = content;
+        _note.Content = _editor.PlainText;
         _note.UpdatedAt = _clock.Now;
         _titles.ContentChanged(_note);
         TitleText.Text = _note.Title;
@@ -396,7 +387,7 @@ public sealed partial class MainWindow : Window
 
         _saveTimer.Tick -= OnSaveTimerTick;
         EditorHost.Loaded -= OnEditorHostLoaded;
-        _editor.DocumentChanged -= OnDocumentChanged;
+        _editor.UserEdited -= OnUserEdited;
         _editor.Dispose();
         _acrylicController?.Dispose();
         _acrylicController = null;
