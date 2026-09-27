@@ -4,7 +4,6 @@ using global::Windows.Win32.Foundation;
 using global::Windows.Win32.Graphics.Dwm;
 using global::Windows.Win32.UI.Controls;
 using global::Windows.Win32.UI.WindowsAndMessaging;
-using System.Runtime.InteropServices;
 
 namespace LumiMemo.Infrastructure.Windows;
 
@@ -17,7 +16,7 @@ namespace LumiMemo.Infrastructure.Windows;
 /// <c>-windows</c> 后缀的 <c>net10.0</c>，引不到 WPF 类型。
 /// </para>
 /// </remarks>
-public static partial class WindowInterop
+public static class WindowInterop
 {
     /// <summary>请求 Windows 11 的桌面 Acrylic；旧系统由调用方保留实色背景。</summary>
     public static unsafe bool TryEnableAcrylic(IntPtr hwnd)
@@ -26,8 +25,6 @@ public static partial class WindowInterop
         {
             return false;
         }
-
-        DisableLegacyBackdrop(hwnd);
 
         DWM_SYSTEMBACKDROP_TYPE backdrop = DWM_SYSTEMBACKDROP_TYPE.DWMSBT_TRANSIENTWINDOW;
         if (PInvoke.DwmSetWindowAttribute(
@@ -44,64 +41,10 @@ public static partial class WindowInterop
         return PInvoke.DwmExtendFrameIntoClientArea(new HWND(hwnd), in margins) == 0;
     }
 
-    /// <summary>
-    /// 为失焦窗口启用持续的桌面模糊。
-    /// </summary>
-    /// <remarks>
-    /// Windows 的 <c>DWMSBT_TRANSIENTWINDOW</c> 会在窗口失焦时按系统设计退成实色，
-    /// 再次写入同一 DWM 属性也不会改变这个策略。这里仅在失焦期间使用旧合成器的
-    /// Acrylic 策略；重新激活后调用 <see cref="TryEnableAcrylic"/> 恢复系统材质。
-    /// </remarks>
-    public static unsafe bool TryEnableInactiveAcrylic(IntPtr hwnd)
-    {
-        if (hwnd == IntPtr.Zero || !OperatingSystem.IsWindowsVersionAtLeast(10, 0, 17763))
-        {
-            return false;
-        }
-
-        // 两套窗口背景不能叠加。先撤掉系统 Acrylic，再让旧合成路径负责失焦态。
-        DWM_SYSTEMBACKDROP_TYPE backdrop = DWM_SYSTEMBACKDROP_TYPE.DWMSBT_NONE;
-        _ = PInvoke.DwmSetWindowAttribute(
-            new HWND(hwnd),
-            DWMWINDOWATTRIBUTE.DWMWA_SYSTEMBACKDROP_TYPE,
-            &backdrop,
-            (uint)sizeof(DWM_SYSTEMBACKDROP_TYPE));
-
-        var margins = new MARGINS { cxLeftWidth = -1 };
-        _ = PInvoke.DwmExtendFrameIntoClientArea(new HWND(hwnd), in margins);
-
-        // AABBGGRR。轻微的暖白紫色只负责稳定色调，主要颜色仍来自 XAML 的半透明面板。
-        var policy = new AccentPolicy
-        {
-            State = AccentState.EnableAcrylicBlurBehind,
-            Flags = 2,
-            GradientColor = unchecked((int)0x32F8F1F7),
-        };
-
-        var data = new WindowCompositionAttributeData
-        {
-            Attribute = WindowCompositionAttribute.AccentPolicy,
-            SizeOfData = Marshal.SizeOf<AccentPolicy>(),
-        };
-
-        data.Data = (IntPtr)(&policy);
-        return SetWindowCompositionAttribute(hwnd, ref data) != 0;
-    }
-
     /// <summary>换成非玻璃主题时撤销系统背景材质。</summary>
     public static unsafe void DisableAcrylic(IntPtr hwnd)
     {
-        if (hwnd == IntPtr.Zero)
-        {
-            return;
-        }
-
-        if (OperatingSystem.IsWindowsVersionAtLeast(10, 0, 17763))
-        {
-            DisableLegacyBackdrop(hwnd);
-        }
-
-        if (!OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22621))
+        if (hwnd == IntPtr.Zero || !OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22621))
         {
             return;
         }
@@ -115,53 +58,6 @@ public static partial class WindowInterop
         var margins = new MARGINS();
         _ = PInvoke.DwmExtendFrameIntoClientArea(new HWND(hwnd), in margins);
     }
-
-    private static unsafe void DisableLegacyBackdrop(IntPtr hwnd)
-    {
-        var policy = new AccentPolicy { State = AccentState.Disabled };
-        var data = new WindowCompositionAttributeData
-        {
-            Attribute = WindowCompositionAttribute.AccentPolicy,
-            Data = (IntPtr)(&policy),
-            SizeOfData = Marshal.SizeOf<AccentPolicy>(),
-        };
-        _ = SetWindowCompositionAttribute(hwnd, ref data);
-    }
-
-    private enum WindowCompositionAttribute
-    {
-        AccentPolicy = 19,
-    }
-
-    private enum AccentState
-    {
-        Disabled = 0,
-        EnableAcrylicBlurBehind = 4,
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct AccentPolicy
-    {
-        public AccentState State;
-        public int Flags;
-        public int GradientColor;
-        public int AnimationId;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct WindowCompositionAttributeData
-    {
-        public WindowCompositionAttribute Attribute;
-        public IntPtr Data;
-        public int SizeOfData;
-    }
-
-    // SetWindowCompositionAttribute 没有进入 Windows SDK 元数据，CsWin32 无法生成它。
-    // 这里是本项目唯一的手写签名，参数全部按原生布局固定，避免 bool 封送差异。
-    [LibraryImport("user32.dll")]
-    private static partial int SetWindowCompositionAttribute(
-        IntPtr hwnd,
-        ref WindowCompositionAttributeData data);
 
     /// <summary>要求系统绘制窗口圆角；被系统策略忽略时仍可正常使用窗口。</summary>
     public static unsafe void PreferRoundedCorners(IntPtr hwnd)
