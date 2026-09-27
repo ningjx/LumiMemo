@@ -54,10 +54,19 @@
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
-                        <TextBlock Text="{Binding Title}"
-                                   FontWeight="SemiBold"
-                                   Foreground="#FF403747"
-                                   TextTrimming="CharacterEllipsis" />
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="{Binding Title}"
+                                       FontWeight="SemiBold"
+                                       Foreground="#FF403747"
+                                       TextTrimming="CharacterEllipsis" />
+                            <ProgressRing Grid.Column="1" Width="16" Height="16"
+                                          Margin="8,0,0,0" IsActive="{Binding IsGenerating}"
+                                          Visibility="{Binding ProgressVisibility}" />
+                        </Grid>
                         <TextBlock Grid.Row="1"
                                    Margin="0,4,0,0"
                                    Text="{Binding Content}"

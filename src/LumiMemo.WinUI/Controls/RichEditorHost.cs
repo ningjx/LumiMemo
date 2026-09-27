@@ -1,10 +1,14 @@
 using Microsoft.UI.Text;
+using Microsoft.UI.Input;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Windows.Graphics.Imaging;
 using Windows.Storage;
 using Windows.Storage.Streams;
+using Windows.System;
+using Windows.UI.Core;
 
 namespace LumiMemo.WinUI.Controls;
 
@@ -15,6 +19,7 @@ public sealed class RichEditorHost : IDisposable
     private readonly RichEditBox _editor;
     private InMemoryRandomAccessStream? _loadedStream;
     private bool _loading;
+    private bool _textChangeStarted;
 
     public RichEditorHost(Grid host)
     {
@@ -38,11 +43,13 @@ public sealed class RichEditorHost : IDisposable
             _editor.Resources[key] = Transparent();
         }
 
+        _editor.TextChanging += OnTextChanging;
         _editor.TextChanged += OnTextChanged;
+        _editor.KeyDown += OnKeyDown;
         _host.Children.Add(_editor);
     }
 
-    public event EventHandler? DocumentChanged;
+    public event EventHandler<RichDocumentChangedEventArgs>? DocumentChanged;
 
     public string PlainText
     {
@@ -76,6 +83,7 @@ public sealed class RichEditorHost : IDisposable
                 _editor.Document.LoadFromStream(TextSetOptions.FormatRtf, stream);
                 _loadedStream = stream;
             }
+
         }
         finally
         {
@@ -116,7 +124,7 @@ public sealed class RichEditorHost : IDisposable
                 return;
         }
 
-        DocumentChanged?.Invoke(this, EventArgs.Empty);
+        NotifyUserEdit(isUserCommand: true);
         _editor.Focus(FocusState.Programmatic);
     }
 
@@ -131,7 +139,7 @@ public sealed class RichEditorHost : IDisposable
         stream.Seek(0);
         _editor.Document.Selection.InsertImage(
             width, height, 0, VerticalCharacterAlignment.Baseline, file.Name, stream);
-        DocumentChanged?.Invoke(this, EventArgs.Empty);
+        NotifyUserEdit(isUserCommand: true);
         _editor.Focus(FocusState.Programmatic);
     }
 
@@ -140,15 +148,55 @@ public sealed class RichEditorHost : IDisposable
 
     private void OnTextChanged(object sender, RoutedEventArgs args)
     {
+        if (!_textChangeStarted)
+        {
+            return;
+        }
+
+        _textChangeStarted = false;
+        NotifyUserEdit(isUserCommand: false);
+    }
+
+    private void OnTextChanging(RichEditBox sender, RichEditBoxTextChangingEventArgs args)
+    {
         if (!_loading)
         {
-            DocumentChanged?.Invoke(this, EventArgs.Empty);
+            _textChangeStarted = true;
         }
+    }
+
+    private void OnKeyDown(object sender, KeyRoutedEventArgs args)
+    {
+        CoreVirtualKeyStates control = InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Control);
+        if ((control & CoreVirtualKeyStates.Down) == 0)
+        {
+            return;
+        }
+
+        string? command = args.Key switch
+        {
+            VirtualKey.B => "bold",
+            VirtualKey.I => "italic",
+            VirtualKey.U => "underline",
+            _ => null
+        };
+        if (command is not null)
+        {
+            args.Handled = true;
+            ExecuteCommand(command);
+        }
+    }
+
+    private void NotifyUserEdit(bool isUserCommand)
+    {
+        DocumentChanged?.Invoke(this, new RichDocumentChangedEventArgs(isUserCommand));
     }
 
     public void Dispose()
     {
         _editor.TextChanged -= OnTextChanged;
+        _editor.TextChanging -= OnTextChanging;
+        _editor.KeyDown -= OnKeyDown;
         _host.Children.Remove(_editor);
         _loadedStream?.Dispose();
     }

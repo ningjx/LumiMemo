@@ -22,28 +22,24 @@ public sealed partial class MainWindow : Window
     private readonly Note _note;
     private readonly INoteRepository _repository;
     private readonly IClock _clock;
-    private readonly AppSettings _settings;
-    private readonly ITitleGenerator _titleGenerator;
+    private readonly NoteTitleCoordinator _titles;
     private readonly ILayoutStore _layoutStore;
     private readonly NoteLayout _layout;
     private readonly Action<Guid> _onClosed;
     private readonly Action _onNoteChanged;
     private readonly DispatcherTimer _saveTimer;
-    private readonly DispatcherTimer _titleTimer;
-    private CancellationTokenSource? _titleRequest;
-    private string _titleBaseline;
-    private bool _closed;
     private bool _hasPendingSave;
     private bool _saving;
     private int _documentRevision;
     private bool _isApplicationExiting;
+    private string _lastEditorText = string.Empty;
 
     public MainWindow(
         Note note,
         INoteRepository repository,
         IClock clock,
         AppSettings settings,
-        ITitleGenerator titleGenerator,
+        NoteTitleCoordinator titles,
         ILayoutStore layoutStore,
         NoteLayout layout,
         Action<Guid> onClosed,
@@ -53,7 +49,7 @@ public sealed partial class MainWindow : Window
         ArgumentNullException.ThrowIfNull(repository);
         ArgumentNullException.ThrowIfNull(clock);
         ArgumentNullException.ThrowIfNull(settings);
-        ArgumentNullException.ThrowIfNull(titleGenerator);
+        ArgumentNullException.ThrowIfNull(titles);
         ArgumentNullException.ThrowIfNull(layoutStore);
         ArgumentNullException.ThrowIfNull(layout);
         ArgumentNullException.ThrowIfNull(onClosed);
@@ -65,9 +61,7 @@ public sealed partial class MainWindow : Window
         _note = note;
         _repository = repository;
         _clock = clock;
-        _settings = settings;
-        _titleGenerator = titleGenerator;
-        _titleBaseline = note.Content;
+        _titles = titles;
         _layoutStore = layoutStore;
         _layout = layout;
         _onClosed = onClosed;
@@ -77,10 +71,11 @@ public sealed partial class MainWindow : Window
             Interval = TimeSpan.FromMilliseconds(settings.AutoSaveDelayMs)
         };
         _saveTimer.Tick += OnSaveTimerTick;
-        _titleTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(1400) };
-        _titleTimer.Tick += OnTitleTimerTick;
 
         _editor = new RichEditorHost(EditorHost);
+        _titles.GenerationStateChanged += OnGenerationStateChanged;
+        _titles.TitleUpdated += OnTitleUpdated;
+        _titles.GenerationFailed += OnGenerationFailed;
 
         Title = "LumiMemo";
         ExtendsContentIntoTitleBar = true;
@@ -89,6 +84,7 @@ public sealed partial class MainWindow : Window
         EnablePersistentAcrylic();
 
         TitleText.Text = note.Title;
+        UpdateTitleProgress(_titles.IsPending(note.Id));
         EditorHost.Loaded += OnEditorHostLoaded;
         _appWindow.Closing += OnWindowClosing;
         Closed += OnWindowClosed;
@@ -101,6 +97,7 @@ public sealed partial class MainWindow : Window
         try
         {
             await _editor.LoadAsync(_note.RichTextContent);
+            _lastEditorText = _editor.PlainText;
             _editor.DocumentChanged += OnDocumentChanged;
         }
         catch (Exception exception)
@@ -162,19 +159,18 @@ public sealed partial class MainWindow : Window
         _acrylicController.SetSystemBackdropConfiguration(_backdropConfiguration);
     }
 
-    private void OnDocumentChanged(object? sender, EventArgs args)
+    private void OnDocumentChanged(object? sender, RichDocumentChangedEventArgs args)
     {
-        _note.Content = _editor.PlainText;
-        _note.UpdatedAt = _clock.Now;
-        _titleRequest?.Cancel();
-        _titleTimer.Stop();
-        if (_settings.Llm.Enabled
-            && !string.IsNullOrWhiteSpace(_settings.Llm.Model)
-            && TitleChangePolicy.ShouldGenerate(_titleBaseline, _note.Content,
-                !string.IsNullOrWhiteSpace(_note.AutoTitle)))
+        string content = _editor.PlainText;
+        if (!args.IsUserCommand && string.Equals(content, _lastEditorText, StringComparison.Ordinal))
         {
-            _titleTimer.Start();
+            return;
         }
+
+        _lastEditorText = content;
+        _note.Content = content;
+        _note.UpdatedAt = _clock.Now;
+        _titles.ContentChanged(_note);
         TitleText.Text = _note.Title;
         _onNoteChanged();
         _hasPendingSave = true;
@@ -207,6 +203,7 @@ public sealed partial class MainWindow : Window
             {
                 _hasPendingSave = false;
                 UpdateStatus(_note.Content);
+                _titles.ContentSaved(_note);
             }
         }
         catch (Exception)
@@ -257,51 +254,34 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private async void OnTitleTimerTick(object? sender, object e)
+    private void OnGenerationStateChanged(Guid noteId, bool generating)
     {
-        _titleTimer.Stop();
-        string snapshot = _note.Content;
-        LlmSettings config = _settings.Llm;
-        if (_closed || !config.Enabled
-            || !TitleChangePolicy.ShouldGenerate(_titleBaseline, snapshot,
-                !string.IsNullOrWhiteSpace(_note.AutoTitle)))
+        if (noteId == _note.Id)
         {
-            return;
+            UpdateTitleProgress(generating);
         }
+    }
 
-        _titleRequest?.Dispose();
-        _titleRequest = new CancellationTokenSource();
-        CancellationToken token = _titleRequest.Token;
-        try
+    private void OnTitleUpdated(Guid noteId)
+    {
+        if (noteId == _note.Id)
         {
-            string title = await _titleGenerator.GenerateAsync(snapshot, config, token);
-            if (_closed || token.IsCancellationRequested || !_settings.Llm.Enabled
-                || _note.Content != snapshot)
-            {
-                return;
-            }
-
-            _note.AutoTitle = title;
-            _titleBaseline = snapshot;
-            _note.UpdatedAt = _clock.Now;
             TitleText.Text = _note.Title;
-            _onNoteChanged();
-            _hasPendingSave = true;
-            _documentRevision++;
-            _saveTimer.Stop();
-            _saveTimer.Start();
         }
-        catch (OperationCanceledException) when (token.IsCancellationRequested)
+    }
+
+    private void OnGenerationFailed(Guid noteId)
+    {
+        if (noteId == _note.Id)
         {
+            StatusText.Text = "自动标题失败 · 请检查模型设置";
         }
-        catch (Exception exception)
-        {
-            System.Diagnostics.Debug.WriteLine($"自动标题生成失败：{exception}");
-            if (!_closed && !token.IsCancellationRequested)
-            {
-                StatusText.Text = "自动标题失败 · 请检查模型设置";
-            }
-        }
+    }
+
+    private void UpdateTitleProgress(bool generating)
+    {
+        TitleProgress.IsActive = generating;
+        TitleProgress.Visibility = generating ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void OnPinClick(object sender, RoutedEventArgs e)
@@ -380,6 +360,7 @@ public sealed partial class MainWindow : Window
             _note.RichTextContent = _editor.SaveRtf();
             _repository.SaveAsync(_note).GetAwaiter().GetResult();
             _hasPendingSave = false;
+            _titles.ContentSaved(_note);
             return true;
         }
         catch (Exception)
@@ -391,11 +372,9 @@ public sealed partial class MainWindow : Window
 
     private void OnWindowClosed(object sender, WindowEventArgs args)
     {
-        _closed = true;
-        _titleTimer.Stop();
-        _titleTimer.Tick -= OnTitleTimerTick;
-        _titleRequest?.Cancel();
-        _titleRequest?.Dispose();
+        _titles.GenerationStateChanged -= OnGenerationStateChanged;
+        _titles.TitleUpdated -= OnTitleUpdated;
+        _titles.GenerationFailed -= OnGenerationFailed;
         Closed -= OnWindowClosed;
         _onClosed(_note.Id);
         _appWindow.Changed -= OnAppWindowChanged;

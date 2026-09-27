@@ -1,5 +1,6 @@
 using LumiMemo.Core.Models;
 using LumiMemo.WinUI.Services;
+using LumiMemo.WinUI.ViewModels;
 using Microsoft.UI.Composition;
 using Microsoft.UI.Composition.SystemBackdrops;
 using Microsoft.UI.Windowing;
@@ -31,6 +32,7 @@ public sealed partial class ManagerWindow : Window
         _settings = settings;
         _settingsStore = settingsStore;
         _windows.NotesChanged += OnNotesChanged;
+        _windows.TitleGenerationStateChanged += OnNotesChanged;
 
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(ManagerTitleBar);
@@ -123,9 +125,9 @@ public sealed partial class ManagerWindow : Window
 
     private void OnNoteItemClick(object sender, ItemClickEventArgs e)
     {
-        if (e.ClickedItem is Note note)
+        if (e.ClickedItem is NoteListItem item)
         {
-            _windows.OpenNote(note.Id);
+            _windows.OpenNote(item.Note.Id);
         }
     }
 
@@ -139,6 +141,7 @@ public sealed partial class ManagerWindow : Window
                 || note.Title.Contains(query, StringComparison.CurrentCultureIgnoreCase)
                 || note.Content.Contains(query, StringComparison.CurrentCultureIgnoreCase))
             .OrderByDescending(note => note.UpdatedAt)
+            .Select(note => new NoteListItem(note, _windows.IsTitleGenerating(note.Id)))
             .ToList();
     }
 
@@ -152,6 +155,7 @@ public sealed partial class ManagerWindow : Window
         }
 
         _windows.NotesChanged -= OnNotesChanged;
+        _windows.TitleGenerationStateChanged -= OnNotesChanged;
         _acrylicController?.Dispose();
         _acrylicController = null;
         _backdropConfiguration = null;

@@ -52,12 +52,22 @@
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
-                <TextBlock x:Name="TitleText"
-                           Text="LumiMemo"
-                           VerticalAlignment="Center"
-                           FontWeight="SemiBold"
-                           Foreground="#FF403747"
-                           TextTrimming="CharacterEllipsis" />
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock x:Name="TitleText"
+                               Text="LumiMemo"
+                               VerticalAlignment="Center"
+                               FontWeight="SemiBold"
+                               Foreground="#FF403747"
+                               TextTrimming="CharacterEllipsis" />
+                    <ProgressRing x:Name="TitleProgress" Grid.Column="1"
+                                  Width="16" Height="16" Margin="6,0,0,0"
+                                  VerticalAlignment="Center"
+                                  IsActive="False" Visibility="Collapsed" />
+                </Grid>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="3">
                     <ToggleButton x:Name="PinButton"
                                   Style="{StaticResource GlassToggleButtonStyle}"

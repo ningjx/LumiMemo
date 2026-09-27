@@ -1,6 +1,7 @@
 using Microsoft.UI.Xaml;
 using LumiMemo.Core.Abstractions;
 using LumiMemo.Core.Models;
+using LumiMemo.Core.Services;
 using LumiMemo.Infrastructure.Io;
 using LumiMemo.Infrastructure.Settings;
 using LumiMemo.Infrastructure.Storage;
@@ -34,7 +35,8 @@ public partial class App : Application
 
             _titleHttpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(25) };
             var titleGenerator = new OpenAiCompatibleTitleGenerator(_titleHttpClient);
-            _windowManager = new NoteWindowManager(notes, repository, clock, settings, layoutStore, titleGenerator);
+            var titles = new NoteTitleCoordinator(notes, repository, clock, settings, titleGenerator);
+            _windowManager = new NoteWindowManager(notes, repository, clock, settings, layoutStore, titles);
             _managerWindow = new ManagerWindow(_windowManager, settings, settingsStore);
 
             if (settings.ShowTrayIcon)

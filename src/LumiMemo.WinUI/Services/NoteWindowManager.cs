@@ -1,5 +1,6 @@
 using LumiMemo.Core.Abstractions;
 using LumiMemo.Core.Models;
+using LumiMemo.Core.Services;
 
 namespace LumiMemo.WinUI.Services;
 
@@ -10,7 +11,7 @@ public sealed class NoteWindowManager
     private readonly IClock _clock;
     private readonly AppSettings _settings;
     private readonly ILayoutStore _layouts;
-    private readonly ITitleGenerator _titleGenerator;
+    private readonly NoteTitleCoordinator _titles;
     private readonly List<Note> _notes;
     private readonly Dictionary<Guid, MainWindow> _windows = [];
 
@@ -20,28 +21,33 @@ public sealed class NoteWindowManager
         IClock clock,
         AppSettings settings,
         ILayoutStore layouts,
-        ITitleGenerator titleGenerator)
+        NoteTitleCoordinator titles)
     {
         ArgumentNullException.ThrowIfNull(notes);
         ArgumentNullException.ThrowIfNull(repository);
         ArgumentNullException.ThrowIfNull(clock);
         ArgumentNullException.ThrowIfNull(settings);
         ArgumentNullException.ThrowIfNull(layouts);
-        ArgumentNullException.ThrowIfNull(titleGenerator);
+        ArgumentNullException.ThrowIfNull(titles);
 
         _notes = [.. notes];
         _repository = repository;
         _clock = clock;
         _settings = settings;
         _layouts = layouts;
-        _titleGenerator = titleGenerator;
+        _titles = titles;
+        _titles.TitleUpdated += OnTitleUpdated;
+        _titles.GenerationStateChanged += OnTitleGenerationStateChanged;
     }
 
     public event EventHandler? NotesChanged;
+    public event EventHandler? TitleGenerationStateChanged;
 
     public IReadOnlyList<Note> Notes => _notes;
 
     public int OpenWindowCount => _windows.Count;
+
+    public bool IsTitleGenerating(Guid noteId) => _titles.IsPending(noteId);
 
     public int RestoreOpenNotes()
     {
@@ -81,7 +87,7 @@ public sealed class NoteWindowManager
             _repository,
             _clock,
             _settings,
-            _titleGenerator,
+            _titles,
             _layouts,
             layout,
             OnWindowClosed,
@@ -102,6 +108,7 @@ public sealed class NoteWindowManager
     {
         Note note = await _repository.CreateAsync();
         _notes.Add(note);
+        _titles.Register(note);
         NotesChanged?.Invoke(this, EventArgs.Empty);
         OpenNote(note.Id);
     }
@@ -130,9 +137,17 @@ public sealed class NoteWindowManager
         }
 
         _layouts.FlushAsync().GetAwaiter().GetResult();
+        _titles.TitleUpdated -= OnTitleUpdated;
+        _titles.GenerationStateChanged -= OnTitleGenerationStateChanged;
+        _titles.Dispose();
     }
 
     private void OnWindowClosed(Guid noteId) => _windows.Remove(noteId);
 
     private void OnNoteChanged() => NotesChanged?.Invoke(this, EventArgs.Empty);
+
+    private void OnTitleUpdated(Guid noteId) => NotesChanged?.Invoke(this, EventArgs.Empty);
+
+    private void OnTitleGenerationStateChanged(Guid noteId, bool generating) =>
+        TitleGenerationStateChanged?.Invoke(this, EventArgs.Empty);
 }
