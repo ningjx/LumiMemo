@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "LumiMemo.WinUI (Package)": {
+      "commandName": "MsixPackage"
+    },
+    "LumiMemo.WinUI (Unpackaged)": {
+      "commandName": "Project"
+    }
+  }
+}

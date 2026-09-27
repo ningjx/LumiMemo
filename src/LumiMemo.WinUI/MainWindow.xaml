@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<Window
+    x:Class="LumiMemo.WinUI.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="LumiMemo">
+
+    <Grid x:Name="Root" Background="#12FFFFFF">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="40" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="44" />
+        </Grid.RowDefinitions>
+
+        <Border x:Name="TitleBarHost"
+                Grid.Row="0"
+                Background="#30F3EAF8"
+                BorderBrush="#50FFFFFF"
+                BorderThickness="0,0,0,1">
+            <Grid Padding="14,0,7,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock x:Name="TitleText"
+                           Text="LumiMemo"
+                           VerticalAlignment="Center"
+                           FontWeight="SemiBold"
+                           Foreground="#FF403747"
+                           TextTrimming="CharacterEllipsis" />
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="3">
+                    <ToggleButton x:Name="PinButton"
+                                  Width="32" Height="30"
+                                  VerticalAlignment="Center"
+                                  Click="OnPinClick"
+                                  ToolTipService.ToolTip="置顶"
+                                  Content="↑" />
+                    <Button Width="32" Height="30"
+                            VerticalAlignment="Center"
+                            Click="OnCloseClick"
+                            ToolTipService.ToolTip="关闭"
+                            Content="×" />
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <Grid x:Name="EditorHost" Grid.Row="1" />
+
+        <Border Grid.Row="2"
+                Background="#30F3EAF8"
+                BorderBrush="#50FFFFFF"
+                BorderThickness="0,1,0,0"
+                Padding="8,0,10,0">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Orientation="Horizontal" Spacing="3" VerticalAlignment="Center">
+                    <Button Width="30" Height="30" Click="OnBoldClick" ToolTipService.ToolTip="粗体">
+                        <TextBlock Text="B" FontSize="16" FontWeight="Bold" />
+                    </Button>
+                    <Button Width="30" Height="30" Click="OnItalicClick" ToolTipService.ToolTip="斜体">
+                        <TextBlock Text="I" FontSize="16" FontStyle="Italic" />
+                    </Button>
+                    <Button Width="30" Height="30" Click="OnUnderlineClick" ToolTipService.ToolTip="下划线">
+                        <TextBlock Text="U" FontSize="15" TextDecorations="Underline" />
+                    </Button>
+                    <Button Width="30" Height="30" Click="OnStrikeClick" ToolTipService.ToolTip="删除线">
+                        <TextBlock Text="S" FontSize="15" TextDecorations="Strikethrough" />
+                    </Button>
+                    <Rectangle Width="1" Height="18" Margin="3,0" Fill="#5075697C" />
+                    <Button Width="34" Height="30" Click="OnTaskListClick" ToolTipService.ToolTip="待办列表" Content="☑" />
+                    <Button Width="34" Height="30" Click="OnBulletListClick" ToolTipService.ToolTip="项目列表" Content="•≡" />
+                </StackPanel>
+                <TextBlock x:Name="StatusText"
+                           Grid.Column="1"
+                           VerticalAlignment="Center"
+                           FontSize="12"
+                           Foreground="#FF75697C"
+                           Text="已保存 · 0 字" />
+            </Grid>
+        </Border>
+
+        <Border Grid.RowSpan="3"
+                BorderBrush="#80FFFFFF"
+                BorderThickness="1"
+                CornerRadius="12"
+                IsHitTestVisible="False" />
+    </Grid>
+</Window>
