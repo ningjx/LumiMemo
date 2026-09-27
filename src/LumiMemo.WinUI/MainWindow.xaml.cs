@@ -22,8 +22,11 @@ public sealed partial class MainWindow : Window
     private readonly IClock _clock;
     private readonly ILayoutStore _layoutStore;
     private readonly NoteLayout _layout;
+    private readonly Action<Guid> _onClosed;
+    private readonly Action _onNoteChanged;
     private readonly DispatcherTimer _saveTimer;
     private bool _hasPendingSave;
+    private bool _isApplicationExiting;
 
     public MainWindow(
         Note note,
@@ -31,7 +34,9 @@ public sealed partial class MainWindow : Window
         IClock clock,
         AppSettings settings,
         ILayoutStore layoutStore,
-        NoteLayout layout)
+        NoteLayout layout,
+        Action<Guid> onClosed,
+        Action onNoteChanged)
     {
         ArgumentNullException.ThrowIfNull(note);
         ArgumentNullException.ThrowIfNull(repository);
@@ -39,6 +44,8 @@ public sealed partial class MainWindow : Window
         ArgumentNullException.ThrowIfNull(settings);
         ArgumentNullException.ThrowIfNull(layoutStore);
         ArgumentNullException.ThrowIfNull(layout);
+        ArgumentNullException.ThrowIfNull(onClosed);
+        ArgumentNullException.ThrowIfNull(onNoteChanged);
 
         InitializeComponent();
 
@@ -47,15 +54,15 @@ public sealed partial class MainWindow : Window
         _clock = clock;
         _layoutStore = layoutStore;
         _layout = layout;
+        _onClosed = onClosed;
+        _onNoteChanged = onNoteChanged;
         _saveTimer = new DispatcherTimer
         {
             Interval = TimeSpan.FromMilliseconds(settings.AutoSaveDelayMs)
         };
         _saveTimer.Tick += OnSaveTimerTick;
 
-        _editor = new MarkdownEditorHost(
-            EditorHost,
-            WinRT.Interop.WindowNative.GetWindowHandle(this));
+        _editor = new MarkdownEditorHost(EditorHost);
 
         Title = "LumiMemo";
         ExtendsContentIntoTitleBar = true;
@@ -133,6 +140,7 @@ public sealed partial class MainWindow : Window
         _note.Content = markdown;
         _note.UpdatedAt = _clock.Now;
         TitleText.Text = _note.Title;
+        _onNoteChanged();
         _hasPendingSave = true;
         StatusText.Text = $"正在保存 · {CountCharacters(markdown)} 字";
         _saveTimer.Stop();
@@ -188,6 +196,35 @@ public sealed partial class MainWindow : Window
 
     private void OnCloseClick(object sender, RoutedEventArgs e) => Close();
 
+    public void ShowFromTray()
+    {
+        _layout.IsOpen = true;
+        _layoutStore.MarkDirty();
+        AppWindow.Show();
+        Activate();
+    }
+
+    public async Task ShowAboutAsync()
+    {
+        ShowFromTray();
+        var dialog = new ContentDialog
+        {
+            XamlRoot = Root.XamlRoot,
+            Title = "关于 LumiMemo",
+            Content = "鹿米便笺 WinUI 迁移版\nMarkdown 数据仍保存在本地笔记文件夹中。",
+            CloseButtonText = "确定"
+        };
+        await dialog.ShowAsync();
+    }
+
+    public void CloseForExit()
+    {
+        _isApplicationExiting = true;
+        Close();
+    }
+
+    public void HideWindow() => AppWindow.Hide();
+
     private void OnWindowClosing(AppWindow sender, AppWindowClosingEventArgs args)
     {
         _saveTimer.Stop();
@@ -208,7 +245,10 @@ public sealed partial class MainWindow : Window
 
         AppWindow.Changed -= OnAppWindowChanged;
         CaptureLayout();
-        _layout.IsOpen = false;
+        if (!_isApplicationExiting)
+        {
+            _layout.IsOpen = false;
+        }
         _layoutStore.MarkDirty();
         try
         {
@@ -225,6 +265,7 @@ public sealed partial class MainWindow : Window
         _acrylicController?.Dispose();
         _acrylicController = null;
         _backdropConfiguration = null;
+        _onClosed(_note.Id);
     }
 
     private void OnAppWindowChanged(AppWindow sender, AppWindowChangedEventArgs args)

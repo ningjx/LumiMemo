@@ -8,9 +8,9 @@ using Microsoft.Web.WebView2.Core;
 namespace LumiMemo.WinUI.Controls;
 
 /// <summary>
-/// Hosts Milkdown through the HWND WebView2 controller. The WinUI XAML WebView2 wrapper
-/// flattens transparent pixels against an opaque island; the HWND controller preserves them
-/// so the window-level Acrylic remains visible through the editor.
+/// Hosts the local Milkdown editor in WinUI's supported XAML WebView2 control.
+/// The editor surface uses a theme-matched opaque fallback because WinUI 3 WebView2
+/// does not currently support a genuinely transparent background.
 /// </summary>
 public sealed class MarkdownEditorHost : IDisposable
 {
@@ -22,26 +22,26 @@ public sealed class MarkdownEditorHost : IDisposable
         LazyThreadSafetyMode.ExecutionAndPublication);
 
     private readonly Grid _boundsHost;
-    private readonly nint _parentWindow;
-    private CoreWebView2Controller? _controller;
+    private readonly WebView2 _browser;
     private CoreWebView2? _core;
     private string _markdown = string.Empty;
     private bool _isReady;
     private bool _isDisposed;
     private int _revision;
 
-    public MarkdownEditorHost(Grid boundsHost, nint parentWindow)
+    public MarkdownEditorHost(Grid boundsHost)
     {
         ArgumentNullException.ThrowIfNull(boundsHost);
-        if (parentWindow == 0)
-        {
-            throw new ArgumentException("WebView2 需要有效的父窗口句柄。", nameof(parentWindow));
-        }
 
         _boundsHost = boundsHost;
-        _parentWindow = parentWindow;
+        _browser = new WebView2
+        {
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            VerticalAlignment = VerticalAlignment.Stretch,
+            DefaultBackgroundColor = Windows.UI.Color.FromArgb(255, 244, 236, 250)
+        };
+        _boundsHost.Children.Add(_browser);
         _boundsHost.Loaded += OnLoaded;
-        _boundsHost.SizeChanged += OnHostSizeChanged;
     }
 
     public event EventHandler<string>? MarkdownChanged;
@@ -69,23 +69,7 @@ public sealed class MarkdownEditorHost : IDisposable
 
     public void UpdateBounds()
     {
-        if (_controller is null || _boundsHost.XamlRoot is null)
-        {
-            return;
-        }
-
-        Windows.Foundation.Point origin = _boundsHost
-            .TransformToVisual(null)
-            .TransformPoint(new Windows.Foundation.Point());
-        double scale = _boundsHost.XamlRoot.RasterizationScale;
-
-        _controller.Bounds = new Windows.Foundation.Rect(
-            Math.Round(origin.X * scale),
-            Math.Round(origin.Y * scale),
-            Math.Max(1, Math.Round(_boundsHost.ActualWidth * scale)),
-            Math.Max(1, Math.Round(_boundsHost.ActualHeight * scale)));
-        _controller.RasterizationScale = scale;
-        _controller.IsVisible = true;
+        // XAML owns the control's layout and DPI scaling.
     }
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
@@ -95,12 +79,8 @@ public sealed class MarkdownEditorHost : IDisposable
         try
         {
             CoreWebView2Environment environment = await SharedEnvironment.Value;
-            CoreWebView2ControllerWindowReference parent =
-                CoreWebView2ControllerWindowReference.CreateFromWindowHandle(
-                    unchecked((ulong)_parentWindow.ToInt64()));
-            _controller = await environment.CreateCoreWebView2ControllerAsync(parent);
-            _controller.DefaultBackgroundColor = Windows.UI.Color.FromArgb(0, 0, 0, 0);
-            _core = _controller.CoreWebView2;
+            await _browser.EnsureCoreWebView2Async(environment);
+            _core = _browser.CoreWebView2;
 
             ConfigureSecurity(_core);
             _core.WebMessageReceived += OnWebMessageReceived;
@@ -113,7 +93,6 @@ public sealed class MarkdownEditorHost : IDisposable
                 assets,
                 CoreWebView2HostResourceAccessKind.DenyCors);
 
-            UpdateBounds();
             _core.Navigate($"{EditorOrigin}/index.html");
         }
         catch (Exception exception)
@@ -130,8 +109,6 @@ public sealed class MarkdownEditorHost : IDisposable
             "WebView2");
         Directory.CreateDirectory(userData);
 
-        // Core WebView2 reads this before controller creation and avoids an initial white frame.
-        Environment.SetEnvironmentVariable("WEBVIEW2_DEFAULT_BACKGROUND_COLOR", "00000000");
         return await CoreWebView2Environment.CreateWithOptionsAsync(
             null,
             userData,
@@ -242,8 +219,6 @@ public sealed class MarkdownEditorHost : IDisposable
         }
     }
 
-    private void OnHostSizeChanged(object sender, SizeChangedEventArgs e) => UpdateBounds();
-
     private void ShowInitializationError(Exception exception)
     {
         _boundsHost.Children.Clear();
@@ -265,7 +240,6 @@ public sealed class MarkdownEditorHost : IDisposable
 
         _isDisposed = true;
         _boundsHost.Loaded -= OnLoaded;
-        _boundsHost.SizeChanged -= OnHostSizeChanged;
 
         if (_core is not null)
         {
@@ -274,8 +248,8 @@ public sealed class MarkdownEditorHost : IDisposable
             _core.NewWindowRequested -= OnNewWindowRequested;
         }
 
-        _controller?.Close();
-        _controller = null;
+        _browser.Close();
+        _boundsHost.Children.Remove(_browser);
         _core = null;
     }
 }

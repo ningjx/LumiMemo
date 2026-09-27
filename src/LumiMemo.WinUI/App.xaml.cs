@@ -5,6 +5,7 @@ using LumiMemo.Infrastructure.Io;
 using LumiMemo.Infrastructure.Settings;
 using LumiMemo.Infrastructure.Storage;
 using LumiMemo.Infrastructure.Windows;
+using LumiMemo.WinUI.Services;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace LumiMemo.WinUI;
@@ -12,7 +13,9 @@ namespace LumiMemo.WinUI;
 /// <summary>WinUI application entry point for the UI migration.</summary>
 public partial class App : Application
 {
-    private Window? _window;
+    private TrayIconService? _trayIcon;
+    private NoteWindowManager? _windowManager;
+    private ManagerWindow? _managerWindow;
 
     public App()
     {
@@ -24,12 +27,31 @@ public partial class App : Application
     {
         try
         {
-            (Note note, INoteRepository repository, IClock clock, AppSettings settings,
-                ILayoutStore layoutStore, NoteLayout layout) =
-                await LoadStartupNoteAsync();
+            (IReadOnlyList<Note> notes, INoteRepository repository, IClock clock,
+                AppSettings settings, ILayoutStore layoutStore) =
+                await LoadStartupDataAsync();
 
-            _window = new MainWindow(note, repository, clock, settings, layoutStore, layout);
-            _window.Activate();
+            _windowManager = new NoteWindowManager(notes, repository, clock, settings, layoutStore);
+            _managerWindow = new ManagerWindow(_windowManager);
+
+            if (settings.ShowTrayIcon)
+            {
+                _trayIcon = new TrayIconService();
+                _trayIcon.Start(
+                    () => _ = _windowManager.CreateNoteAsync(),
+                    ShowAllNotes,
+                    _windowManager.HideAllNotes,
+                    _managerWindow.ShowWindow,
+                    () => OpenNotesFolder(settings.NotesFolder),
+                    () => _ = _managerWindow.ShowAboutAsync(),
+                    ExitFromTray);
+            }
+
+            int restored = _windowManager.RestoreOpenNotes();
+            if (restored == 0)
+            {
+                _managerWindow.ShowWindow();
+            }
         }
         catch (Exception exception)
         {
@@ -38,14 +60,54 @@ public partial class App : Application
         }
     }
 
+    private void ShowAllNotes()
+    {
+        if (_windowManager is null || _managerWindow is null)
+        {
+            return;
+        }
+
+        _windowManager.ShowAllNotes();
+        if (_windowManager.OpenWindowCount == 0)
+        {
+            _managerWindow.ShowWindow();
+        }
+    }
+
+    private static void OpenNotesFolder(string path)
+    {
+        if (!Directory.Exists(path))
+        {
+            return;
+        }
+
+        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = path,
+            UseShellExecute = true
+        });
+    }
+
+    private void ExitFromTray()
+    {
+        _trayIcon?.Dispose();
+        _trayIcon = null;
+
+        _managerWindow?.CloseForExit();
+        _managerWindow = null;
+        _windowManager?.CloseAllForExit();
+        _windowManager = null;
+
+        Exit();
+    }
+
     private static async Task<(
-        Note Note,
+        IReadOnlyList<Note> Notes,
         INoteRepository Repository,
         IClock Clock,
         AppSettings Settings,
-        ILayoutStore LayoutStore,
-        NoteLayout Layout)>
-        LoadStartupNoteAsync()
+        ILayoutStore LayoutStore)>
+        LoadStartupDataAsync()
     {
         var paths = new AppPaths();
         paths.EnsureLocalAppDataDirectories();
@@ -81,10 +143,6 @@ public partial class App : Application
         };
 
         IReadOnlyList<Note> notes = await repository.LoadAllAsync();
-        Note note = notes
-            .OrderByDescending(item => item.UpdatedAt)
-            .FirstOrDefault()
-            ?? await repository.CreateAsync();
 
         var layoutStore = new JsonLayoutStore(
             paths,
@@ -97,11 +155,8 @@ public partial class App : Application
             DefaultHeight = settings.DefaultHeight
         };
         await layoutStore.LoadAsync();
-        NoteLayout layout = layoutStore.GetOrCreate(note.Id);
-        layout.IsOpen = true;
-        layoutStore.MarkDirty();
 
-        return (note, repository, clock, settings, layoutStore, layout);
+        return (notes, repository, clock, settings, layoutStore);
     }
 
     private static void OnUnhandledException(object sender, Microsoft.UI.Xaml.UnhandledExceptionEventArgs e)
