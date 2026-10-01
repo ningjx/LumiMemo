@@ -29,6 +29,10 @@ internal sealed class ImageAdorner
     private const double HandleSize = 11;
     private const double DropIndicatorHeight = 18;
 
+    // 与 RichEditorHost 的编辑区 Padding 保持一致：候选口径「原点在文本区内」要用它换算。
+    private const double EditorPaddingX = 18;
+    private const double EditorPaddingY = 16;
+
     private static readonly Color OutlineColor = Color.FromArgb(0xCC, 0x7A, 0x6B, 0xB5);
     private static readonly Color HandleFill = Color.FromArgb(0xF2, 0xFF, 0xFF, 0xFF);
     private static readonly Color HandleBorderColor = Color.FromArgb(0xCC, 0x5B, 0x4F, 0xA8);
@@ -140,8 +144,8 @@ internal sealed class ImageAdorner
         ApplyVisuals();
     }
 
-    /// <summary>悬停提示：指针确实落在图片矩形上才显示虚线框（无手柄）。</summary>
-    public void HoverAt(int index, PointD pointer)
+    /// <summary>悬停提示：宿主已用引擎自己的命中映射确认指针在图片上，这里只负责画框。</summary>
+    public void HoverAt(int index)
     {
         if (_selected)
         {
@@ -149,15 +153,6 @@ internal sealed class ImageAdorner
         }
 
         if (!Measure(index, out RectD rect))
-        {
-            Hide();
-            return;
-        }
-
-        const double slack = 4;
-        bool inside = pointer.X >= rect.X - slack && pointer.X <= rect.Right + slack
-            && pointer.Y >= rect.Y - slack && pointer.Y <= rect.Bottom + slack;
-        if (!inside)
         {
             Hide();
             return;
@@ -235,9 +230,11 @@ internal sealed class ImageAdorner
     }
 
     /// <summary>
-    /// 测图片的覆盖层矩形：GetPoint 取左上原点；尺寸优先用实测右下点（Right/Bottom 对齐相对
-    /// range 外接矩形），实测不像话再退回 <c>\picwgoal</c> 推算。坐标口径用
-    /// <see cref="AdornerGeometry.ChooseScale"/> 自检。
+    /// 测图片的覆盖层矩形。坐标口径（原点在控件还是文本区、单位是逻辑还是物理像素）没有文档
+    /// 保证，所以不做猜测：把候选换算后的点喂回<strong>引擎自己的命中映射</strong>
+    /// （GetRangeFromPoint，与点击判定同一个 API）验证，谁的答案落在图片上就用谁——
+    /// 任何机器、任何缩放下都成立，不需要写死校准值。尺寸优先用实测右下点（并用
+    /// <c>\picwgoal</c> 交叉校验），退化时用推算尺寸；口径识别不出来的极端情况退回出界自检。
     /// </summary>
     private bool Measure(int index, out RectD rect)
     {
@@ -260,36 +257,51 @@ internal sealed class ImageAdorner
             range.GetPoint(HorizontalCharacterAlignment.Left, VerticalCharacterAlignment.Top, options, out Windows.Foundation.Point topLeft);
             range.GetPoint(HorizontalCharacterAlignment.Right, VerticalCharacterAlignment.Bottom, options, out Windows.Foundation.Point bottomRight);
 
-            double measuredWidth = bottomRight.X - topLeft.X;
-            double measuredHeight = bottomRight.Y - topLeft.Y;
-            bool measured = measuredWidth >= 8 && measuredHeight >= 8
-                && measuredWidth <= 10000 && measuredHeight <= 10000;
+            double rawWidth = bottomRight.X - topLeft.X;
+            double rawHeight = bottomRight.Y - topLeft.Y;
+            bool measured = rawWidth >= 8 && rawHeight >= 8
+                && rawWidth <= 10000 && rawHeight <= 10000;
+
+            double editorWidth = Math.Max(1, _editor.ActualWidth);
+            double editorHeight = Math.Max(1, _editor.ActualHeight);
+            double dpi = _editor.XamlRoot?.RasterizationScale ?? 1.0;
+
+            AdornerGeometry.CoordinateTransform mapping = AdornerGeometry.DiscoverTransform(
+                    new PointD(topLeft.X, topLeft.Y), dpi, EditorPaddingX, EditorPaddingY,
+                    point => EngineSaysOnImage(point, index))
+                ?? new AdornerGeometry.CoordinateTransform(
+                    AdornerGeometry.ChooseScale(
+                        new RectD(topLeft.X, topLeft.Y, Math.Max(rawWidth, 1), Math.Max(rawHeight, 1)),
+                        editorWidth, editorHeight, dpi),
+                    0, 0);
 
             double width;
             double height;
             if (measured)
             {
-                width = measuredWidth;
-                height = measuredHeight;
+                width = rawWidth * mapping.Scale;
+                height = rawHeight * mapping.Scale;
+
+                // 右下点未必真是图片的外接角（可能是行框的角）；与 goal 推算值差太多就换推算尺寸。
+                if (RtfPict.TryGetDisplaySize(fragment, out double goalWidth, out double goalHeight)
+                    && goalWidth > 0
+                    && (width / goalWidth < 0.5 || width / goalWidth > 2.0))
+                {
+                    width = goalWidth;
+                    height = goalHeight;
+                }
             }
             else if (RtfPict.TryGetDisplaySize(fragment, out width, out height))
             {
-                // goal 推算出的尺寸本身就是逻辑像素口径，不再跟着坐标缩放走。
+                // 实测不可用：尺寸用 goal 推算（本身就是逻辑像素口径，不再跟坐标缩放走）。
             }
             else
             {
                 return false;
             }
 
-            double editorWidth = Math.Max(1, _editor.ActualWidth);
-            double editorHeight = Math.Max(1, _editor.ActualHeight);
-            double dpi = _editor.XamlRoot?.RasterizationScale ?? 1.0;
-            double scale = AdornerGeometry.ChooseScale(
-                new RectD(topLeft.X, topLeft.Y, width, height), editorWidth, editorHeight, dpi);
-
-            double sizeScale = measured ? scale : 1;
-            rect = new RectD(
-                topLeft.X * scale, topLeft.Y * scale, width * sizeScale, height * sizeScale);
+            PointD origin = mapping.Apply(new PointD(topLeft.X, topLeft.Y));
+            rect = new RectD(origin.X, origin.Y, width, height);
 
             // 完全滚出视野就不显示；部分露出保留。
             return rect.Bottom >= 0 && rect.Right >= 0 && rect.Y <= editorHeight && rect.X <= editorWidth;
@@ -297,6 +309,22 @@ internal sealed class ImageAdorner
         catch (Exception)
         {
             // 文档正在变化（加载、撤销）时 GetPoint 可能失败，当作没测到。
+            return false;
+        }
+    }
+
+    /// <summary>问引擎：这一点落在图片字符上吗（和用户点击走同一套命中逻辑）。</summary>
+    private bool EngineSaysOnImage(PointD point, int imageIndex)
+    {
+        try
+        {
+            int at = _editor.Document
+                .GetRangeFromPoint(new Windows.Foundation.Point(point.X, point.Y), PointOptions.ClientCoordinates)
+                .StartPosition;
+            return at == imageIndex || at == imageIndex + 1;
+        }
+        catch (Exception)
+        {
             return false;
         }
     }

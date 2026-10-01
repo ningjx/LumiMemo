@@ -118,10 +118,71 @@ internal static class AdornerGeometry
         return new PointD(image.Width, Math.Max(targetHeight, MinEdge));
     }
 
+    /// <summary>GetPoint 原始坐标 → 覆盖层坐标的一种候选换算：<c>p × Scale + (OffsetX, OffsetY)</c>。</summary>
+    public readonly record struct CoordinateTransform(double Scale, double OffsetX, double OffsetY)
+    {
+        public PointD Apply(PointD point) =>
+            new((point.X * Scale) + OffsetX, (point.Y * Scale) + OffsetY);
+    }
+
     /// <summary>
-    /// 把 <c>ITextRange.GetPoint</c> 的原始坐标换算到覆盖层坐标的缩放系数。
+    /// 枚举可能的坐标口径：原样、原点在文本区内（差一个编辑区 Padding）、单位是物理像素
+    /// （差一个显示器缩放），以及它们的组合。这里只提供候选，真正的口径由引擎自己回答
+    /// （见 <see cref="DiscoverTransform"/>）——因此换机器、换缩放都不用改任何数字。
+    /// </summary>
+    public static IReadOnlyList<CoordinateTransform> CandidateTransforms(
+        double dpiScale, double paddingX, double paddingY)
+    {
+        double inverse = dpiScale > 0.01 ? 1.0 / dpiScale : 1.0;
+        var candidates = new List<CoordinateTransform>();
+
+        foreach (double scale in new[] { 1.0, inverse, dpiScale })
+        {
+            foreach ((double offsetX, double offsetY) in new (double, double)[]
+            {
+                (0, 0), (paddingX, paddingY), (-paddingX, -paddingY),
+            })
+            {
+                var candidate = new CoordinateTransform(scale, offsetX, offsetY);
+                if (!candidates.Contains(candidate))
+                {
+                    candidates.Add(candidate);
+                }
+            }
+        }
+
+        return candidates;
+    }
+
+    /// <summary>
+    /// 用引擎自己的命中映射验证候选口径：把某个候选换算后的点（从图片左上角往里探 3px，
+    /// 避开边界像素的临界模糊）喂给引擎，问它落在哪个字符；第一个"答案确实落在图片上"的
+    /// 候选就是真口径。全部候选都不成立（例如 GetRangeFromPoint 不可用）时返回 null。
+    /// </summary>
+    public static CoordinateTransform? DiscoverTransform(
+        PointD rawTopLeft,
+        double dpiScale,
+        double paddingX,
+        double paddingY,
+        Func<PointD, bool> engineSaysOnImage)
+    {
+        foreach (CoordinateTransform candidate in CandidateTransforms(dpiScale, paddingX, paddingY))
+        {
+            PointD corner = candidate.Apply(rawTopLeft);
+            if (engineSaysOnImage(new PointD(corner.X + 3, corner.Y + 3)))
+            {
+                return candidate;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// 把 <c>ITextRange.GetPoint</c> 的原始坐标换算到覆盖层坐标的缩放系数（兜底用）。
     /// GetPoint 的坐标口径（逻辑像素还是物理像素）没有文档保证，这里用
     /// 「矩形是否落在编辑区边界内」自检：先按 1 试，出界且除法能救回来就按 ÷dpi 解释。
+    /// 主路径不靠它——靠 <see cref="DiscoverTransform"/> 的引擎验证。
     /// </summary>
     public static double ChooseScale(RectD rawRect, double editorWidth, double editorHeight, double dpiScale)
     {

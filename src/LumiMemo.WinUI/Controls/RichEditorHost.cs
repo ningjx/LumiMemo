@@ -675,11 +675,9 @@ public sealed class RichEditorHost : IRichTextDocument, IDisposable
             return; // 拖选，不理会
         }
 
-        int index = IndexFromPoint(position);
-        if (index >= 0)
-        {
-            TryToggleTodoAt(index);
-        }
+        // 方框判定直接用「点击后的光标落点」——那是引擎对这次点击自己的解释，
+        // 比我们再算一遍指针→字符映射少一层口径风险。
+        TryToggleTodoAt(_editor.Document.Selection.StartPosition);
     }
 
     private void OnEditorPointerMoved(object sender, PointerRoutedEventArgs args)
@@ -704,7 +702,7 @@ public sealed class RichEditorHost : IRichTextDocument, IDisposable
         }
 
         _hoverIndex = imageIndex;
-        _adorner.HoverAt(imageIndex, new PointD(position.X, position.Y));
+        _adorner.HoverAt(imageIndex);
     }
 
     private void OnEditorPointerExited(object sender, PointerRoutedEventArgs args)
