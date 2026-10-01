@@ -275,8 +275,8 @@ public static partial class TitleDeriver
     [GeneratedRegex(@"^#{1,6}\s*", RegexOptions.None)]
     private static partial Regex HeadingMarker();
 
-    /// <summary>任务复选框：<c>[ ] </c>、<c>[x] </c>、<c>[X] </c>。</summary>
-    [GeneratedRegex(@"^\[[ xX]\]\s*", RegexOptions.None)]
+    /// <summary>任务复选框：<c>[ ] </c>、<c>[x] </c>、<c>[X] </c>，以及编辑器的待办符号 <c>☐</c>/<c>☑</c>（见 <see cref="TodoMarkers"/>）。</summary>
+    [GeneratedRegex(@"^(?:\[[ xX]\]|[☐☑])\s*", RegexOptions.None)]
     private static partial Regex TaskCheckbox();
 
     /// <summary>行内链接，保留显示文字，丢掉目标。</summary>

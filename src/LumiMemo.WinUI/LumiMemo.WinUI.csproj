@@ -24,6 +24,14 @@
     <ProjectReference Include="..\LumiMemo.Infrastructure\LumiMemo.Infrastructure.csproj" />
   </ItemGroup>
 
+  <!--
+    编辑器的纯逻辑助手（RtfPict / AdornerGeometry 等）刻意保持 internal——它们是实现细节、
+    不是对外契约；开放给测试工程用 InternalsVisibleTo，比为了测试把它们提成 public 更稳妥。
+  -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="LumiMemo.WinUI.Tests" />
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="CommunityToolkit.Mvvm" />
     <PackageReference Include="H.NotifyIcon.WinUI" />

@@ -124,6 +124,15 @@ public sealed class TitleDeriverTests
     public void 引用加列表加复选框_全剥掉() => Assert.Equal("待办", TitleDeriver.Derive("> - [ ] 待办"));
 
     [Fact]
+    public void 待办符号_剥掉() => Assert.Equal("买牛奶", TitleDeriver.Derive("☐ 买牛奶"));
+
+    [Fact]
+    public void 已完成待办符号_剥掉() => Assert.Equal("买牛奶", TitleDeriver.Derive("☑ 买牛奶"));
+
+    [Fact]
+    public void 待办符号在行中_不受影响() => Assert.Equal("买 ☐ 牛奶", TitleDeriver.Derive("买 ☐ 牛奶"));
+
+    [Fact]
     public void 行内链接_保留显示文字() =>
         Assert.Equal("文档", TitleDeriver.Derive("[文档](https://example.com/a.md)"));
 
