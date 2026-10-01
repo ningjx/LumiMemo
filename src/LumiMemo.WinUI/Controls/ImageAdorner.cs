@@ -1,4 +1,3 @@
-using System.Text;
 using Microsoft.UI.Input;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml;
@@ -316,10 +315,10 @@ internal sealed class ImageAdorner
                     return false;
                 }
 
-                origin = new PointD(topLeft.X * scale, topLeft.Y * scale);
+                // 兜底路径也补上编辑区 Padding（与候选口径的第一顺位一致）。
+                origin = new PointD(
+                    (topLeft.X * scale) + EditorPaddingX, (topLeft.Y * scale) + EditorPaddingY);
             }
-
-            DumpMeasurement(index, topLeft, bottomRight, hasGoal, goalWidth, goalHeight, dpi, mapping);
 
             rect = new RectD(origin.X, origin.Y, width, height);
 
@@ -370,48 +369,6 @@ internal sealed class ImageAdorner
         return at == imageIndex || at == imageIndex + 1;
     }
 
-    /// <summary>临时诊断（真机校准用，收口后删除）：把测量全过程写进 %TEMP%\lumimemo-adorner.log。</summary>
-    private void DumpMeasurement(
-        int index,
-        Windows.Foundation.Point topLeft,
-        Windows.Foundation.Point bottomRight,
-        bool hasGoal,
-        double goalWidth,
-        double goalHeight,
-        double dpi,
-        AdornerGeometry.CoordinateTransform? mapping)
-    {
-        try
-        {
-            var text = new StringBuilder();
-            text.Append($"index={index} raw=({topLeft.X:0.#},{topLeft.Y:0.#}) rawBR=({bottomRight.X:0.#},{bottomRight.Y:0.#}) ");
-            text.Append($"goal={(hasGoal ? $"{goalWidth:0.#}x{goalHeight:0.#}" : "无")} dpi={dpi:0.##} ");
-            text.Append($"editor={_editor.ActualWidth:0.#}x{_editor.ActualHeight:0.#} origin={EditorOriginInRoot()} ");
-            text.Append(mapping is { } selected
-                ? $"选中=({selected.Scale:0.###},{selected.OffsetX:0.#},{selected.OffsetY:0.#}) "
-                : "选中=null ");
-
-            foreach (AdornerGeometry.CoordinateTransform candidate in
-                AdornerGeometry.CandidateTransforms(dpi, EditorPaddingX, EditorPaddingY, EditorOriginInRoot()))
-            {
-                PointD corner = candidate.Apply(new PointD(topLeft.X, topLeft.Y));
-                int atTopLeft = IndexAtPoint(new PointD(corner.X + 3, corner.Y + 3));
-                int atBottomRight = hasGoal
-                    ? IndexAtPoint(new PointD(corner.X + goalWidth - 3, corner.Y + goalHeight - 3))
-                    : -1;
-                text.Append($"[({candidate.Scale:0.###},{candidate.OffsetX:0.#},{candidate.OffsetY:0.#}) tl={atTopLeft} br={atBottomRight}] ");
-            }
-
-            File.AppendAllText(
-                System.IO.Path.Combine(System.IO.Path.GetTempPath(), "lumimemo-adorner.log"),
-                $"{DateTime.Now:HH:mm:ss.fff} {text}{Environment.NewLine}");
-        }
-        catch (Exception)
-        {
-            // 诊断本身绝不能出错。
-        }
-    }
-
     private bool TryGetPoint(int index, out PointD point)
     {
         point = default;
@@ -426,7 +383,8 @@ internal sealed class ImageAdorner
                 new RectD(rawPoint.X, rawPoint.Y, 1, 1),
                 Math.Max(1, _editor.ActualWidth), Math.Max(1, _editor.ActualHeight), dpi);
 
-            point = new PointD(rawPoint.X * scale, rawPoint.Y * scale);
+            point = new PointD(
+                (rawPoint.X * scale) + EditorPaddingX, (rawPoint.Y * scale) + EditorPaddingY);
             return true;
         }
         catch (Exception)

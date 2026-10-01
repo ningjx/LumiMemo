@@ -139,9 +139,14 @@ internal static class AdornerGeometry
         double inverse = dpiScale > 0.01 ? 1.0 / dpiScale : 1.0;
         var offsets = new List<(double X, double Y)>
         {
+            // 首选：原点在文本区内（GetPoint 的坐标系不含编辑区的 Padding）——
+            // 2026-10-01 真机四色比对确认的默认口径。它差的是应用自己的布局常量
+            // （不是机器相关标定值，换机器也成立）；而引擎的命中映射对"小于图片尺寸"
+            // 的偏移分辨不了（图片四周有一圈死区），所以把最可能的口径排第一位，
+            // 其余口径继续由引擎验证兜底——验证不通过会自动落到后面的候选。
+            (paddingX, paddingY),
             (0, 0),
             (-editorOriginInRoot.X, -editorOriginInRoot.Y),
-            (paddingX, paddingY),
             (-paddingX, -paddingY),
         };
 

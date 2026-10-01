@@ -580,21 +580,37 @@ public sealed class RichEditorHost : IRichTextDocument, IDisposable
     private void OnSelectionChanged(object sender, RoutedEventArgs args) =>
         Safe(nameof(OnSelectionChanged), () =>
         {
-            if (_composing)
+            // 加载期间 SetText 造成的选区变化不算用户操作——
+            // 否则以图片开头的笔记一打开，手柄就会自己弹出来。
+            if (_composing || _loading)
             {
                 return;
             }
 
             ITextSelection selection = _editor.Document.Selection;
-            if (selection.EndPosition == selection.StartPosition + 1 && IsImageAt(selection.StartPosition))
+            int start = selection.StartPosition;
+            int end = selection.EndPosition;
+
+            if (end == start + 1 && IsImageAt(start))
             {
-                // 选中一张图片（点击图片时 RichEdit 会把图片字符选成一整段）→ 出手柄。
-                _adorner.ShowForImage(selection.StartPosition);
+                // 整选一张图片（双击、右键时的原生选择）→ 出手柄。
+                _adorner.ShowForImage(start);
+                return;
             }
-            else
+
+            if (end == start)
             {
-                _adorner.Hide();
+                // 单击内嵌图片时 RichEdit 只是把光标落在图片旁边（不整选）——
+                // 光标前/后一位是图片就认作"点了图片"，出手柄。
+                int near = FindImageNear(start);
+                if (near >= 0)
+                {
+                    _adorner.ShowForImage(near);
+                    return;
+                }
             }
+
+            _adorner.Hide();
         });
 
     private void OnResizeCommitted(object? sender, ImageResizeRequest request) =>
@@ -715,13 +731,14 @@ public sealed class RichEditorHost : IRichTextDocument, IDisposable
     private void OnEditorPointerMoved(object sender, PointerRoutedEventArgs args) =>
         Safe(nameof(OnEditorPointerMoved), () =>
         {
+            Windows.Foundation.Point position = args.GetCurrentPoint(_editor).Position;
+            int imageIndex = FindImageNear(IndexFromPoint(position));
+
             if (_adorner.IsSelected)
             {
                 return;
             }
 
-            Windows.Foundation.Point position = args.GetCurrentPoint(_editor).Position;
-            int imageIndex = FindImageNear(IndexFromPoint(position));
             if (imageIndex < 0)
             {
                 _hoverIndex = -1;

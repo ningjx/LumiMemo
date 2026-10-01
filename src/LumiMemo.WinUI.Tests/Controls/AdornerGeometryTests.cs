@@ -139,14 +139,14 @@ public sealed class AdornerGeometryTests
     // ---- 坐标口径发现（引擎两点验证） ----
 
     [Fact]
-    public void 候选口径_首个是原样_含窗口原点内边距与物理像素解释()
+    public void 候选口径_首个是文本区内原点_含原样与窗口原点与物理像素解释()
     {
         var candidates = AdornerGeometry.CandidateTransforms(1.5, 18, 16, new PointD(0, 40));
 
-        Assert.Equal(new AdornerGeometry.CoordinateTransform(1, 0, 0), candidates[0]);
+        Assert.Equal(new AdornerGeometry.CoordinateTransform(1, 18, 16), candidates[0]);
+        Assert.Contains(new AdornerGeometry.CoordinateTransform(1, 0, 0), candidates);
         Assert.Contains(new AdornerGeometry.CoordinateTransform(1, 0, -40), candidates);
-        Assert.Contains(new AdornerGeometry.CoordinateTransform(1, 18, 16), candidates);
-        Assert.Contains(new AdornerGeometry.CoordinateTransform(1.0 / 1.5, 0, 0), candidates);
+        Assert.Contains(new AdornerGeometry.CoordinateTransform(1.0 / 1.5, 18, 16), candidates);
     }
 
     [Fact]
