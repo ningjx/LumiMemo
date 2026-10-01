@@ -136,50 +136,82 @@ public sealed class AdornerGeometryTests
         Assert.Equal(1, AdornerGeometry.ChooseScale(rect, 800, 600, 1.5), 3);
     }
 
-    // ---- 坐标口径发现（引擎验证） ----
+    // ---- 坐标口径发现（引擎两点验证） ----
 
     [Fact]
-    public void 候选口径_首个是原样_且含文本区内原点与物理像素解释()
+    public void 候选口径_首个是原样_含窗口原点内边距与物理像素解释()
     {
-        var candidates = AdornerGeometry.CandidateTransforms(1.5, 18, 16);
+        var candidates = AdornerGeometry.CandidateTransforms(1.5, 18, 16, new PointD(0, 40));
 
         Assert.Equal(new AdornerGeometry.CoordinateTransform(1, 0, 0), candidates[0]);
+        Assert.Contains(new AdornerGeometry.CoordinateTransform(1, 0, -40), candidates);
         Assert.Contains(new AdornerGeometry.CoordinateTransform(1, 18, 16), candidates);
         Assert.Contains(new AdornerGeometry.CoordinateTransform(1.0 / 1.5, 0, 0), candidates);
     }
 
     [Fact]
-    public void 候选口径_dpi为1时没有重复项()
+    public void 候选口径_dpi为1且原点为零时没有重复项()
     {
-        var candidates = AdornerGeometry.CandidateTransforms(1.0, 18, 16);
+        var candidates = AdornerGeometry.CandidateTransforms(1.0, 18, 16, new PointD(0, 0));
 
         Assert.Equal(candidates.Count, candidates.Distinct().Count());
     }
 
-    [Fact]
-    public void 口径发现_原样通过_返回原样()
-    {
-        // 验证回调收到的点是 候选换算后的左上角 + 往里探的 (3,3)。
-        var found = AdornerGeometry.DiscoverTransform(
-            new PointD(120, 90), 1.5, 18, 16,
-            point => Math.Abs(point.X - 123) < 0.01 && Math.Abs(point.Y - 93) < 0.01);
+    /// <summary>造一个"图片逻辑矩形"的命中判据，模拟引擎回答。</summary>
+    private static Func<PointD, bool> ImageAt(RectD image) =>
+        point => point.X >= image.X && point.X <= image.Right
+            && point.Y >= image.Y && point.Y <= image.Bottom;
 
-        Assert.Equal(new AdornerGeometry.CoordinateTransform(1, 0, 0), found);
+    [Fact]
+    public void 口径发现_错误缩放只能在左上蒙混_右下探针把它拒绝()
+    {
+        // 图片逻辑位置 (300,200)、尺寸 375×150；GetPoint 返回物理像素（×1.25）。
+        var image = new RectD(300, 200, 375, 150);
+        var rawTopLeft = new PointD(375, 250);
+
+        var found = AdornerGeometry.DiscoverTransform(
+            rawTopLeft, 375, 150, 1.25, 18, 16, new PointD(0, 0), ImageAt(image));
+
+        // 原样候选的左上探针恰好落在图内（图片大），但右下探针在底缘外 → 拒绝；
+        // 只有 ÷dpi 的解释两点都成立。
+        Assert.Equal(new AdornerGeometry.CoordinateTransform(1 / 1.25, 0, 0), found);
     }
 
     [Fact]
-    public void 口径发现_只有文本区内原点解释通过_返回该口径()
+    public void 口径发现_原点含标题栏偏移_选中整窗原点候选()
     {
+        // raw = 图片逻辑位置 + 根偏移 (0,40)：典型的"坐标从整个窗口算起"。
+        var image = new RectD(100, 240, 200, 100);
+        var rawTopLeft = new PointD(100, 280);
+
         var found = AdornerGeometry.DiscoverTransform(
-            new PointD(120, 90), 1.5, 18, 16,
-            point => Math.Abs(point.X - 141) < 0.01 && Math.Abs(point.Y - 109) < 0.01);
+            rawTopLeft, 200, 100, 1.0, 18, 16, new PointD(0, 40), ImageAt(image));
+
+        Assert.Equal(new AdornerGeometry.CoordinateTransform(1, 0, -40), found);
+    }
+
+    [Fact]
+    public void 口径发现_原点在文本区内_选中加内边距候选()
+    {
+        // raw = 图片逻辑位置 − 内边距：原点在编辑区文本区（Padding 之内）。
+        var image = new RectD(150, 120, 200, 100);
+        var rawTopLeft = new PointD(132, 104);
+
+        var found = AdornerGeometry.DiscoverTransform(
+            rawTopLeft, 200, 100, 1.0, 18, 16, new PointD(0, 0), ImageAt(image));
 
         Assert.Equal(new AdornerGeometry.CoordinateTransform(1, 18, 16), found);
     }
 
     [Fact]
-    public void 口径发现_全部候选都不通过_返回null() =>
-        Assert.Null(AdornerGeometry.DiscoverTransform(new PointD(120, 90), 1.5, 18, 16, _ => false));
+    public void 口径发现_全部候选都不成立_返回null() =>
+        Assert.Null(AdornerGeometry.DiscoverTransform(
+            new PointD(120, 90), 200, 100, 1.5, 18, 16, new PointD(0, 0), _ => false));
+
+    [Fact]
+    public void 口径发现_图片太小无法两点验证_直接返回null() =>
+        Assert.Null(AdornerGeometry.DiscoverTransform(
+            new PointD(120, 90), 5, 5, 1.5, 18, 16, new PointD(0, 0), _ => true));
 
     [Fact]
     public void 换算_缩放与偏移同时生效()

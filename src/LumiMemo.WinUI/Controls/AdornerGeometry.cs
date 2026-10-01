@@ -118,6 +118,9 @@ internal static class AdornerGeometry
         return new PointD(image.Width, Math.Max(targetHeight, MinEdge));
     }
 
+    /// <summary>探针从图片角点向内收的像素数（也是两点验证的误差上界）。</summary>
+    public const double ProbeInset = 3;
+
     /// <summary>GetPoint 原始坐标 → 覆盖层坐标的一种候选换算：<c>p × Scale + (OffsetX, OffsetY)</c>。</summary>
     public readonly record struct CoordinateTransform(double Scale, double OffsetX, double OffsetY)
     {
@@ -126,22 +129,26 @@ internal static class AdornerGeometry
     }
 
     /// <summary>
-    /// 枚举可能的坐标口径：原样、原点在文本区内（差一个编辑区 Padding）、单位是物理像素
-    /// （差一个显示器缩放），以及它们的组合。这里只提供候选，真正的口径由引擎自己回答
-    /// （见 <see cref="DiscoverTransform"/>）——因此换机器、换缩放都不用改任何数字。
+    /// 枚举可能的坐标口径：原样、原点在整个窗口（含标题栏等，用编辑器在窗口里的实际位置换算）、
+    /// 原点在文本区内（差一个编辑区 Padding）、单位是物理像素（差一个显示器缩放），以及它们的组合。
+    /// 所有数值都从运行环境读出来，不写死；真正的口径由引擎自己回答（见 <see cref="DiscoverTransform"/>）。
     /// </summary>
     public static IReadOnlyList<CoordinateTransform> CandidateTransforms(
-        double dpiScale, double paddingX, double paddingY)
+        double dpiScale, double paddingX, double paddingY, PointD editorOriginInRoot)
     {
         double inverse = dpiScale > 0.01 ? 1.0 / dpiScale : 1.0;
-        var candidates = new List<CoordinateTransform>();
+        var offsets = new List<(double X, double Y)>
+        {
+            (0, 0),
+            (-editorOriginInRoot.X, -editorOriginInRoot.Y),
+            (paddingX, paddingY),
+            (-paddingX, -paddingY),
+        };
 
+        var candidates = new List<CoordinateTransform>();
         foreach (double scale in new[] { 1.0, inverse, dpiScale })
         {
-            foreach ((double offsetX, double offsetY) in new (double, double)[]
-            {
-                (0, 0), (paddingX, paddingY), (-paddingX, -paddingY),
-            })
+            foreach ((double offsetX, double offsetY) in offsets)
             {
                 var candidate = new CoordinateTransform(scale, offsetX, offsetY);
                 if (!candidates.Contains(candidate))
@@ -155,21 +162,44 @@ internal static class AdornerGeometry
     }
 
     /// <summary>
-    /// 用引擎自己的命中映射验证候选口径：把某个候选换算后的点（从图片左上角往里探 3px，
-    /// 避开边界像素的临界模糊）喂给引擎，问它落在哪个字符；第一个"答案确实落在图片上"的
-    /// 候选就是真口径。全部候选都不成立（例如 GetRangeFromPoint 不可用）时返回 null。
+    /// 用引擎自己的命中映射验证候选口径，返回第一个成立的换算。
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 关键在<strong>两点验证</strong>：左上角与右下角各从角点向内探 <see cref="ProbeInset"/> 像素，
+    /// 两点都必须落在图片上。只探一点是不够的——错的解释只要错位量小于图片尺寸，探针就会落在
+    /// 图片内部蒙混过关（图片越大越容易漏）；加上右下角之后，任何错位量超过伸缩量的解释必然在
+    /// 某个角露馅。由此选中的解释，四角误差有 2×<see cref="ProbeInset"/> 的上界。
+    /// </para>
+    /// <para>
+    /// 全部候选都不成立（例如引擎没实现 GetRangeFromPoint）时返回 null，由调用方走尽力而为的降级。
+    /// </para>
+    /// </remarks>
     public static CoordinateTransform? DiscoverTransform(
         PointD rawTopLeft,
+        double goalWidth,
+        double goalHeight,
         double dpiScale,
         double paddingX,
         double paddingY,
+        PointD editorOriginInRoot,
         Func<PointD, bool> engineSaysOnImage)
     {
-        foreach (CoordinateTransform candidate in CandidateTransforms(dpiScale, paddingX, paddingY))
+        const double inset = ProbeInset;
+        if (goalWidth <= inset * 2 || goalHeight <= inset * 2)
+        {
+            return null; // 太小，两点探不出一致的答案
+        }
+
+        foreach (CoordinateTransform candidate in
+            CandidateTransforms(dpiScale, paddingX, paddingY, editorOriginInRoot))
         {
             PointD corner = candidate.Apply(rawTopLeft);
-            if (engineSaysOnImage(new PointD(corner.X + 3, corner.Y + 3)))
+            var topLeftProbe = new PointD(corner.X + inset, corner.Y + inset);
+            var bottomRightProbe = new PointD(
+                corner.X + goalWidth - inset, corner.Y + goalHeight - inset);
+
+            if (engineSaysOnImage(topLeftProbe) && engineSaysOnImage(bottomRightProbe))
             {
                 return candidate;
             }

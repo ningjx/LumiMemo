@@ -470,7 +470,8 @@ public sealed class RichEditorHost : IRichTextDocument, IDisposable
     /// <summary>点击行首方框切换 ☐/☑：成功返回 true。不动光标——切换前后还原选区（§15.6）。</summary>
     private bool TryToggleTodoAt(int index)
     {
-        foreach (int candidate in new[] { index, index - 1 })
+        // 光标落点可能停在方框前/方框上/方框后的空格（最多偏两个字符宽），三个位置都认。
+        foreach (int candidate in new[] { index, index - 1, index - 2 })
         {
             if (candidate < 0)
             {

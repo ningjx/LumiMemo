@@ -230,11 +230,11 @@ internal sealed class ImageAdorner
     }
 
     /// <summary>
-    /// 测图片的覆盖层矩形。坐标口径（原点在控件还是文本区、单位是逻辑还是物理像素）没有文档
-    /// 保证，所以不做猜测：把候选换算后的点喂回<strong>引擎自己的命中映射</strong>
-    /// （GetRangeFromPoint，与点击判定同一个 API）验证，谁的答案落在图片上就用谁——
-    /// 任何机器、任何缩放下都成立，不需要写死校准值。尺寸优先用实测右下点（并用
-    /// <c>\picwgoal</c> 交叉校验），退化时用推算尺寸；口径识别不出来的极端情况退回出界自检。
+    /// 测图片的覆盖层矩形。坐标口径（原点在哪、单位是逻辑还是物理像素）没有文档保证，所以不做
+    /// 猜测：<strong>两点验证</strong>——把每个候选换算后的框拿出来，左上角与右下角各向内探 3px
+    /// 喂回引擎自己的命中映射（与点击同一个 API），两点都落在图片上才采纳。错误解释必然在某个角
+    /// 露馅，误差上界 = 探针内收量；候选里的数值全部从运行环境读出来（窗口位置、DPI、内边距），
+    /// 任何机器、任何缩放都自动成立。尺寸直接用 \picwgoal（是引擎自己写下的显示尺寸）。
     /// </summary>
     private bool Measure(int index, out RectD rect)
     {
@@ -257,50 +257,59 @@ internal sealed class ImageAdorner
             range.GetPoint(HorizontalCharacterAlignment.Left, VerticalCharacterAlignment.Top, options, out Windows.Foundation.Point topLeft);
             range.GetPoint(HorizontalCharacterAlignment.Right, VerticalCharacterAlignment.Bottom, options, out Windows.Foundation.Point bottomRight);
 
-            double rawWidth = bottomRight.X - topLeft.X;
-            double rawHeight = bottomRight.Y - topLeft.Y;
-            bool measured = rawWidth >= 8 && rawHeight >= 8
-                && rawWidth <= 10000 && rawHeight <= 10000;
-
             double editorWidth = Math.Max(1, _editor.ActualWidth);
             double editorHeight = Math.Max(1, _editor.ActualHeight);
             double dpi = _editor.XamlRoot?.RasterizationScale ?? 1.0;
 
-            AdornerGeometry.CoordinateTransform mapping = AdornerGeometry.DiscoverTransform(
-                    new PointD(topLeft.X, topLeft.Y), dpi, EditorPaddingX, EditorPaddingY,
+            bool hasGoal = RtfPict.TryGetDisplaySize(fragment, out double goalWidth, out double goalHeight)
+                && goalWidth > 0 && goalHeight > 0;
+
+            AdornerGeometry.CoordinateTransform? mapping = hasGoal
+                ? AdornerGeometry.DiscoverTransform(
+                    new PointD(topLeft.X, topLeft.Y), goalWidth, goalHeight,
+                    dpi, EditorPaddingX, EditorPaddingY, EditorOriginInRoot(),
                     point => EngineSaysOnImage(point, index))
-                ?? new AdornerGeometry.CoordinateTransform(
-                    AdornerGeometry.ChooseScale(
-                        new RectD(topLeft.X, topLeft.Y, Math.Max(rawWidth, 1), Math.Max(rawHeight, 1)),
-                        editorWidth, editorHeight, dpi),
-                    0, 0);
+                : null;
 
             double width;
             double height;
-            if (measured)
-            {
-                width = rawWidth * mapping.Scale;
-                height = rawHeight * mapping.Scale;
+            PointD origin;
 
-                // 右下点未必真是图片的外接角（可能是行框的角）；与 goal 推算值差太多就换推算尺寸。
-                if (RtfPict.TryGetDisplaySize(fragment, out double goalWidth, out double goalHeight)
-                    && goalWidth > 0
-                    && (width / goalWidth < 0.5 || width / goalWidth > 2.0))
+            if (mapping is AdornerGeometry.CoordinateTransform found)
+            {
+                origin = found.Apply(new PointD(topLeft.X, topLeft.Y));
+                width = goalWidth;
+                height = goalHeight;
+            }
+            else
+            {
+                // 验证走不通（引擎不认这个 API、goal 缺失、图片太小等）：退回旧的实测+自检，尽力而为。
+                double rawWidth = bottomRight.X - topLeft.X;
+                double rawHeight = bottomRight.Y - topLeft.Y;
+                bool measured = rawWidth >= 8 && rawHeight >= 8
+                    && rawWidth <= 10000 && rawHeight <= 10000;
+                double scale = AdornerGeometry.ChooseScale(
+                    new RectD(topLeft.X, topLeft.Y, Math.Max(rawWidth, 1), Math.Max(rawHeight, 1)),
+                    editorWidth, editorHeight, dpi);
+
+                if (measured && (!hasGoal || (rawWidth / (goalWidth * scale) >= 0.5 && rawWidth / (goalWidth * scale) <= 2.0)))
+                {
+                    width = rawWidth * scale;
+                    height = rawHeight * scale;
+                }
+                else if (hasGoal)
                 {
                     width = goalWidth;
                     height = goalHeight;
                 }
-            }
-            else if (RtfPict.TryGetDisplaySize(fragment, out width, out height))
-            {
-                // 实测不可用：尺寸用 goal 推算（本身就是逻辑像素口径，不再跟坐标缩放走）。
-            }
-            else
-            {
-                return false;
+                else
+                {
+                    return false;
+                }
+
+                origin = new PointD(topLeft.X * scale, topLeft.Y * scale);
             }
 
-            PointD origin = mapping.Apply(new PointD(topLeft.X, topLeft.Y));
             rect = new RectD(origin.X, origin.Y, width, height);
 
             // 完全滚出视野就不显示；部分露出保留。
@@ -310,6 +319,21 @@ internal sealed class ImageAdorner
         {
             // 文档正在变化（加载、撤销）时 GetPoint 可能失败，当作没测到。
             return false;
+        }
+    }
+
+    /// <summary>编辑器左上角在窗口根坐标系里的位置（候选口径「原点在整窗」要用它换算）。</summary>
+    private PointD EditorOriginInRoot()
+    {
+        try
+        {
+            Windows.Foundation.Point point = _editor.TransformToVisual(null)
+                .TransformPoint(new Windows.Foundation.Point(0, 0));
+            return new PointD(point.X, point.Y);
+        }
+        catch (Exception)
+        {
+            return new PointD(0, 0);
         }
     }
 
