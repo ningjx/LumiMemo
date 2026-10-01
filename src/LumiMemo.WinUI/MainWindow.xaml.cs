@@ -375,6 +375,20 @@ public sealed partial class MainWindow : Window
 
         _layoutStore.MarkDirty();
 
+        // XAML 对象的拆解必须在同步段做完：拖到 await 之后就可能在别的窗口关闭的
+        // 嵌套消息泵里执行，此时 XAML 协同层正在收摊——退出时 0xC000027B 的温床。
+        try
+        {
+            _editor.Dispose();
+            _viewModel.Dispose();
+            _backdrop?.Dispose();
+            _backdrop = null;
+        }
+        catch (Exception exception)
+        {
+            System.Diagnostics.Debug.WriteLine(exception);
+        }
+
         try
         {
             await _layoutStore.FlushAsync();
@@ -383,11 +397,6 @@ public sealed partial class MainWindow : Window
         {
             // 关闭必须可用，即使设备状态文件写不进去。
         }
-
-        _editor.Dispose();
-        _viewModel.Dispose();
-        _backdrop?.Dispose();
-        _backdrop = null;
     }
 
     /// <summary>

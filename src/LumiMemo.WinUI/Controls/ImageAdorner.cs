@@ -1,3 +1,4 @@
+using System.Text;
 using Microsoft.UI.Input;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml;
@@ -223,9 +224,17 @@ internal sealed class ImageAdorner
 
     public void Dispose()
     {
-        if (_canvas.Parent is Panel panel)
+        // 拆解发生在窗口关闭的当口，异常会被存置成 0xC000027B——整体兜住并记日志。
+        try
         {
-            panel.Children.Remove(_canvas);
+            if (_canvas.Parent is Panel panel)
+            {
+                panel.Children.Remove(_canvas);
+            }
+        }
+        catch (Exception exception)
+        {
+            System.Diagnostics.Debug.WriteLine($"[ImageAdorner] Dispose 异常（已吞掉）：{exception}");
         }
     }
 
@@ -310,6 +319,8 @@ internal sealed class ImageAdorner
                 origin = new PointD(topLeft.X * scale, topLeft.Y * scale);
             }
 
+            DumpMeasurement(index, topLeft, bottomRight, hasGoal, goalWidth, goalHeight, dpi, mapping);
+
             rect = new RectD(origin.X, origin.Y, width, height);
 
             // 完全滚出视野就不显示；部分露出保留。
@@ -337,19 +348,67 @@ internal sealed class ImageAdorner
         }
     }
 
-    /// <summary>问引擎：这一点落在图片字符上吗（和用户点击走同一套命中逻辑）。</summary>
-    private bool EngineSaysOnImage(PointD point, int imageIndex)
+    /// <summary>问引擎：这一点对应的字符位置（-1 = 引擎答不上来）。</summary>
+    private int IndexAtPoint(PointD point)
     {
         try
         {
-            int at = _editor.Document
+            return _editor.Document
                 .GetRangeFromPoint(new Windows.Foundation.Point(point.X, point.Y), PointOptions.ClientCoordinates)
                 .StartPosition;
-            return at == imageIndex || at == imageIndex + 1;
         }
         catch (Exception)
         {
-            return false;
+            return -1;
+        }
+    }
+
+    /// <summary>问引擎：这一点落在图片字符上吗（和用户点击走同一套命中逻辑）。</summary>
+    private bool EngineSaysOnImage(PointD point, int imageIndex)
+    {
+        int at = IndexAtPoint(point);
+        return at == imageIndex || at == imageIndex + 1;
+    }
+
+    /// <summary>临时诊断（真机校准用，收口后删除）：把测量全过程写进 %TEMP%\lumimemo-adorner.log。</summary>
+    private void DumpMeasurement(
+        int index,
+        Windows.Foundation.Point topLeft,
+        Windows.Foundation.Point bottomRight,
+        bool hasGoal,
+        double goalWidth,
+        double goalHeight,
+        double dpi,
+        AdornerGeometry.CoordinateTransform? mapping)
+    {
+        try
+        {
+            var text = new StringBuilder();
+            text.Append($"index={index} raw=({topLeft.X:0.#},{topLeft.Y:0.#}) rawBR=({bottomRight.X:0.#},{bottomRight.Y:0.#}) ");
+            text.Append($"goal={(hasGoal ? $"{goalWidth:0.#}x{goalHeight:0.#}" : "无")} dpi={dpi:0.##} ");
+            text.Append($"editor={_editor.ActualWidth:0.#}x{_editor.ActualHeight:0.#} origin={EditorOriginInRoot()} ");
+            text.Append(mapping is { } selected
+                ? $"选中=({selected.Scale:0.###},{selected.OffsetX:0.#},{selected.OffsetY:0.#}) "
+                : "选中=null ");
+
+            foreach (AdornerGeometry.CoordinateTransform candidate in
+                AdornerGeometry.CandidateTransforms(dpi, EditorPaddingX, EditorPaddingY, EditorOriginInRoot()))
+            {
+                PointD corner = candidate.Apply(new PointD(topLeft.X, topLeft.Y));
+                int atTopLeft = IndexAtPoint(new PointD(corner.X + 3, corner.Y + 3));
+                int atBottomRight = hasGoal
+                    ? IndexAtPoint(new PointD(corner.X + goalWidth - 3, corner.Y + goalHeight - 3))
+                    : -1;
+                text.Append($"[({candidate.Scale:0.###},{candidate.OffsetX:0.#},{candidate.OffsetY:0.#}) tl={atTopLeft} br={atBottomRight}] ");
+            }
+
+            File.AppendAllText(
+                System.IO.Path.Combine(System.IO.Path.GetTempPath(), "lumimemo-adorner.log"),
+                $"{DateTime.Now:HH:mm:ss.fff} {text}{Environment.NewLine}");
+        }
+        catch (Exception)
+        {
+            // 诊断本身绝不能出错。
         }
     }
 

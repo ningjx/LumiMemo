@@ -1034,28 +1034,38 @@ public sealed class RichEditorHost : IRichTextDocument, IDisposable
     public void Dispose()
     {
         _disposed = true;
-        _editor.TextChanged -= OnTextChanged;
-        _editor.SelectionChanged -= OnSelectionChanged;
-        _editor.Paste -= OnPaste;
-        _editor.TextCompositionStarted -= OnCompositionStarted;
-        _editor.TextCompositionEnded -= OnCompositionEnded;
-        _editor.KeyDown -= OnKeyDown;
-        _editor.Loaded -= OnEditorLoaded;
-        _editor.DragEnter -= OnDragEnter;
-        _editor.DragOver -= OnDragOver;
-        _editor.DragLeave -= OnDragLeave;
-        _editor.Drop -= OnDrop;
-        if (_viewer is not null)
+
+        // 拆解发生在窗口关闭/进程退出的当口，任何闪失都会被存置成 0xC000027B
+        // 崩掉进程——整体兜住并记日志，绝不让它逃到 WinRT 边界。
+        try
         {
-            _viewer.ViewChanged -= OnEditorViewChanged;
-            _viewer = null;
+            _editor.TextChanged -= OnTextChanged;
+            _editor.SelectionChanged -= OnSelectionChanged;
+            _editor.Paste -= OnPaste;
+            _editor.TextCompositionStarted -= OnCompositionStarted;
+            _editor.TextCompositionEnded -= OnCompositionEnded;
+            _editor.KeyDown -= OnKeyDown;
+            _editor.Loaded -= OnEditorLoaded;
+            _editor.DragEnter -= OnDragEnter;
+            _editor.DragOver -= OnDragOver;
+            _editor.DragLeave -= OnDragLeave;
+            _editor.Drop -= OnDrop;
+            if (_viewer is not null)
+            {
+                _viewer.ViewChanged -= OnEditorViewChanged;
+                _viewer = null;
+            }
+
+            _editor.SizeChanged -= OnEditorSizeChanged;
+            _adorner.ResizeCommitted -= OnResizeCommitted;
+
+            _host.Children.Remove(_editor);
+            _adorner.Dispose();
+            _loadedStream?.Dispose();
         }
-
-        _editor.SizeChanged -= OnEditorSizeChanged;
-        _adorner.ResizeCommitted -= OnResizeCommitted;
-
-        _host.Children.Remove(_editor);
-        _adorner.Dispose();
-        _loadedStream?.Dispose();
+        catch (Exception exception)
+        {
+            System.Diagnostics.Debug.WriteLine($"[RichEditorHost] Dispose 异常（已吞掉）：{exception}");
+        }
     }
 }

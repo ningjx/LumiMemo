@@ -43,6 +43,8 @@ public partial class App : Application
     {
         InitializeComponent();
         UnhandledException += OnUnhandledException;
+        AppDomain.CurrentDomain.UnhandledException += OnAppDomainUnhandledException;
+        TaskScheduler.UnobservedTaskException += OnUnobservedTaskException;
     }
 
     /// <summary>容器取值入口；注册缺失在 <c>ValidateOnBuild</c> 时就会失败，这里兜底报错。</summary>
@@ -306,8 +308,33 @@ public partial class App : Application
         });
     }
 
+    /// <summary>崩溃诊断落盘：进程说没就没时，日志文件是唯一留得下的现场。</summary>
+    private static void LogCrash(string origin, Exception? exception)
+    {
+        try
+        {
+            string directory = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "LumiMemo");
+            Directory.CreateDirectory(directory);
+            File.AppendAllText(
+                Path.Combine(directory, "crash.log"),
+                $"{DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss.fff zzz} [{origin}] {exception}{Environment.NewLine}{Environment.NewLine}");
+        }
+        catch (Exception)
+        {
+            // 写崩溃日志本身绝不能引发新崩溃。
+        }
+    }
+
     private static void OnUnhandledException(object sender, Microsoft.UI.Xaml.UnhandledExceptionEventArgs e)
     {
+        LogCrash("XamlUnhandled", e.Exception);
         System.Diagnostics.Debug.WriteLine(e.Exception);
     }
+
+    private static void OnAppDomainUnhandledException(object sender, System.UnhandledExceptionEventArgs e) =>
+        LogCrash("AppDomainUnhandled", e.ExceptionObject as Exception);
+
+    private static void OnUnobservedTaskException(object? sender, UnobservedTaskExceptionEventArgs e) =>
+        LogCrash("UnobservedTask", e.Exception);
 }
