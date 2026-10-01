@@ -120,10 +120,61 @@ public sealed class ManagerViewModelTests
         // 相关度：标题命中的（虽然是旧的）在前。
         Assert.Equal(oldTitleHit.Id, h.ViewModel.Items[0].Note.Id);
 
-        h.ViewModel.SortOrder = NoteSortOrder.ModifiedTime;
+        h.ViewModel.SortByModifiedTime = true;
 
         // 修改时间：新的在前。
         Assert.Equal(newBodyHit.Id, h.ViewModel.Items[0].Note.Id);
+    }
+
+    [Fact]
+    public void 排序切换_再点一次回到默认顺序()
+    {
+        using var h = new Harness();
+        Note oldTitleHit = h.AddNote("# 文档", updatedAt: h.Now.AddDays(-20));
+        h.AddNote("# 笔记\n文档在这里", updatedAt: h.Now.AddDays(-1));
+
+        h.ViewModel.Query = "文档";
+        h.ViewModel.SortByModifiedTime = true;
+        h.ViewModel.SortByModifiedTime = false;
+
+        // 回到相关度：标题命中的在前。
+        Assert.Equal(oldTitleHit.Id, h.ViewModel.Items[0].Note.Id);
+    }
+
+    [Fact]
+    public void 计数_没有搜索与筛选时只有总数()
+    {
+        using var h = new Harness();
+        h.AddNote("# 一");
+        h.AddNote("# 二");
+        h.ViewModel.Refresh();
+
+        Assert.Equal("2", h.ViewModel.CountText);
+    }
+
+    [Fact]
+    public void 计数_搜索后是命中数比总数()
+    {
+        using var h = new Harness();
+        h.AddNote("# 文档");
+        h.AddNote("# 别的");
+
+        h.ViewModel.Query = "文档";
+
+        Assert.Equal("1/2", h.ViewModel.CountText);
+    }
+
+    [Fact]
+    public void 计数_颜色筛选也算筛选态()
+    {
+        using var h = new Harness();
+        Note blue = h.AddNote("# 蓝签");
+        h.AddNote("# 黄签");
+        blue.Color = NoteColor.Blue;
+
+        h.ViewModel.ColorFilter = NoteColor.Blue;
+
+        Assert.Equal("1/2", h.ViewModel.CountText);
     }
 
     [Fact]

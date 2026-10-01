@@ -1,3 +1,4 @@
+using System.Globalization;
 using CommunityToolkit.Mvvm.ComponentModel;
 using LumiMemo.Core.Abstractions;
 using LumiMemo.Core.Models;
@@ -27,8 +28,10 @@ public sealed class ManagerViewModel : ObservableObject, IDisposable
 
     private string _query = string.Empty;
     private NoteColor? _colorFilter;
-    private NoteSortOrder _sortOrder = NoteSortOrder.Relevance;
+    private bool _sortByModifiedTime;
     private IReadOnlyList<NoteListItem> _items = [];
+    private int _totalCount;
+    private int _shownCount;
     private int _refreshVersion;
     private bool _isDisposed;
 
@@ -80,13 +83,17 @@ public sealed class ManagerViewModel : ObservableObject, IDisposable
         }
     }
 
-    /// <summary>排序方式。实时生效。</summary>
-    public NoteSortOrder SortOrder
+    /// <summary>排序是否改为「按修改时间」；false = 默认顺序（有查询词按相关度）。</summary>
+    /// <remarks>
+    /// 排序链的多键框架在 Core（<c>NoteSearch.SortHits</c> + <c>NoteSearchRequest.Sorts</c>）；
+    /// 本轮的界面只提供一个条件，VM 先用布尔形态表达，后续补条件时再升级为链。
+    /// </remarks>
+    public bool SortByModifiedTime
     {
-        get => _sortOrder;
+        get => _sortByModifiedTime;
         set
         {
-            if (SetProperty(ref _sortOrder, value))
+            if (SetProperty(ref _sortByModifiedTime, value))
             {
                 Refresh();
             }
@@ -99,6 +106,40 @@ public sealed class ManagerViewModel : ObservableObject, IDisposable
         get => _items;
         private set => SetProperty(ref _items, value);
     }
+
+    /// <summary>便签总数（不受查询/筛选影响）。</summary>
+    public int TotalCount
+    {
+        get => _totalCount;
+        private set
+        {
+            if (SetProperty(ref _totalCount, value))
+            {
+                OnPropertyChanged(nameof(CountText));
+            }
+        }
+    }
+
+    /// <summary>当前展示的条数（搜索/筛选后）。</summary>
+    public int ShownCount
+    {
+        get => _shownCount;
+        private set
+        {
+            if (SetProperty(ref _shownCount, value))
+            {
+                OnPropertyChanged(nameof(CountText));
+            }
+        }
+    }
+
+    /// <summary>右下角计数：没有搜索/筛选时就是总数（"10"），否则是"2/10"。</summary>
+    public string CountText => HasActiveFilter
+        ? $"{_shownCount}/{_totalCount}"
+        : _totalCount.ToString(CultureInfo.InvariantCulture);
+
+    private bool HasActiveFilter =>
+        !string.IsNullOrWhiteSpace(_query) || _colorFilter is not null;
 
     public void OpenNote(Note note)
     {
@@ -142,7 +183,7 @@ public sealed class ManagerViewModel : ObservableObject, IDisposable
         {
             Notes = notes,
             Query = _query,
-            Sort = _sortOrder,
+            Sorts = _sortByModifiedTime ? [NoteSortOrder.ModifiedTime] : [],
             Color = _colorFilter,
             TopMostIds = TopMostIds(notes),
             Now = _clock.Now,
@@ -181,6 +222,9 @@ public sealed class ManagerViewModel : ObservableObject, IDisposable
                 SnippetBuilder.Build(hit.Note.Title, terms),
                 SnippetBuilder.Build(hit.Note.Content, terms))),
         ];
+
+        TotalCount = notes.Count;
+        ShownCount = Items.Count;
     }
 
     /// <summary>置顶便签的 id 集合（§12.2 的加分项）；一张都没有时返回 null 省一次加分支。</summary>

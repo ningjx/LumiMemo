@@ -153,6 +153,59 @@ public static class NoteSearch
     }
 
     /// <summary>
+    /// 把排序链套到搜索结果上：按链的顺序逐键比较（每个键都是倒序），末键 id 升序兜底。
+    /// </summary>
+    /// <param name="hits">待排序的结果（相关度序或列表序均可）。</param>
+    /// <param name="sorts">排序链；调用方在有链时才调用本方法。</param>
+    /// <param name="hasQuery">有没有查询词——决定 <see cref="NoteSortOrder.Relevance"/> 键是否有效。</param>
+    /// <remarks>
+    /// <para>
+    /// 没有查询词时 <see cref="NoteSortOrder.Relevance"/> 没有分数可依，跳过该键；
+    /// 链里一个有效键都没有时原样返回——调用方给的顺序（相关度序或
+    /// <see cref="OrderForList"/> 的列表序）已经是正确的默认。
+    /// </para>
+    /// <para>
+    /// 末键与 <see cref="OrderForList"/>、<see cref="Search"/> 一样是 id 升序：
+    /// 同一时刻改动的两张便签不能因为排序不稳定而在列表里跳来跳去。
+    /// </para>
+    /// </remarks>
+    public static IReadOnlyList<SearchHit> SortHits(
+        IReadOnlyList<SearchHit> hits,
+        IReadOnlyList<NoteSortOrder> sorts,
+        bool hasQuery)
+    {
+        ArgumentNullException.ThrowIfNull(hits);
+        ArgumentNullException.ThrowIfNull(sorts);
+
+        IOrderedEnumerable<SearchHit>? ordered = null;
+
+        foreach (NoteSortOrder sort in sorts)
+        {
+            ordered = sort switch
+            {
+                NoteSortOrder.Relevance when hasQuery =>
+                    ChainDescending(ordered, hits, static hit => hit.Score),
+                NoteSortOrder.ModifiedTime =>
+                    ChainDescending(ordered, hits, static hit => hit.Note.UpdatedAt),
+                NoteSortOrder.CreatedTime =>
+                    ChainDescending(ordered, hits, static hit => hit.Note.CreatedAt),
+                _ => ordered,
+            };
+        }
+
+        return ordered is null
+            ? hits
+            : [.. ordered.ThenBy(static hit => hit.Note.Id)];
+    }
+
+    /// <summary>排序链的下一键：首键是 OrderByDescending，后续都是 ThenByDescending。</summary>
+    private static IOrderedEnumerable<SearchHit> ChainDescending<TKey>(
+        IOrderedEnumerable<SearchHit>? ordered,
+        IReadOnlyList<SearchHit> hits,
+        Func<SearchHit, TKey> keySelector) =>
+        ordered is null ? hits.OrderByDescending(keySelector) : ordered.ThenByDescending(keySelector);
+
+    /// <summary>
     /// 判断一张便签是否命中全部关键词（AND）并算出总分；有词未命中则返回 <see langword="null"/>。
     /// </summary>
     /// <remarks>

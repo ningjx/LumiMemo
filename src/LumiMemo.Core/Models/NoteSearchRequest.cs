@@ -19,8 +19,11 @@ public sealed class NoteSearchRequest
     /// <summary>用户输入的查询词；空白表示「没有搜索」，按排序展示全部。</summary>
     public required string Query { get; init; }
 
-    /// <summary>排序方式。</summary>
-    public NoteSortOrder Sort { get; init; } = NoteSortOrder.Relevance;
+    /// <summary>
+    /// 排序链：按列表顺序逐键比较（第一个是主键）；空列表表示「默认排序」——
+    /// 有查询词按相关度，无查询词按修改时间倒序。
+    /// </summary>
+    public IReadOnlyList<NoteSortOrder> Sorts { get; init; } = [];
 
     /// <summary>颜色筛选；<see langword="null"/> 表示不筛颜色。</summary>
     public NoteColor? Color { get; init; }

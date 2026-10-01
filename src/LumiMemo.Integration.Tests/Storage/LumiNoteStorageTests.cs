@@ -115,6 +115,45 @@ public sealed class LumiNoteStorageTests
     }
 
     [Fact]
+    public async Task 复制_内容原样换新id与新时间戳()
+    {
+        using var temp = new TempDirectory();
+        Note source = NewNote(temp.Path);
+        source.Content = "原文";
+        source.RichTextContent = [9, 8, 7];
+        source.Color = NoteColor.Purple;
+        source.Tags.Add("工作");
+        source.AutoTitle = "原题";
+
+        await Create(temp.Path).SaveAsync(source, Ct);
+        Note copy = await Create(temp.Path).DuplicateAsync(source, Ct);
+
+        Assert.NotEqual(source.Id, copy.Id);
+        Assert.True(File.Exists(copy.FilePath));
+        Assert.Equal(source.Content, copy.Content);
+        Assert.Equal(new byte[] { 9, 8, 7 }, copy.RichTextContent);
+        Assert.Equal(NoteColor.Purple, copy.Color);
+        Assert.Equal(new[] { "工作" }, copy.Tags);
+        Assert.Equal("原题", copy.AutoTitle);
+        Assert.Equal(copy.CreatedAt, copy.UpdatedAt);
+
+        // 源文件还在，复制件也落了盘：加载得到两份。
+        IReadOnlyList<Note> loaded = await Create(temp.Path).LoadAllAsync(Ct);
+        Assert.Equal(2, loaded.Count);
+    }
+
+    [Fact]
+    public async Task 复制时目录不存在_抛异常()
+    {
+        using var temp = new TempDirectory();
+        string missing = temp.Combine("还不存在");
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => Create(missing).DuplicateAsync(NewNote(missing), Ct));
+        Assert.False(Directory.Exists(missing));
+    }
+
+    [Fact]
     public async Task 坏文件被跳过_其余便笺照常加载()
     {
         using var temp = new TempDirectory();

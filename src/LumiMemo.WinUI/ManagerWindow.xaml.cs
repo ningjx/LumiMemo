@@ -182,9 +182,7 @@ public sealed partial class ManagerWindow : Window
     }
 
     private void OnSortChanged(object sender, SelectionChangedEventArgs e) =>
-        _viewModel.SortOrder = SortBox.SelectedIndex == 1
-            ? NoteSortOrder.ModifiedTime
-            : NoteSortOrder.Relevance;
+        _viewModel.SortByModifiedTime = SortBox.SelectedIndex == 1;
 
     private IEnumerable<Button> ColorFilterButtons()
     {

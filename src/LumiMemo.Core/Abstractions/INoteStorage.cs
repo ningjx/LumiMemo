@@ -43,4 +43,11 @@ public interface INoteStorage
     /// 后者会在被拔掉的移动盘上凭空造一个空目录，而用户的便笺都在别处（§11.5）。
     /// </remarks>
     Task<Note> CreateAsync(NoteColor? color = null, CancellationToken ct = default);
+
+    /// <summary>把一张便签原样复制成新便签（新 id、新文件），并立刻落盘。</summary>
+    /// <remarks>
+    /// 正文（含 RTF 格式）、颜色、标签、标题全部保留；创建/修改时间是当下时刻。
+    /// 目录不存在的处理同 <see cref="CreateAsync"/>。
+    /// </remarks>
+    Task<Note> DuplicateAsync(Note source, CancellationToken ct = default);
 }

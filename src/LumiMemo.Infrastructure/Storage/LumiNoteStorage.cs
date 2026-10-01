@@ -145,6 +145,37 @@ public sealed class LumiNoteStorage : INoteStorage
         return note;
     }
 
+    /// <inheritdoc />
+    public async Task<Note> DuplicateAsync(Note source, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+
+        if (!Directory.Exists(_folder))
+        {
+            throw new InvalidOperationException("便笺目录不存在。");
+        }
+
+        Guid id = Guid.NewGuid();
+        DateTimeOffset now = _clock.Now;
+
+        var copy = new Note
+        {
+            Id = id,
+            FilePath = Path.Combine(_folder, $"{id:N}.lumi"),
+            Content = source.Content,
+            RichTextContent = [.. source.RichTextContent],
+            Color = source.Color,
+            Tags = [.. source.Tags],
+            AutoTitle = source.AutoTitle,
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
+
+        await SaveAsync(copy, ct).ConfigureAwait(false);
+
+        return copy;
+    }
+
     /// <summary>读一个文件；坏文件返回 <see langword="null"/> 并记日志，不抛出。</summary>
     public async Task<Note?> TryLoadAsync(string path, CancellationToken ct = default)
     {

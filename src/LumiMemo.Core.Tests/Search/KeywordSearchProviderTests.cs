@@ -77,9 +77,9 @@ public sealed class KeywordSearchProviderTests
         Note[] notes = [oldButRelevant, newButWeak];
 
         IReadOnlyList<SearchHit> byRelevance = await SearchAsync(
-            Request(notes, query: "文档", sort: NoteSortOrder.Relevance));
+            Request(notes, query: "文档", sorts: [NoteSortOrder.Relevance]));
         IReadOnlyList<SearchHit> byTime = await SearchAsync(
-            Request(notes, query: "文档", sort: NoteSortOrder.ModifiedTime));
+            Request(notes, query: "文档", sorts: [NoteSortOrder.ModifiedTime]));
 
         Assert.Equal(oldButRelevant.Id, byRelevance[0].Note.Id);
         Assert.Equal(newButWeak.Id, byTime[0].Note.Id);
@@ -112,13 +112,13 @@ public sealed class KeywordSearchProviderTests
     private static NoteSearchRequest Request(
         IReadOnlyList<Note> notes,
         string query = "",
-        NoteSortOrder sort = NoteSortOrder.Relevance,
+        IReadOnlyList<NoteSortOrder>? sorts = null,
         NoteColor? color = null) =>
         new()
         {
             Notes = notes,
             Query = query,
-            Sort = sort,
+            Sorts = sorts ?? [],
             Color = color,
             Now = Now,
         };

@@ -64,4 +64,27 @@ public sealed class FakeNoteStorage : INoteStorage
             UpdatedAt = DateTimeOffset.UnixEpoch,
         });
     }
+
+    /// <summary>所有交给 <see cref="DuplicateAsync"/> 的源便签，按发生顺序。</summary>
+    public List<Note> Duplicated { get; } = [];
+
+    public Task<Note> DuplicateAsync(Note source, CancellationToken ct = default)
+    {
+        Duplicated.Add(source);
+
+        Guid id = Guid.NewGuid();
+
+        return Task.FromResult(new Note
+        {
+            Id = id,
+            FilePath = $@"D:\notes\{id:N}.lumi",
+            Content = source.Content,
+            RichTextContent = [.. source.RichTextContent],
+            Color = source.Color,
+            Tags = [.. source.Tags],
+            AutoTitle = source.AutoTitle,
+            CreatedAt = DateTimeOffset.UnixEpoch,
+            UpdatedAt = DateTimeOffset.UnixEpoch,
+        });
+    }
 }

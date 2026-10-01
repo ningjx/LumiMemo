@@ -298,6 +298,60 @@ public sealed class NoteSearchTests
         Assert.Equal(new[] { small, big }, ordered.ToArray());
     }
 
+    // ================= 排序链（2026-10）=================
+
+    [Fact]
+    public void 排序链_按修改时间重排且保留命中信息()
+    {
+        // 旧的靠标题命中拿到高相关度，新的只在正文命中；两种顺序相反。
+        var oldButRelevant = NewNote("# 文档", updatedAt: Now.AddDays(-30));
+        var newButWeak = NewNote("# 笔记\n提一下文档", updatedAt: Now.AddDays(-1));
+
+        var hits = Search("文档", [oldButRelevant, newButWeak]);
+        Assert.Equal(oldButRelevant, hits[0].Note);
+
+        var sorted = NoteSearch.SortHits(hits, [NoteSortOrder.ModifiedTime], hasQuery: true);
+
+        Assert.Equal(newButWeak, sorted[0].Note);
+        Assert.All(sorted, static hit => Assert.True(hit.TitlePosition >= 0 || hit.HasBodyMatch));
+    }
+
+    [Fact]
+    public void 排序链_第二键在同修改时间时生效()
+    {
+        var sameUpdated = Now.AddDays(-1);
+        var createdLongAgo = NewNote("# 文档", updatedAt: sameUpdated, createdAt: Now.AddDays(-100));
+        var createdRecently = NewNote("# 文档", updatedAt: sameUpdated, createdAt: Now.AddDays(-1));
+
+        var hits = Search("文档", [createdLongAgo, createdRecently]);
+        var sorted = NoteSearch.SortHits(
+            hits, [NoteSortOrder.ModifiedTime, NoteSortOrder.CreatedTime], hasQuery: true);
+
+        Assert.Equal(createdRecently, sorted[0].Note);
+    }
+
+    [Fact]
+    public void 排序链_没有查询词时相关度键被跳过()
+    {
+        // 给旧便签更小的 id：若相关度键错误生效（全是 0 分、再按 id 升序），旧的会跑到前面。
+        var old = NewNote(
+            "# 一",
+            updatedAt: Now.AddDays(-9),
+            id: Guid.Parse("00000000-0000-0000-0000-000000000001"));
+        var newest = NewNote(
+            "# 二",
+            updatedAt: Now.AddDays(-1),
+            id: Guid.Parse("00000000-0000-0000-0000-0000000000ff"));
+
+        var hits = NoteSearch.OrderForList([old, newest])
+            .Select(static note => new SearchHit(note, -1, [], -1, 0))
+            .ToArray();
+
+        var sorted = NoteSearch.SortHits(hits, [NoteSortOrder.Relevance], hasQuery: false);
+
+        Assert.Equal(newest, sorted[0].Note);
+    }
+
     // ================= 分词与多关键词（AND，2026-10）=================
 
     [Fact]
@@ -362,7 +416,11 @@ public sealed class NoteSearchTests
         IReadOnlySet<Guid>? topMostIds = null) =>
         NoteSearch.Search(notes, query, topMostIds, Now);
 
-    private static Note NewNote(string content, DateTimeOffset? updatedAt = null, Guid? id = null)
+    private static Note NewNote(
+        string content,
+        DateTimeOffset? updatedAt = null,
+        Guid? id = null,
+        DateTimeOffset? createdAt = null)
     {
         var noteId = id ?? Guid.NewGuid();
 
@@ -371,7 +429,7 @@ public sealed class NoteSearchTests
             Id = noteId,
             FilePath = $@"D:\notes\{noteId:N}.lumi",
             Content = content,
-            CreatedAt = Now.AddYears(-1),
+            CreatedAt = createdAt ?? Now.AddYears(-1),
             UpdatedAt = updatedAt ?? Now,
         };
     }

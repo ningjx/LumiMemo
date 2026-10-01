@@ -13,6 +13,9 @@ public sealed class NoteTitleCoordinator : IDisposable
     private readonly Dictionary<Guid, State> _states = [];
     private bool _disposed;
 
+    /// <summary>自动保存触发的生成防抖：内容还在连续变化时不必每个版本都问一次模型。</summary>
+    private static readonly TimeSpan GenerationDebounce = TimeSpan.FromMilliseconds(900);
+
     public NoteTitleCoordinator(IEnumerable<Note> notes, INoteStorage storage, IClock clock,
         AppSettings settings, ITitleGenerator generator)
     {
@@ -72,15 +75,41 @@ public sealed class NoteTitleCoordinator : IDisposable
         state.Request?.Cancel();
         var request = new CancellationTokenSource();
         state.Request = request;
-        _ = GenerateAndSaveAsync(note, state, state.Revision, note.Content, request);
+        _ = GenerateAndSaveAsync(note, state, state.Revision, note.Content, request, GenerationDebounce);
+    }
+
+    /// <summary>
+    /// 手动强制重新生成标题（便签窗口的刷新按钮）：绕过生成策略（短内容、已有标题也生成），
+    /// 不做防抖、立即开始。
+    /// </summary>
+    /// <returns>未启用自动标题或未配置模型时返回 <see langword="false"/>，且不产生任何事件。</returns>
+    public bool Regenerate(Note note)
+    {
+        ArgumentNullException.ThrowIfNull(note);
+
+        LlmSettings config = _settings.Llm;
+        if (_disposed || !config.Enabled || string.IsNullOrWhiteSpace(config.Model))
+        {
+            return false;
+        }
+
+        State state = GetState(note);
+        state.Revision++;
+        state.Request?.Cancel();
+        var request = new CancellationTokenSource();
+        state.Request = request;
+        SetPending(note.Id, state, true);
+        _ = GenerateAndSaveAsync(note, state, state.Revision, note.Content, request, TimeSpan.Zero);
+
+        return true;
     }
 
     private async Task GenerateAndSaveAsync(Note note, State state, int revision,
-        string content, CancellationTokenSource request)
+        string content, CancellationTokenSource request, TimeSpan debounce)
     {
         try
         {
-            await Task.Delay(900, request.Token);
+            await Task.Delay(debounce, request.Token);
             LlmSettings config = _settings.Llm;
             if (!config.Enabled || revision != state.Revision)
             {
