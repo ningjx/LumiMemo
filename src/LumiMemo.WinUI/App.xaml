@@ -8,7 +8,8 @@
         <ResourceDictionary>
             <ResourceDictionary.MergedDictionaries>
                 <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
-                <!-- Other merged dictionaries here -->
+                <!-- 全程序通用滚动条（隐式样式）：显隐行为见 ScrollBarReveal。 -->
+                <ResourceDictionary Source="ms-appx:///ScrollBarStyle.xaml" />
             </ResourceDictionary.MergedDictionaries>
 
             <!-- 玻璃窗口上的图标按钮：透明底无边框，悬停底色由默认模板给。

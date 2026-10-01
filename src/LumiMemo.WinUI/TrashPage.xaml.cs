@@ -1,3 +1,4 @@
+using LumiMemo.WinUI.Controls;
 using LumiMemo.WinUI.ViewModels;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -16,6 +17,9 @@ public sealed partial class TrashPage : UserControl
 
         _viewModel = viewModel;
         InitializeComponent();
+
+        // 列表也穿同款滚动条（显隐行为见 ScrollBarReveal）。
+        TrashList.Loaded += (_, _) => ScrollBarReveal.AttachTo(TrashList);
     }
 
     /// <summary>XAML 的 x:Bind 从这里取值。</summary>

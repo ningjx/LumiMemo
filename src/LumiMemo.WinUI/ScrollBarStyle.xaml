@@ -1,10 +1,13 @@
 <?xml version="1.0" encoding="utf-8" ?>
 <!--
-    编辑器专用滚动条：只留一个圆角滑块，显隐/宽细完全由 RichEditorHost 的代码驱动——
+    全程序通用的滚动条：只留一个圆角滑块，显隐/宽细由 ScrollBarReveal 的代码驱动——
     出现时从右缘滑出、消失时向右滑回边线（弹出/收起），滚动指示为细条（4px）、
-    悬停由细变粗（8px）。刻意不放任何 VisualState：系统"始终显示滚动条"设置会让
-    模板状态变成常驻细条，绕开它的办法就是不用状态机。模板保留 ScrollBar 代码
-    需要的全部 16 个命名部件（缺一个模板就会应用失败）。
+    悬停由细变粗（8px）。
+    刻意不放任何 VisualState：系统"始终显示滚动条"设置会让模板状态变成常驻细条，
+    绕开它的办法就是不用状态机。模板保留 ScrollBar 代码需要的全部 16 个命名部件
+    （缺一个模板就会应用失败）。
+    在 App.xaml 合并：每个滚动条的宿主（编辑器/列表/设置页）Loaded 后调
+    ScrollBarReveal.AttachTo 才有显隐行为；否则滑块会一直处于"收起"位。
 -->
 <ResourceDictionary
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"

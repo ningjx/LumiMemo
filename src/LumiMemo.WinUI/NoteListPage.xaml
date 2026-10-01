@@ -107,17 +107,24 @@
 
         <ListView x:Name="NotesList"
                   Grid.Row="1"
-                  Margin="8,0,8,10"
+                  Margin="14,0,14,10"
                   ItemsSource="{x:Bind ViewModel.Items, Mode=OneWay}"
                   IsItemClickEnabled="True"
                   ItemClick="OnNoteItemClick"
                   SelectionMode="None">
+            <!-- 容器自身不加内边距：色条要贴住条目左缘，跟上方搜索框对齐。 -->
+            <ListView.ItemContainerStyle>
+                <Style TargetType="ListViewItem">
+                    <Setter Property="Padding" Value="0" />
+                    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                </Style>
+            </ListView.ItemContainerStyle>
             <ListView.ItemTemplate>
                 <DataTemplate>
                     <!-- 根 Grid 必须有背景，否则空白区域的悬停事件收不到。 -->
                     <Grid x:Name="ItemRoot"
                           Background="Transparent"
-                          Padding="10,8"
+                          Padding="0,8,10,8"
                           MinHeight="62"
                           PointerEntered="OnItemPointerEntered"
                           PointerExited="OnItemPointerExited">
@@ -126,13 +133,31 @@
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
 
-                        <!-- 便签颜色的常显色条。 -->
-                        <Border Width="4"
-                                CornerRadius="2"
-                                Margin="0,2,10,2"
-                                Background="{Binding Note.Color, Converter={StaticResource StripBrushConverter}}" />
+                        <!-- 色条即"修改颜色"按钮：贴住条目左缘，点开色板。
+                             内容对齐要 Stretch（否则 ContentPresenter 会把色条量成 0 高）；
+                             悬停不留系统的白底，反馈交给整行高亮和按下态。 -->
+                        <Button Grid.Column="0"
+                                Width="14" Padding="0"
+                                VerticalAlignment="Stretch"
+                                VerticalContentAlignment="Stretch"
+                                HorizontalContentAlignment="Left"
+                                Background="Transparent" BorderThickness="0" CornerRadius="0"
+                                Click="OnItemColorClick"
+                                ToolTipService.ToolTip="修改颜色">
+                            <Button.Resources>
+                                <SolidColorBrush x:Key="ButtonBackgroundPointerOver" Color="Transparent" />
+                                <SolidColorBrush x:Key="ButtonBackgroundPressed" Color="#10FFFFFF" />
+                                <SolidColorBrush x:Key="ButtonBorderBrushPointerOver" Color="Transparent" />
+                                <SolidColorBrush x:Key="ButtonBorderBrushPressed" Color="Transparent" />
+                            </Button.Resources>
+                            <Border Width="4"
+                                    CornerRadius="2"
+                                    HorizontalAlignment="Left"
+                                    Margin="0,2,0,2"
+                                    Background="{Binding Note.Color, Converter={StaticResource StripBrushConverter}}" />
+                        </Button>
 
-                        <Grid Grid.Column="1">
+                        <Grid Grid.Column="1" Margin="8,0,0,0">
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
@@ -156,31 +181,47 @@
                                                        NoteColor="{Binding Note.Color}" />
                         </Grid>
 
-                        <!-- 悬停时右上角浮出的操作按钮（淡入淡出由代码控制）。 -->
-                        <StackPanel x:Name="ItemActions"
-                                    Grid.Column="1"
-                                    Orientation="Horizontal" Spacing="2"
-                                    HorizontalAlignment="Right" VerticalAlignment="Top"
-                                    Opacity="0" IsHitTestVisible="False">
-                            <Button Width="28" Height="24"
-                                    Style="{StaticResource IconButtonStyle}"
-                                    Click="OnItemColorClick"
-                                    ToolTipService.ToolTip="修改颜色">
-                                <FontIcon Glyph="&#xE790;" FontSize="12" />
-                            </Button>
+                        <!--
+                            悬停时右上角浮出的操作按钮（淡入淡出由代码控制）。
+                            图标是自绘的实心版（白色填充 + 深色描边）：填充本身就能盖住
+                            底下的标题文字，不依赖按钮底色。
+                        -->
+                        <Border x:Name="ItemActions"
+                                Grid.Column="1"
+                                HorizontalAlignment="Right" VerticalAlignment="Top"
+                                Padding="4,2"
+                                Opacity="0" IsHitTestVisible="False">
+                            <StackPanel Orientation="Horizontal" Spacing="2">
                             <Button Width="28" Height="24"
                                     Style="{StaticResource IconButtonStyle}"
                                     Click="OnItemDuplicateClick"
                                     ToolTipService.ToolTip="复制">
-                                <FontIcon Glyph="&#xE8C8;" FontSize="12" />
+                                <Canvas Width="16" Height="16">
+                                    <Rectangle Canvas.Left="1" Canvas.Top="1" Width="9.5" Height="9.5"
+                                               RadiusX="2" RadiusY="2"
+                                               Fill="White" Stroke="#FF403747" StrokeThickness="1.2" />
+                                    <Rectangle Canvas.Left="5.5" Canvas.Top="5.5" Width="9.5" Height="9.5"
+                                               RadiusX="2" RadiusY="2"
+                                               Fill="White" Stroke="#FF403747" StrokeThickness="1.2" />
+                                </Canvas>
                             </Button>
                             <Button Width="28" Height="24"
                                     Style="{StaticResource IconButtonStyle}"
                                     Click="OnItemDeleteClick"
                                     ToolTipService.ToolTip="删除">
-                                <FontIcon Glyph="&#xE74D;" FontSize="12" />
+                                <Canvas Width="16" Height="16">
+                                    <Rectangle Canvas.Left="5.8" Canvas.Top="1.2" Width="4.4" Height="2.2"
+                                               RadiusX="1" RadiusY="1"
+                                               Fill="White" Stroke="#FF403747" StrokeThickness="1.1" />
+                                    <Rectangle Canvas.Left="2.6" Canvas.Top="3.4" Width="10.8" Height="2.6"
+                                               RadiusX="1.1" RadiusY="1.1"
+                                               Fill="White" Stroke="#FF403747" StrokeThickness="1.1" />
+                                    <Path Fill="White" Stroke="#FF403747" StrokeThickness="1.1"
+                                          Data="M4.4,6.6 L11.6,6.6 L10.7,14.6 A1.3,1.3 0 0 1 9.4,15.7 L6.6,15.7 A1.3,1.3 0 0 1 5.3,14.6 Z" />
+                                </Canvas>
                             </Button>
-                        </StackPanel>
+                            </StackPanel>
+                        </Border>
                     </Grid>
                 </DataTemplate>
             </ListView.ItemTemplate>

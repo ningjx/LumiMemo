@@ -111,9 +111,9 @@ public sealed class NoteWindowManager : INoteWindowActions
     }
 
     /// <summary>
-    /// 新便签窗口的初始尺寸与落点：在便签窗口里建 → 与当前便签同尺寸、按
-    /// 右 → 下 → 上 → 左 的顺序找第一个放得下的相邻位置；从管理器/托盘建 →
-    /// 与最近编辑过的便签同尺寸（落点用默认）。
+    /// 新便签窗口的尺寸与落点：尺寸跟随参照便签（在便签窗口里建 → 当前便签；
+    /// 从管理器/托盘建 → 最近编辑过的便签）；落点从参照便签向外找空格，见
+    /// <see cref="PlaceNewWindow"/>。
     /// </summary>
     private void ApplyInitialLayout(Note note, Note? beside)
     {
@@ -132,49 +132,100 @@ public sealed class NoteWindowManager : INoteWindowActions
         target.Width = source.Width;
         target.Height = source.Height;
 
-        if (beside is not null)
+        PlaceNewWindow(target, source);
+
+        _layouts.MarkDirty();
+    }
+
+    /// <summary>
+    /// 找落点：按 右 → 下 → 上 → 左 的优先顺序，从参照窗口向外逐格搜索，
+    /// 取第一个"整个在工作区内、且不与任何已打开便签重叠"的位置——
+    /// 连点新建时便签会沿这些方向依次铺开，而不是叠在一起。
+    /// 全屏都塞满时才用左侧兜底（夹进工作区、允许重叠）。
+    /// </summary>
+    private void PlaceNewWindow(NoteLayout target, NoteLayout source)
+    {
+        const int gap = 8;
+        const int maxSteps = 64;
+
+        int width = (int)Math.Round(target.Width);
+        int height = (int)Math.Round(target.Height);
+        int left = (int)Math.Round(source.X);
+        int top = (int)Math.Round(source.Y);
+
+        // 以参照便签所在显示器的工作区为准。
+        DisplayArea display = DisplayArea.GetFromPoint(
+            new PointInt32(left, top), DisplayAreaFallback.Nearest);
+        RectInt32 work = display.WorkArea;
+
+        // 占位者＝所有已打开的便签（关着的窗口不占屏幕）。
+        var blockers = new List<(int Left, int Top, int Right, int Bottom)>();
+        foreach (NoteLayout layout in _layouts.All)
         {
-            const int gap = 8;
-            int width = (int)Math.Round(target.Width);
-            int height = (int)Math.Round(target.Height);
-            int left = (int)Math.Round(source.X);
-            int top = (int)Math.Round(source.Y);
-            int sourceRight = left + (int)Math.Round(source.Width);
-            int sourceBottom = top + (int)Math.Round(source.Height);
-
-            // 以被贴着那张便签所在显示器的工作区为准判断各方向是否放得下。
-            DisplayArea display = DisplayArea.GetFromPoint(
-                new PointInt32(left, top), DisplayAreaFallback.Nearest);
-            RectInt32 work = display.WorkArea;
-
-            bool Fits(int x, int y) =>
-                x >= work.X && x + width <= work.X + work.Width
-                && y >= work.Y && y + height <= work.Y + work.Height;
-
-            if (Fits(sourceRight + gap, top))
+            if (!layout.IsOpen || layout.NoteId == target.NoteId)
             {
-                target.X = sourceRight + gap;
-                target.Y = top;
+                continue;
             }
-            else if (Fits(left, sourceBottom + gap))
+
+            int blockerLeft = (int)Math.Round(layout.X);
+            int blockerTop = (int)Math.Round(layout.Y);
+            blockers.Add((
+                blockerLeft,
+                blockerTop,
+                blockerLeft + (int)Math.Round(layout.Width),
+                blockerTop + (int)Math.Round(layout.Height)));
+        }
+
+        bool Inside(int x, int y) =>
+            x >= work.X && x + width <= work.X + work.Width
+            && y >= work.Y && y + height <= work.Y + work.Height;
+
+        bool Overlaps(int x, int y)
+        {
+            foreach ((int blockerLeft, int blockerTop, int blockerRight, int blockerBottom) in blockers)
             {
-                target.X = left;
-                target.Y = sourceBottom + gap;
+                if (x < blockerRight && x + width > blockerLeft
+                    && y < blockerBottom && y + height > blockerTop)
+                {
+                    return true;
+                }
             }
-            else if (Fits(left, top - height - gap))
+
+            return false;
+        }
+
+        (int Dx, int Dy)[] directions =
+        [
+            (width + gap, 0),
+            (0, height + gap),
+            (0, -(height + gap)),
+            (-(width + gap), 0),
+        ];
+
+        foreach ((int dx, int dy) in directions)
+        {
+            for (int step = 1; step <= maxSteps; step++)
             {
-                target.X = left;
-                target.Y = top - height - gap;
-            }
-            else
-            {
-                // 左侧是兜底：放不下也放，只把落点夹回工作区内。
-                target.X = Math.Max(work.X, left - width - gap);
-                target.Y = Math.Min(Math.Max(work.Y, top), work.Y + work.Height - height);
+                int x = left + (dx * step);
+                int y = top + (dy * step);
+
+                if (!Inside(x, y))
+                {
+                    break;
+                }
+
+                if (!Overlaps(x, y))
+                {
+                    target.X = x;
+                    target.Y = y;
+                    return;
+                }
             }
         }
 
-        _layouts.MarkDirty();
+        // 屏幕塞满：左侧兜底，夹进工作区（允许重叠）。
+        target.X = Math.Max(work.X, left - width - gap);
+        target.Y = Math.Min(Math.Max(work.Y, top), work.Y + work.Height - height);
     }
 
     /// <summary>删除一张便签：窗口（若开着）先落盘再关，然后把文件移入回收站。</summary>

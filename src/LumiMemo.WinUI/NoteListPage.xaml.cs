@@ -42,6 +42,9 @@ public sealed partial class NoteListPage : UserControl
         _viewModel = viewModel;
         InitializeComponent();
         UpdateChipStates();
+
+        // 列表也穿同款滚动条（显隐行为见 ScrollBarReveal）。
+        NotesList.Loaded += (_, _) => ScrollBarReveal.AttachTo(NotesList);
     }
 
     /// <summary>XAML 的 x:Bind 从这里取值。</summary>
@@ -129,7 +132,7 @@ public sealed partial class NoteListPage : UserControl
             Padding = new Thickness(10, 8, 10, 8),
         };
 
-        var flyout = new Flyout { Content = panel, Placement = FlyoutPlacementMode.Bottom };
+        var flyout = new Flyout { Content = panel, Placement = FlyoutPlacementMode.Right };
 
         foreach (NoteColor color in Enum.GetValues<NoteColor>())
         {
@@ -229,7 +232,7 @@ public sealed partial class NoteListPage : UserControl
     /// <summary>悬停时淡入/淡出右上角操作按钮；Opacity=0 仍可点击，命中要同步关掉。</summary>
     private static void SetItemActionsVisible(FrameworkElement itemRoot, bool visible)
     {
-        if (itemRoot.FindName("ItemActions") is not StackPanel actions)
+        if (itemRoot.FindName("ItemActions") is not FrameworkElement actions)
         {
             return;
         }

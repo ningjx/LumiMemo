@@ -1,5 +1,6 @@
 using LumiMemo.Core.Abstractions;
 using LumiMemo.Core.Models;
+using LumiMemo.WinUI.Controls;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 
@@ -24,6 +25,9 @@ public sealed partial class SettingsPage : UserControl
         _store = store;
         InitializeComponent();
         LoadFromSettings();
+
+        // 设置页的滚动条也穿同款（显隐行为见 ScrollBarReveal）。
+        SettingsScroll.Loaded += (_, _) => ScrollBarReveal.AttachTo(SettingsScroll);
     }
 
     /// <summary>每次显示本页时调：重新载入当前设置值并清掉上一次的提示。</summary>
