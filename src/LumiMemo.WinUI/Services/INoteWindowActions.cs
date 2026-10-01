@@ -11,7 +11,12 @@ namespace LumiMemo.WinUI.Services;
 public interface INoteWindowActions
 {
     /// <summary>新建一张便签并打开它的窗口。</summary>
-    Task CreateNoteAsync();
+    /// <param name="beside">
+    /// 在便签窗口里点时传当前便签：新窗口与它同尺寸，按 右 → 下 → 上 → 左
+    /// 的顺序找第一个放得下的相邻位置；从管理器或托盘建时传 <see langword="null"/>：
+    /// 新窗口与最近编辑过的便签同尺寸。
+    /// </param>
+    Task CreateNoteAsync(Note? beside = null);
 
     /// <summary>删除一张便签（入回收站）；窗口内容保存失败时返回 false 且不删除。</summary>
     Task<bool> DeleteNoteAsync(Note note);

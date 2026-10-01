@@ -1,6 +1,7 @@
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
 using LumiMemo.Core.Abstractions;
 using LumiMemo.Core.Models;
 using LumiMemo.WinUI.Controls;
@@ -64,10 +65,103 @@ public sealed partial class MainWindow : Window
         EditorHost.Loaded += OnEditorHostLoaded;
         _appWindow.Closing += OnWindowClosing;
         Closed += OnWindowClosed;
+
+        // 进度圈出现/消失会改变标题可用的宽度（生成中给它 22px，平时全给标题）。
+        TitleProgress.SizeChanged += OnTitleProgressSizeChanged;
     }
 
     /// <summary>XAML 的 x:Bind 从这里取值。</summary>
     public NoteViewModel ViewModel => _viewModel;
+
+    /// <summary>标题区随标题栏尺寸重算（见 <see cref="UpdateTitleLayout"/>）。</summary>
+    private void OnTitleBarSizeChanged(object sender, SizeChangedEventArgs e) => UpdateTitleLayout();
+
+    private void OnTitleProgressSizeChanged(object sender, SizeChangedEventArgs e) => UpdateTitleLayout();
+
+    /// <summary>
+    /// 标题区布局：下层文字按自然宽度铺（不按字裁剪），上层遮罩（省略号/进度圈/刷新按钮）
+    /// 的位置 = min(文字自然宽, 限位)——随窗口宽度连续变化，拖动时不按字符跳变。
+    /// </summary>
+    /// <remarks>
+    /// 装不下时遮罩带着省略号整块顶到限位（刷新按钮右缘与图标组同距 3px），
+    /// 文字裁在遮罩左缘、由省略号自然盖住；装得下时遮罩紧贴文字右缘。
+    /// </remarks>
+    private void UpdateTitleLayout()
+    {
+        // 工具按钮恒为四个（最小窗口宽度保证放得下，见 MinWindowWidth）。
+        double column = Math.Max(
+            0, TitleBarGrid.ActualWidth - 21 /* 左右内边距 14 + 7 */ - ToolsPanel.ActualWidth);
+
+        double overlayWidth = RefreshTitleButton.ActualWidth
+            + RefreshTitleButton.Margin.Left
+            + RefreshTitleButton.Margin.Right;
+
+        if (TitleProgress.Visibility == Visibility.Visible)
+        {
+            overlayWidth += TitleProgress.ActualWidth + TitleProgress.Margin.Left;
+        }
+
+        // 量一次文字的自然宽度（不限宽）：遮罩贴它，也用它判断装不装得下。
+        TitleText.Measure(new Windows.Foundation.Size(
+            double.PositiveInfinity, double.PositiveInfinity));
+        double natural = TitleText.DesiredSize.Width;
+
+        bool truncated = natural + overlayWidth > column;
+        double overlayX;
+
+        if (truncated)
+        {
+            // 遮罩整块顶到限位；文字在遮罩左缘前"渐隐"收尾（比省略号优雅）——
+            // 用文字前景色的渐变画刷实现（WinUI 3 没有 OpacityMask），
+            // 渐隐之后再叠一道裁剪兜底，保证遮罩附近没有半截字漏出来。
+            overlayX = Math.Max(0, column - overlayWidth);
+            TitleText.Foreground = BuildFadeForeground(overlayX, natural);
+            TitleText.Clip = new RectangleGeometry
+            {
+                Rect = new Windows.Foundation.Rect(0, 0, overlayX, TitleBarGrid.ActualHeight),
+            };
+        }
+        else
+        {
+            overlayX = natural;
+            TitleText.Foreground = TitleSolidForeground;
+            TitleText.Clip = null;
+        }
+
+        TitleOverlay.Margin = new Thickness(overlayX, 0, 0, 0);
+    }
+
+    private static readonly SolidColorBrush TitleSolidForeground =
+        new(Windows.UI.Color.FromArgb(255, 0x40, 0x37, 0x47));
+
+    /// <summary>标题渐隐前景：从 <paramref name="edgeX"/> 往左约 36px 内把文字淡出到全透明。</summary>
+    private static LinearGradientBrush BuildFadeForeground(double edgeX, double natural)
+    {
+        double fade = Math.Min(36, edgeX);
+        double end = natural > 0 ? edgeX / natural : 0;
+        double start = natural > 0 ? (edgeX - fade) / natural : 0;
+
+        Windows.UI.Color solid = Windows.UI.Color.FromArgb(255, 0x40, 0x37, 0x47);
+        Windows.UI.Color clear = Windows.UI.Color.FromArgb(0, 0x40, 0x37, 0x47);
+
+        var brush = new LinearGradientBrush
+        {
+            StartPoint = new Windows.Foundation.Point(0, 0),
+            EndPoint = new Windows.Foundation.Point(1, 0),
+        };
+
+        brush.GradientStops.Add(new GradientStop { Offset = 0, Color = solid });
+
+        if (start > 0)
+        {
+            brush.GradientStops.Add(new GradientStop { Offset = start, Color = solid });
+        }
+
+        brush.GradientStops.Add(new GradientStop { Offset = end, Color = clear });
+        brush.GradientStops.Add(new GradientStop { Offset = 1, Color = clear });
+
+        return brush;
+    }
 
     /// <summary>x:Bind 的函数绑定不能直接产 Visibility，借这个转换（生成代码按实例调用）。</summary>
     private Visibility ToVisibility(bool value) =>
@@ -122,7 +216,7 @@ public sealed partial class MainWindow : Window
     // ---- 编辑命令转发（命令属于编辑区，窗口只做转手） ----
 
     private async void OnNewNoteClick(object sender, RoutedEventArgs e) =>
-        await _actions.CreateNoteAsync();
+        await _actions.CreateNoteAsync(_viewModel.Note);
 
     private async void OnDeleteNoteClick(object sender, RoutedEventArgs e)
     {
@@ -311,10 +405,23 @@ public sealed partial class MainWindow : Window
         _backdrop = null;
     }
 
+    /// <summary>
+    /// 最小窗口宽度：再窄就放不下四个操作按钮 + 刷新按钮（21 内边距 + 137 工具 + 35 刷新 + 余量）。
+    /// 拖到下限就顶住，四个按钮因此永远都在。
+    /// </summary>
+    private const int MinWindowWidth = 200;
+
     private void OnAppWindowChanged(AppWindow sender, AppWindowChangedEventArgs args)
     {
         if (!args.DidPositionChange && !args.DidSizeChange)
         {
+            return;
+        }
+
+        if (args.DidSizeChange && AppWindow.Size.Width < MinWindowWidth)
+        {
+            // 顶回最小宽度；这次 Resize 会再触发一次 Changed，布局在那里被捕获。
+            AppWindow.Resize(new SizeInt32(MinWindowWidth, AppWindow.Size.Height));
             return;
         }
 

@@ -18,8 +18,16 @@
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
+
+            <!--
+                拖动区只覆盖左侧（标题文本 + 空白）：右侧按钮留在普通客户区，
+                不经过系统标题栏的交互穿透——那种穿透在快速点击后会失效
+                （2026-10-01：切页点快了所有按钮没反应，即由此而来）。
+            -->
+            <Border x:Name="ManagerDragRegion" Background="Transparent" />
             <TextBlock Text="鹿米便笺"
                        VerticalAlignment="Center"
+                       IsHitTestVisible="False"
                        FontSize="16"
                        FontWeight="SemiBold"
                        Foreground="#FF403747" />

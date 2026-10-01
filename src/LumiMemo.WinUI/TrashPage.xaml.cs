@@ -8,6 +8,7 @@ namespace LumiMemo.WinUI.Pages;
 public sealed partial class TrashPage : UserControl
 {
     private readonly TrashViewModel _viewModel;
+    private bool _refreshing;
 
     public TrashPage(TrashViewModel viewModel)
     {
@@ -23,6 +24,13 @@ public sealed partial class TrashPage : UserControl
     /// <summary>每次显示本页时调：重新读回收站目录。</summary>
     public async Task RefreshAsync()
     {
+        // 切页点得快会连着进来好几次：防重入，后到的直接跳过（前一次很快会给出新结果）。
+        if (_refreshing)
+        {
+            return;
+        }
+
+        _refreshing = true;
         try
         {
             await _viewModel.RefreshAsync();
@@ -30,6 +38,10 @@ public sealed partial class TrashPage : UserControl
         catch (Exception exception)
         {
             await ShowDialogAsync("读取回收站失败", exception.Message, primary: null, close: "确定");
+        }
+        finally
+        {
+            _refreshing = false;
         }
 
         UpdateButtons();

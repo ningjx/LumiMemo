@@ -52,8 +52,8 @@ public sealed partial class NoteListPage : UserControl
 
     private void OnFilterIconClick(object sender, RoutedEventArgs e)
     {
-        bool show = FilterConditions.Visibility == Visibility.Collapsed;
-        FilterConditions.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+        bool show = ColorFilterChip.Visibility == Visibility.Collapsed;
+        ColorFilterChip.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
 
         // 收起筛选组时把取值行一起收掉，免得留一行"孤儿"颜色。
         if (!show)
@@ -63,7 +63,7 @@ public sealed partial class NoteListPage : UserControl
     }
 
     private void OnSortIconClick(object sender, RoutedEventArgs e) =>
-        SortConditions.Visibility = SortConditions.Visibility == Visibility.Collapsed
+        ModifiedTimeSortChip.Visibility = ModifiedTimeSortChip.Visibility == Visibility.Collapsed
             ? Visibility.Visible
             : Visibility.Collapsed;
 

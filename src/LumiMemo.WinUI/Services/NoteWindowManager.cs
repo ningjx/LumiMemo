@@ -1,6 +1,8 @@
 using LumiMemo.Core.Abstractions;
 using LumiMemo.Core.Models;
 using LumiMemo.Core.Services;
+using Microsoft.UI.Windowing;
+using Windows.Graphics;
 
 namespace LumiMemo.WinUI.Services;
 
@@ -96,13 +98,83 @@ public sealed class NoteWindowManager : INoteWindowActions
         }
     }
 
-    public async Task CreateNoteAsync()
+    public async Task CreateNoteAsync(Note? beside = null)
     {
         Note note = await _storage.CreateAsync();
         _notes.Add(note);
         _titles.Register(note);
+
+        ApplyInitialLayout(note, beside);
+
         NotesChanged?.Invoke(this, EventArgs.Empty);
         OpenNote(note.Id);
+    }
+
+    /// <summary>
+    /// 新便签窗口的初始尺寸与落点：在便签窗口里建 → 与当前便签同尺寸、按
+    /// 右 → 下 → 上 → 左 的顺序找第一个放得下的相邻位置；从管理器/托盘建 →
+    /// 与最近编辑过的便签同尺寸（落点用默认）。
+    /// </summary>
+    private void ApplyInitialLayout(Note note, Note? beside)
+    {
+        Note? reference = beside ?? _notes
+            .Where(candidate => candidate.Id != note.Id)
+            .OrderByDescending(static candidate => candidate.UpdatedAt)
+            .FirstOrDefault();
+
+        if (reference is null)
+        {
+            return;
+        }
+
+        NoteLayout source = _layouts.GetOrCreate(reference.Id);
+        NoteLayout target = _layouts.GetOrCreate(note.Id);
+        target.Width = source.Width;
+        target.Height = source.Height;
+
+        if (beside is not null)
+        {
+            const int gap = 8;
+            int width = (int)Math.Round(target.Width);
+            int height = (int)Math.Round(target.Height);
+            int left = (int)Math.Round(source.X);
+            int top = (int)Math.Round(source.Y);
+            int sourceRight = left + (int)Math.Round(source.Width);
+            int sourceBottom = top + (int)Math.Round(source.Height);
+
+            // 以被贴着那张便签所在显示器的工作区为准判断各方向是否放得下。
+            DisplayArea display = DisplayArea.GetFromPoint(
+                new PointInt32(left, top), DisplayAreaFallback.Nearest);
+            RectInt32 work = display.WorkArea;
+
+            bool Fits(int x, int y) =>
+                x >= work.X && x + width <= work.X + work.Width
+                && y >= work.Y && y + height <= work.Y + work.Height;
+
+            if (Fits(sourceRight + gap, top))
+            {
+                target.X = sourceRight + gap;
+                target.Y = top;
+            }
+            else if (Fits(left, sourceBottom + gap))
+            {
+                target.X = left;
+                target.Y = sourceBottom + gap;
+            }
+            else if (Fits(left, top - height - gap))
+            {
+                target.X = left;
+                target.Y = top - height - gap;
+            }
+            else
+            {
+                // 左侧是兜底：放不下也放，只把落点夹回工作区内。
+                target.X = Math.Max(work.X, left - width - gap);
+                target.Y = Math.Min(Math.Max(work.Y, top), work.Y + work.Height - height);
+            }
+        }
+
+        _layouts.MarkDirty();
     }
 
     /// <summary>删除一张便签：窗口（若开着）先落盘再关，然后把文件移入回收站。</summary>

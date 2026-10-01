@@ -21,34 +21,48 @@
                      TextChanged="OnSearchTextChanged" />
 
             <!--
-                筛选/排序：平时只露两个图标。点图标横向展开对应条件行，
-                点条件再展开取值行（颜色取值点击立即生效）。
+                筛选/排序：点图标在**组内**横向展开子操作、把右侧的组向右推挤；
+                圆角框把每个组圈成一个整体（图标 + 它的子操作，逻辑上不同级）。
+                子操作有多项取值时（颜色），取值行在下一行展示。
             -->
             <StackPanel Spacing="6">
                 <StackPanel Orientation="Horizontal" Spacing="6">
-                    <Button x:Name="FilterIconButton"
-                            Style="{StaticResource IconButtonStyle}"
-                            Click="OnFilterIconClick"
-                            ToolTipService.ToolTip="筛选">
-                        <FontIcon Glyph="&#xE71C;" FontSize="14" />
-                    </Button>
-                    <Button x:Name="SortIconButton"
-                            Style="{StaticResource IconButtonStyle}"
-                            Click="OnSortIconClick"
-                            ToolTipService.ToolTip="排序">
-                        <FontIcon Glyph="&#xE8CB;" FontSize="14" />
-                    </Button>
-                </StackPanel>
-
-                <StackPanel x:Name="FilterConditions"
-                            Orientation="Horizontal" Spacing="6"
-                            Visibility="Collapsed">
-                    <Button x:Name="ColorFilterChip"
-                            Style="{StaticResource IconButtonStyle}"
-                            Click="OnColorChipClick"
-                            ToolTipService.ToolTip="颜色">
-                        <FontIcon Glyph="&#xE790;" FontSize="14" />
-                    </Button>
+                    <Border CornerRadius="10" BorderThickness="1" BorderBrush="#30FFFFFF" Padding="2">
+                        <StackPanel Orientation="Horizontal">
+                            <Button x:Name="FilterIconButton"
+                                    Style="{StaticResource IconButtonStyle}"
+                                    Click="OnFilterIconClick"
+                                    ToolTipService.ToolTip="筛选">
+                                <FontIcon Glyph="&#xE71C;" FontSize="14" />
+                            </Button>
+                            <Button x:Name="ColorFilterChip"
+                                    Margin="2,0,0,0"
+                                    Visibility="Collapsed"
+                                    Style="{StaticResource IconButtonStyle}"
+                                    Click="OnColorChipClick"
+                                    ToolTipService.ToolTip="颜色">
+                                <FontIcon Glyph="&#xE790;" FontSize="14" />
+                            </Button>
+                        </StackPanel>
+                    </Border>
+                    <Border CornerRadius="10" BorderThickness="1" BorderBrush="#30FFFFFF" Padding="2">
+                        <StackPanel Orientation="Horizontal">
+                            <Button x:Name="SortIconButton"
+                                    Style="{StaticResource IconButtonStyle}"
+                                    Click="OnSortIconClick"
+                                    ToolTipService.ToolTip="排序">
+                                <FontIcon Glyph="&#xE8CB;" FontSize="14" />
+                            </Button>
+                            <Button x:Name="ModifiedTimeSortChip"
+                                    Margin="2,0,0,0"
+                                    Visibility="Collapsed"
+                                    Style="{StaticResource IconButtonStyle}"
+                                    Click="OnModifiedTimeSortClick"
+                                    ToolTipService.ToolTip="按修改时间（新的在前）">
+                                <FontIcon Glyph="&#xE823;" FontSize="14" />
+                            </Button>
+                        </StackPanel>
+                    </Border>
                 </StackPanel>
 
                 <!-- 颜色取值行：互斥单选，点击立即生效；「全部」= 不筛颜色。选中态由代码加深描边。 -->
@@ -87,18 +101,6 @@
                             CornerRadius="11" BorderThickness="1" BorderBrush="#40FFFFFF"
                             Background="#FF5F5F5F" Click="OnColorFilterClick"
                             ToolTipService.ToolTip="灰色" />
-                </StackPanel>
-
-                <!-- 排序条件行：点击即加入排序链（再点取消）；本轮只有一个条件。 -->
-                <StackPanel x:Name="SortConditions"
-                            Orientation="Horizontal" Spacing="6"
-                            Visibility="Collapsed">
-                    <Button x:Name="ModifiedTimeSortChip"
-                            Style="{StaticResource IconButtonStyle}"
-                            Click="OnModifiedTimeSortClick"
-                            ToolTipService.ToolTip="按修改时间（新的在前）">
-                        <FontIcon Glyph="&#xE823;" FontSize="14" />
-                    </Button>
                 </StackPanel>
             </StackPanel>
         </StackPanel>

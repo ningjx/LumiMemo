@@ -63,7 +63,7 @@ public sealed partial class ManagerWindow : Window
         PageHost.Children.Add(_settingsPage);
 
         ExtendsContentIntoTitleBar = true;
-        SetTitleBar(ManagerTitleBar);
+        SetTitleBar(ManagerDragRegion);
         AppWindow.Resize(new SizeInt32(520, 620));
         AppWindow.Closing += OnWindowClosing;
 

@@ -3,7 +3,6 @@
     x:Class="LumiMemo.WinUI.MainWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    xmlns:controls="using:LumiMemo.WinUI.Controls"
     Title="LumiMemo">
 
     <Grid x:Name="Root" Background="Transparent">
@@ -23,22 +22,6 @@
         <SolidColorBrush x:Key="ToggleButtonBorderBrushPointerOver" Color="#58FFFFFF" />
         <SolidColorBrush x:Key="ToggleButtonBorderBrushPressed" Color="#78FFFFFF" />
         <SolidColorBrush x:Key="ToggleButtonBorderBrushChecked" Color="#68FFFFFF" />
-
-        <!--
-            编辑器滚动条：默认 Fluent 模板的白槽与上下箭头来自这些画刷资源，全部盖成透明后
-            只剩细圆角滑块；「悬停平滑加宽（167ms）」是默认模板自带的状态动画，保留不动。
-            作用域就这一扇窗口——管理器与对话框的滚动条不受影响。
-        -->
-        <SolidColorBrush x:Key="ScrollBarTrackFill" Color="Transparent" />
-        <SolidColorBrush x:Key="ScrollBarTrackFillPointerOver" Color="Transparent" />
-        <SolidColorBrush x:Key="ScrollBarTrackStroke" Color="Transparent" />
-        <SolidColorBrush x:Key="ScrollBarTrackStrokePointerOver" Color="Transparent" />
-        <SolidColorBrush x:Key="ScrollBarButtonBackground" Color="Transparent" />
-        <SolidColorBrush x:Key="ScrollBarButtonBackgroundPointerOver" Color="Transparent" />
-        <SolidColorBrush x:Key="ScrollBarButtonBackgroundPressed" Color="Transparent" />
-        <SolidColorBrush x:Key="ScrollBarButtonArrowForeground" Color="Transparent" />
-        <SolidColorBrush x:Key="ScrollBarButtonArrowForegroundPointerOver" Color="Transparent" />
-        <SolidColorBrush x:Key="ScrollBarButtonArrowForegroundPressed" Color="Transparent" />
 
         <Style x:Key="GlassButtonStyle" TargetType="Button">
             <Setter Property="Background" Value="Transparent" />
@@ -64,44 +47,59 @@
         <Border x:Name="TitleBarHost"
                 Grid.Row="0"
                 Background="#18FFFFFF">
-            <Grid x:Name="TitleBarGrid" Padding="14,0,7,0">
+            <Grid x:Name="TitleBarGrid" Padding="14,0,7,0" SizeChanged="OnTitleBarSizeChanged">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
 
                 <!--
-                    标题区：标题（可省略号裁剪）→ 进度圈 → 刷新按钮。
-                    水平 StackPanel 以无限宽测量子项，标题的 MaxWidth 因此是唯一边界：
-                    短标题时刷新按钮紧贴标题右侧；长标题时标题在 MaxWidth 处裁剪，
-                    按钮被顶到最右，右缘距图标组 3——与图标组内部 Spacing 同距。
+                    标题区两层：文字在下层按自然宽度铺、不做按字裁剪；
+                    进度圈 + 刷新按钮是上层遮罩，位置 = min(文字自然宽, 限位)，
+                    随窗口宽度连续移动（拖动窗口时线性顺滑、不按字跳变）。
+                    缩到装不下时，文字在遮罩左缘前用不透明度蒙版渐隐收尾（见 code-behind）。
                 -->
-                <StackPanel Orientation="Horizontal">
+                <Grid x:Name="TitleArea">
                     <TextBlock x:Name="TitleText"
                                Text="{x:Bind ViewModel.Title, Mode=OneWay}"
+                               HorizontalAlignment="Left"
                                VerticalAlignment="Center"
                                FontWeight="SemiBold"
-                               Foreground="#FF403747"
-                               TextTrimming="CharacterEllipsis"
-                               MaxWidth="{x:Bind controls:TitleLayout.TitleMaxWidth(TitleBarGrid.ActualWidth, ToolsPanel.ActualWidth), Mode=OneWay}" />
-                    <ProgressRing x:Name="TitleProgress"
-                                  Width="16" Height="16" Margin="6,0,0,0"
-                                  VerticalAlignment="Center"
-                                  IsActive="{x:Bind ViewModel.IsTitleGenerating, Mode=OneWay}"
-                                  Visibility="{x:Bind ToVisibility(ViewModel.IsTitleGenerating), Mode=OneWay}" />
-                    <Button x:Name="RefreshTitleButton"
-                            Width="26" Height="26" Margin="6,0,3,0"
-                            VerticalAlignment="Center"
-                            Style="{StaticResource GlassButtonStyle}"
-                            IsEnabled="{x:Bind ViewModel.CanRegenerateTitle, Mode=OneWay}"
-                            Click="OnRefreshTitleClick"
-                            ToolTipService.ToolTip="重新生成标题">
-                        <FontIcon Glyph="&#xE72C;" FontSize="12" />
-                    </Button>
-                </StackPanel>
+                               Foreground="#FF403747">
+                        <!--
+                            标题文字的视觉微调值：VerticalAlignment=Center 对齐的是行框，
+                            中文字体的行框底部含拉丁下伸空间、汉字用不到，光学上会差一点。
+                            0=不偏移，负数=往上提。想自己调就改这个 Y。
+                        -->
+                        <TextBlock.RenderTransform>
+                            <TranslateTransform Y="-0.5" />
+                        </TextBlock.RenderTransform>
+                    </TextBlock>
+                    <StackPanel x:Name="TitleOverlay"
+                                Orientation="Horizontal"
+                                HorizontalAlignment="Left"
+                                VerticalAlignment="Center">
+                        <ProgressRing x:Name="TitleProgress"
+                                      Width="16" Height="16" Margin="6,0,0,0"
+                                      VerticalAlignment="Center"
+                                      IsActive="{x:Bind ViewModel.IsTitleGenerating, Mode=OneWay}"
+                                      Visibility="{x:Bind ToVisibility(ViewModel.IsTitleGenerating), Mode=OneWay}" />
+                        <Button x:Name="RefreshTitleButton"
+                                Width="26" Height="26" Margin="3,0,3,0"
+                                VerticalAlignment="Center"
+                                Style="{StaticResource GlassButtonStyle}"
+                                IsEnabled="{x:Bind ViewModel.CanRegenerateTitle, Mode=OneWay}"
+                                Click="OnRefreshTitleClick"
+                                ToolTipService.ToolTip="重新生成标题">
+                            <FontIcon Glyph="&#xE72C;" FontSize="12" />
+                        </Button>
+                    </StackPanel>
+                </Grid>
 
-                <StackPanel x:Name="ToolsPanel" Grid.Column="1" Orientation="Horizontal" Spacing="3">
-                    <Button Width="32" Height="30"
+                <StackPanel x:Name="ToolsPanel" Grid.Column="1" Orientation="Horizontal" Spacing="3"
+                            VerticalAlignment="Center">
+                    <Button x:Name="NewNoteButton"
+                            Width="32" Height="30"
                             Style="{StaticResource GlassButtonStyle}"
                             VerticalAlignment="Center"
                             Click="OnNewNoteClick"
@@ -116,14 +114,16 @@
                                   ToolTipService.ToolTip="置顶">
                         <FontIcon Glyph="&#xE718;" FontSize="13" />
                     </ToggleButton>
-                    <Button Width="32" Height="30"
+                    <Button x:Name="DeleteNoteButton"
+                            Width="32" Height="30"
                             Style="{StaticResource GlassButtonStyle}"
                             VerticalAlignment="Center"
                             Click="OnDeleteNoteClick"
                             ToolTipService.ToolTip="删除便签">
                         <FontIcon Glyph="&#xE74D;" FontSize="13" />
                     </Button>
-                    <Button Width="32" Height="30"
+                    <Button x:Name="CloseButton"
+                            Width="32" Height="30"
                             Style="{StaticResource GlassButtonStyle}"
                             VerticalAlignment="Center"
                             Click="OnCloseClick"
