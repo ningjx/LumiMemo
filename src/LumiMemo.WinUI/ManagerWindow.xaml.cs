@@ -6,7 +6,9 @@ using LumiMemo.WinUI.ViewModels;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
 using Windows.Graphics;
+using Windows.UI;
 
 namespace LumiMemo.WinUI;
 
@@ -51,6 +53,9 @@ public sealed partial class ManagerWindow : Window
         }
 
         _backdrop = AcrylicBackdrop.Apply(this, Root);
+
+        // 初始排序在 ViewModel 赋值之后设置：早于它的话 SelectionChanged 会撞上未初始化的字段。
+        SortBox.SelectedIndex = 0;
     }
 
     /// <summary>XAML 的 x:Bind 从这里取值。</summary>
@@ -153,6 +158,45 @@ public sealed partial class ManagerWindow : Window
 
     private void OnSearchTextChanged(object sender, TextChangedEventArgs e) =>
         _viewModel.Query = SearchBox.Text;
+
+    private void OnColorFilterClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button clicked)
+        {
+            return;
+        }
+
+        // 互斥单选：选中项加深描边；「全部」表示不筛颜色。
+        foreach (Button button in ColorFilterButtons())
+        {
+            bool selected = ReferenceEquals(button, clicked);
+            button.BorderThickness = new Thickness(selected ? 3 : 1);
+            button.BorderBrush = new SolidColorBrush(selected
+                ? Color.FromArgb(255, 0x40, 0x37, 0x47)
+                : Color.FromArgb(0x40, 0xFF, 0xFF, 0xFF));
+        }
+
+        _viewModel.ColorFilter = clicked.Tag is string name && Enum.TryParse(name, out NoteColor color)
+            ? color
+            : null;
+    }
+
+    private void OnSortChanged(object sender, SelectionChangedEventArgs e) =>
+        _viewModel.SortOrder = SortBox.SelectedIndex == 1
+            ? NoteSortOrder.ModifiedTime
+            : NoteSortOrder.Relevance;
+
+    private IEnumerable<Button> ColorFilterButtons()
+    {
+        yield return ColorFilterAll;
+        yield return ColorFilterYellow;
+        yield return ColorFilterPink;
+        yield return ColorFilterBlue;
+        yield return ColorFilterGreen;
+        yield return ColorFilterPurple;
+        yield return ColorFilterOrange;
+        yield return ColorFilterGray;
+    }
 
     private void OnNoteItemClick(object sender, ItemClickEventArgs e)
     {

@@ -298,18 +298,69 @@ public sealed class NoteSearchTests
         Assert.Equal(new[] { small, big }, ordered.ToArray());
     }
 
+    // ================= 分词与多关键词（AND，2026-10）=================
+
+    [Fact]
+    public void 空格分隔的多词_要求全部命中()
+    {
+        var both = NewNote("# 笔记\n会议记录写完了");
+        var onlyOne = NewNote("# 笔记\n会议改期了");
+
+        var hit = Assert.Single(Search("会议 记录", [both, onlyOne]));
+
+        Assert.Equal(both, hit.Note);
+    }
+
+    [Fact]
+    public void 中文标点也是分隔符()
+    {
+        var both = NewNote("# 笔记\n会议记录写完了");
+
+        Assert.Single(Search("会议，记录", [both]));
+        Assert.Single(Search("会议、记录", [both]));
+    }
+
+    [Fact]
+    public void 命中在标题的词_比命中在正文的词权重高()
+    {
+        var inTitle = NewNote("# 会议记录\n其它内容");
+        var inBody = NewNote("# 别的\n会议记录在这里");
+
+        var hits = Search("会议 记录", [inBody, inTitle]);
+
+        Assert.Equal(inTitle, hits[0].Note);
+    }
+
+    [Fact]
+    public void 分词之后大小写仍然忽略()
+    {
+        var note = NewNote("# 笔记\n用 Docker Compose 起的服务");
+
+        Assert.Single(Search("docker compose", [note]));
+    }
+
+    [Fact]
+    public void 只有空白的分隔没有词_返回空()
+    {
+        Assert.Empty(Search("   \t  ", [NewNote("# 文档")]));
+    }
+
+    [Fact]
+    public void 分词保留原顺序_单词行为不变()
+    {
+        // 无空格输入＝单关键词，与旧版行为逐位一致（整段子串匹配，不猜词）。
+        var note = NewNote("# 会议记录");
+
+        Assert.Single(Search("会议记录", [note]));
+    }
+
     // ================= 辅助 =================
 
     private static IReadOnlyList<SearchHit> Search(
         string? query,
         IReadOnlyList<Note> notes,
-        IReadOnlySet<Guid>? topMostIds = null)
-    {
-        Dictionary<Guid, string> plainText =
-            notes.ToDictionary(static note => note.Id, static note => note.Content);
-
-        return NoteSearch.Search(notes, query, id => plainText[id], topMostIds, Now);
-    }
+        IReadOnlySet<Guid>? topMostIds = null) =>
+        NoteSearch.Search(notes, query, topMostIds, Now);
 
     private static Note NewNote(string content, DateTimeOffset? updatedAt = null, Guid? id = null)
     {

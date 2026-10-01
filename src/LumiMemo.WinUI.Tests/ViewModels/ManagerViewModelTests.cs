@@ -1,5 +1,6 @@
 using LumiMemo.Core.Abstractions;
 using LumiMemo.Core.Models;
+using LumiMemo.Core.Search;
 using LumiMemo.Core.Services;
 using LumiMemo.WinUI.Services;
 using LumiMemo.WinUI.Tests.TestDoubles;
@@ -82,6 +83,62 @@ public sealed class ManagerViewModelTests
         Assert.Single(h.Trash.Moved);
     }
 
+    [Fact]
+    public void 多关键词_缺一个词就不出现()
+    {
+        using var h = new Harness();
+        h.AddNote("# 文档\n会议记录写完了");
+        h.AddNote("# 文档\n别的内容");
+
+        h.ViewModel.Query = "文档 会议";
+
+        Assert.Single(h.ViewModel.Items);
+    }
+
+    [Fact]
+    public void 颜色筛选_只留该颜色()
+    {
+        using var h = new Harness();
+        Note blue = h.AddNote("# 蓝签");
+        h.AddNote("# 黄签");
+        blue.Color = NoteColor.Blue;
+
+        h.ViewModel.ColorFilter = NoteColor.Blue;
+
+        Assert.Equal(blue.Id, Assert.Single(h.ViewModel.Items).Note.Id);
+    }
+
+    [Fact]
+    public void 排序切换_把结果改成按修改时间()
+    {
+        using var h = new Harness();
+        Note oldTitleHit = h.AddNote("# 文档", updatedAt: h.Now.AddDays(-20));
+        Note newBodyHit = h.AddNote("# 笔记\n文档在这里", updatedAt: h.Now.AddDays(-1));
+
+        h.ViewModel.Query = "文档";
+
+        // 相关度：标题命中的（虽然是旧的）在前。
+        Assert.Equal(oldTitleHit.Id, h.ViewModel.Items[0].Note.Id);
+
+        h.ViewModel.SortOrder = NoteSortOrder.ModifiedTime;
+
+        // 修改时间：新的在前。
+        Assert.Equal(newBodyHit.Id, h.ViewModel.Items[0].Note.Id);
+    }
+
+    [Fact]
+    public void 标题命中_标题摘要带高亮段()
+    {
+        using var h = new Harness();
+        h.AddNote("# 文档");
+        h.AddNote("# 笔记\n无关内容");
+
+        h.ViewModel.Query = "文档";
+
+        NoteListItem item = Assert.Single(h.ViewModel.Items);
+        Assert.Contains(item.TitleSnippet, static segment => segment.IsMatch);
+    }
+
     /// <summary>列表窗口的整套替身与 ViewModel（窗口管理器用真对象，替身只到存储/布局层）。</summary>
     private sealed class Harness : IDisposable
     {
@@ -104,7 +161,8 @@ public sealed class ManagerViewModelTests
                 Storage, Clock, Layouts, _autoSave, _titles, NullLoggerFactory.Instance);
             Windows = new NoteWindowManager(Notes, Storage, Trash, Layouts, _titles, factory);
 
-            ViewModel = new ManagerViewModel(Layouts, Clock, Windows);
+            ViewModel = new ManagerViewModel(
+                new KeywordSearchProvider(), Layouts, Clock, Windows);
         }
 
         public DateTimeOffset Now { get; } = new(2026, 9, 19, 12, 0, 0, TimeSpan.Zero);

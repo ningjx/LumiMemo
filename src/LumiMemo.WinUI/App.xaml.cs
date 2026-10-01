@@ -5,6 +5,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.UI.Xaml;
 using LumiMemo.Core.Abstractions;
 using LumiMemo.Core.Models;
+using LumiMemo.Core.Search;
 using LumiMemo.Core.Services;
 using LumiMemo.Infrastructure.Io;
 using LumiMemo.Infrastructure.Llm;
@@ -270,6 +271,10 @@ public partial class App : Application
         services.AddSingleton<ILayoutStore>(layoutStore);
         services.AddSingleton<INoteStorage>(storage);
         services.AddSingleton<ITrashStore>(trash);
+
+        // 搜索：当前是本地关键词实现；AI 搜索（语义检索）将实现同一接口，
+        // 届时在这里按设置选择注入哪一个即可，UI 层无感知。
+        services.AddSingleton<INoteSearchProvider>(new KeywordSearchProvider());
         services.AddSingleton(notes);
         services.AddSingleton(httpClient);
         services.AddSingleton<ITitleGenerator>(new OpenAiCompatibleTitleGenerator(httpClient));

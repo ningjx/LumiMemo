@@ -7,14 +7,15 @@ namespace LumiMemo.Core.Search;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <strong>纯函数，不进 DI、没有状态。</strong>列表由调用方从 <c>NoteStore</c> 取快照传进来，
-/// 纯文本由调用方从 <c>SearchIndex</c> 取——本类不认识那两个类型，于是不必为它俩造替身就能测。
+/// <strong>纯函数，不进 DI、没有状态。</strong>便签列表由调用方传快照进来；
+/// 纯文本正文直接取 <see cref="Note.Content"/>（.lumi 的 <c>text</c> 投影就是它），
+/// 不再有「另一份索引文本」的概念。
 /// </para>
 /// <para>
-/// 之所以不把搜索挂在 <c>SearchIndex</c> 上：本方法需要<strong>两份</strong>它没有的东西——
-/// 便签列表（在 <c>NoteStore</c>）与置顶状态（在 <c>LayoutService</c>），
-/// 而 <c>SearchIndex</c> 只是一个「从便签派生出来的、不落盘的」辅助索引（§9.4），
-/// 让反向依赖两个上游容器是错的。组合由管理器 ViewModel 做。
+/// <strong>匹配模型：按空白/标点切词 + 每词子串匹配 + AND。</strong>
+/// 用户用空格标注词边界（「会议 记录」要求两个词都出现）；没有空格时整段就是一个词，
+/// 与单关键词搜索完全同款。不做词库级的中文分词：对子串匹配来说，显式的词边界
+/// 比猜词更准，也不会把「会议记录」猜成「会议 / 记录」两段而改变命中语义。
 /// </para>
 /// </remarks>
 public static class NoteSearch
@@ -76,61 +77,59 @@ public static class NoteSearch
     public static readonly TimeSpan RecentWindow = TimeSpan.FromDays(7);
 
     /// <summary>
+    /// 把用户输入切成关键词：空白（含全角空格）与中英文逗号、顿号、分号都是分隔符。
+    /// </summary>
+    public static string[] SplitTerms(string? query) =>
+        string.IsNullOrWhiteSpace(query)
+            ? []
+            : query.Split(
+                [' ', '\t', '\r', '\n', '　', ',', '，', '、', ';', '；'],
+                StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+    /// <summary>
     /// 按查询词筛出命中的便签并排好序（§12.1、§12.2）。
     /// </summary>
-    /// <param name="notes">候选便签，通常是 <c>NoteStore.Snapshot()</c>。</param>
-    /// <param name="query">用户输入的查询词。空白查询返回空列表，见下。</param>
-    /// <param name="plainTextOf">取某张便签的纯文本正文，通常是 <c>SearchIndex.GetPlainText</c>。</param>
+    /// <param name="notes">候选便签，通常是窗口管理器手里的当前列表。</param>
+    /// <param name="query">用户输入的查询词；空白查询返回空列表，见下。</param>
     /// <param name="topMostIds">当前处于置顶的便签 id，用于 <see cref="TopMostBonus"/>。可为 <c>null</c>。</param>
     /// <param name="now">用来算"最近改过"的当前时刻。显式传入是为了让用例不受真实时钟影响。</param>
     /// <remarks>
     /// <para>
-    /// <strong>空查询返回空列表，不是"匹配到全部"。</strong>管理器的列表在查询词为空时压根不走这里，
-    /// 而是直接取快照按 <see cref="OrderForList"/> 展示（§12.1、§15.8）。这条区分很重要：
-    /// 若让空查询返回全部，那些"分数很低但确实匹配"的规则会把整个列表重排一遍，
-    /// 用户会在清空输入框的瞬间看到列表乱跳。
+    /// <strong>空查询返回空列表，不是"匹配到全部"。</strong>管理器的列表在查询词为空时
+    /// 压根不走这里，而是走 <see cref="OrderForList"/> 直接展示（§12.1、§15.8）。
+    /// 这条区分很重要：若让空查询返回全部，那些"分数很低但确实匹配"的规则
+    /// 会把整个列表重排一遍，用户会在清空输入框的瞬间看到列表乱跳。
     /// </para>
     /// <para>
     /// <strong>匹配用 <see cref="StringComparison.OrdinalIgnoreCase"/> 的子串查找。</strong>
-    /// 中文没有大小写问题，英文按字节序忽略大小写即可；不做分词，因为子串匹配对中文
-    /// 比分词或 bigram 更精确（§12.1）。
+    /// 中文没有大小写问题，英文按字节序忽略大小写即可。
     /// </para>
     /// </remarks>
     public static IReadOnlyList<SearchHit> Search(
         IReadOnlyList<Note> notes,
         string? query,
-        Func<Guid, string> plainTextOf,
         IReadOnlySet<Guid>? topMostIds,
         DateTimeOffset now)
     {
         ArgumentNullException.ThrowIfNull(notes);
-        ArgumentNullException.ThrowIfNull(plainTextOf);
 
-        var needle = query?.Trim();
+        string[] terms = SplitTerms(query);
 
-        if (string.IsNullOrEmpty(needle))
+        if (terms.Length == 0)
         {
             return [];
         }
 
         var hits = new List<SearchHit>();
 
-        foreach (var note in notes)
+        foreach (Note note in notes)
         {
-            var plain = plainTextOf(note.Id) ?? string.Empty;
+            SearchHit? hit = MatchNote(note, terms, topMostIds, now);
 
-            var titlePosition = note.Title.IndexOf(needle, StringComparison.OrdinalIgnoreCase);
-            var matchedTags = MatchTags(note.Tags, needle);
-            var bodyPosition = plain.IndexOf(needle, StringComparison.OrdinalIgnoreCase);
-
-            if (titlePosition < 0 && matchedTags.Count == 0 && bodyPosition < 0)
+            if (hit is not null)
             {
-                continue;
+                hits.Add(hit);
             }
-
-            var score = Score(note, plain, needle, titlePosition, matchedTags, bodyPosition, topMostIds, now);
-
-            hits.Add(new SearchHit(note, titlePosition, matchedTags, bodyPosition, score));
         }
 
         return [.. hits.OrderByDescending(static h => h.Score)
@@ -153,39 +152,133 @@ public static class NoteSearch
         return [.. notes.OrderByDescending(static n => n.UpdatedAt).ThenBy(static n => n.Id)];
     }
 
-    /// <summary>算出 §12.2 的分数。</summary>
+    /// <summary>
+    /// 判断一张便签是否命中全部关键词（AND）并算出总分；有词未命中则返回 <see langword="null"/>。
+    /// </summary>
     /// <remarks>
-    /// <para>
-    /// <strong>六条基础分取最高、不相加。</strong>表一是一张优先级阶梯（标题完全等于 1000
-    /// 明显是要压过一切的信号），若相加，一条"标题包含 + 标签精确 + 正文命中"的便签会拿到
-    /// 600+500+200=1300 分，反过来压过标题完全等于查询的那条——阶梯就失效了。
-    /// </para>
-    /// <para>
-    /// <strong>开头的倍数只加在正文那一条上。</strong>若把 ×1.5 乘在总分上，
-    /// 一条"标题命中、正文恰好在开头也出现"的便签会平白多拿五成——可它之所以排前面
-    /// 靠的是标题，与正文开头没关系。所以乘在候选分内部，再参与取最高。
-    /// </para>
+    /// <strong>分数结构：每个词的得分相加 + 整篇级别的修正项只加一次。</strong>
+    /// 词分内部（基础分取最高、开头倍数、次数加分）与单关键词时代完全一致；
+    /// 多词时「每个词都命中」本身就是强信号，相加让全词命中的排在只命中一个词的前面。
     /// </remarks>
-    private static double Score(
+    private static SearchHit? MatchNote(
         Note note,
-        string plain,
-        string needle,
-        int titlePosition,
-        IReadOnlyList<string> matchedTags,
-        int bodyPosition,
+        string[] terms,
         IReadOnlySet<Guid>? topMostIds,
         DateTimeOffset now)
     {
+        var plain = note.Content ?? string.Empty;
+
+        var total = 0.0;
+        var bestTermScore = double.NegativeInfinity;
+        var titlePosition = -1;
+        var bodyPosition = -1;
+
+        foreach (string term in terms)
+        {
+            (bool any, double score, int termTitle, int termBody) = EvaluateTerm(note, plain, term);
+
+            if (!any)
+            {
+                return null;
+            }
+
+            total += score;
+
+            if (score > bestTermScore)
+            {
+                bestTermScore = score;
+
+                // 位置信息取自「贡献最大的词」的命中处（展示高亮用）。
+                titlePosition = termTitle;
+                bodyPosition = termBody;
+            }
+        }
+
+        // 命中的标签取各词并集，保持标签本来的顺序。
+        var matchedTags = new List<string>();
+
+        foreach (string tag in note.Tags)
+        {
+            foreach (string term in terms)
+            {
+                if (tag.Contains(term, StringComparison.OrdinalIgnoreCase))
+                {
+                    matchedTags.Add(tag);
+
+                    break;
+                }
+            }
+        }
+
+        if (topMostIds?.Contains(note.Id) == true)
+        {
+            total += TopMostBonus;
+        }
+
+        // 未来时间戳（时钟回拨、外部写了个超前的时间）也会落进"七天内"这一档，
+        // 不给它单开一个分支：加 30 分与加 0 分的差别不值得多一条规则。
+        var age = now - note.UpdatedAt;
+
+        if (age <= RecentWindow)
+        {
+            total += RecentWeekBonus;
+        }
+        else if (age <= TimeSpan.FromDays(30))
+        {
+            total += RecentMonthBonus;
+        }
+
+        if (string.IsNullOrWhiteSpace(plain))
+        {
+            total += EmptyBodyPenalty;
+        }
+
+        return new SearchHit(note, titlePosition, matchedTags, bodyPosition, total);
+    }
+
+    /// <summary>一个关键词在便签上的命中情况与得分。</summary>
+    /// <remarks>
+    /// 分数结构与单关键词时代的一致：六条基础分取最高（不相加），
+    /// 正文命中在开头处乘倍数（只乘正文那一档内部），最后加该词的出现次数加分。
+    /// </remarks>
+    private static (bool Any, double Score, int TitlePosition, int BodyPosition) EvaluateTerm(
+        Note note, string plain, string term)
+    {
+        int titlePosition = note.Title.IndexOf(term, StringComparison.OrdinalIgnoreCase);
+        int bodyPosition = plain.IndexOf(term, StringComparison.OrdinalIgnoreCase);
+        bool tagHit = false;
+
+        foreach (string tag in note.Tags)
+        {
+            if (tag.Contains(term, StringComparison.OrdinalIgnoreCase))
+            {
+                tagHit = true;
+
+                break;
+            }
+        }
+
+        if (titlePosition < 0 && bodyPosition < 0 && !tagHit)
+        {
+            return (false, 0, -1, -1);
+        }
+
         var best = 0.0;
 
         if (titlePosition >= 0)
         {
-            best = KeepHigher(best, TitleScore(note.Title, needle, titlePosition));
+            best = KeepHigher(best, TitleScore(note.Title, term, titlePosition));
         }
 
-        foreach (var tag in matchedTags)
+        if (tagHit)
         {
-            best = KeepHigher(best, TagScore(tag, needle));
+            foreach (string tag in note.Tags)
+            {
+                if (tag.Contains(term, StringComparison.OrdinalIgnoreCase))
+                {
+                    best = KeepHigher(best, TagScore(tag, term));
+                }
+            }
         }
 
         if (bodyPosition >= 0)
@@ -200,7 +293,7 @@ public static class NoteSearch
             best = KeepHigher(best, bodyScore);
         }
 
-        var occurrences = CountOccurrences(plain, needle);
+        var occurrences = CountOccurrences(plain, term);
         if (occurrences > MaxCountedOccurrences)
         {
             occurrences = MaxCountedOccurrences;
@@ -208,30 +301,7 @@ public static class NoteSearch
 
         best += occurrences * PerOccurrenceBonus;
 
-        if (topMostIds?.Contains(note.Id) == true)
-        {
-            best += TopMostBonus;
-        }
-
-        // 未来时间戳（时钟回拨、外部编辑器写了个超前的时间）也会落进"七天内"这一档，
-        // 不给它单开一个分支：加 30 分与加 0 分的差别不值得多一条规则。
-        var age = now - note.UpdatedAt;
-
-        if (age <= RecentWindow)
-        {
-            best += RecentWeekBonus;
-        }
-        else if (age <= TimeSpan.FromDays(30))
-        {
-            best += RecentMonthBonus;
-        }
-
-        if (string.IsNullOrWhiteSpace(plain))
-        {
-            best += EmptyBodyPenalty;
-        }
-
-        return best;
+        return (true, best, titlePosition, bodyPosition);
     }
 
     /// <summary>标题那一档的分：位置为 0 才是"开头"，等长才是"完全等于"。</summary>
@@ -251,21 +321,6 @@ public static class NoteSearch
     /// </summary>
     private static double TagScore(string tag, string needle) =>
         tag.Length == needle.Length ? TagExactScore : TagContainsScore;
-
-    private static List<string> MatchTags(List<string> tags, string needle)
-    {
-        var matched = new List<string>();
-
-        foreach (var tag in tags)
-        {
-            if (tag.Contains(needle, StringComparison.OrdinalIgnoreCase))
-            {
-                matched.Add(tag);
-            }
-        }
-
-        return matched;
-    }
 
     /// <summary>
     /// 数查询词在文本里出现了几次。不重叠计数——<c>aa</c> 在 <c>aaa</c> 里算一次，

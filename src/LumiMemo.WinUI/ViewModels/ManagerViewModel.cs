@@ -6,30 +6,44 @@ using LumiMemo.WinUI.Services;
 
 namespace LumiMemo.WinUI.ViewModels;
 
-/// <summary>便笺列表窗口的状态：查询、过滤结果与开窗动作。</summary>
+/// <summary>便笺列表窗口的状态：查询、筛选、排序与开窗动作。</summary>
 /// <remarks>
-/// 原实现把过滤写在窗口的 code-behind 里（内联 <c>Contains</c>），绕过了 Core 的
-/// <see cref="NoteSearch"/>——评分、置顶加权、确定性排序全都没有。这里回到那条正路。
+/// <para>
+/// 列表构建统一走 <see cref="INoteSearchProvider"/>：本地关键词搜索是当前唯一实现，
+/// 计划中的 AI 搜索将实现同一接口——届时组合根换注入即可，本类不用改。
+/// </para>
+/// <para>
+/// 便签集合每次都从 <see cref="NoteWindowManager"/> 现取——它的列表才是唯一可变的真身
+/// （新建、删除、恢复都改它）。自己持一份构造时的快照会与管理器的增删脱钩：
+/// 删除后列表不更新、新建后不出现，都是那个形态的后果。
+/// </para>
 /// </remarks>
 public sealed class ManagerViewModel : ObservableObject, IDisposable
 {
+    private readonly INoteSearchProvider _search;
     private readonly ILayoutStore _layouts;
     private readonly IClock _clock;
     private readonly NoteWindowManager _windows;
 
     private string _query = string.Empty;
+    private NoteColor? _colorFilter;
+    private NoteSortOrder _sortOrder = NoteSortOrder.Relevance;
     private IReadOnlyList<NoteListItem> _items = [];
+    private int _refreshVersion;
     private bool _isDisposed;
 
     public ManagerViewModel(
+        INoteSearchProvider search,
         ILayoutStore layouts,
         IClock clock,
         NoteWindowManager windows)
     {
+        ArgumentNullException.ThrowIfNull(search);
         ArgumentNullException.ThrowIfNull(layouts);
         ArgumentNullException.ThrowIfNull(clock);
         ArgumentNullException.ThrowIfNull(windows);
 
+        _search = search;
         _layouts = layouts;
         _clock = clock;
         _windows = windows;
@@ -53,7 +67,33 @@ public sealed class ManagerViewModel : ObservableObject, IDisposable
         }
     }
 
-    /// <summary>当前列表（已按查询过滤排序）；整表替换 + 变更通知。</summary>
+    /// <summary>颜色筛选；<see langword="null"/> 表示不筛。</summary>
+    public NoteColor? ColorFilter
+    {
+        get => _colorFilter;
+        set
+        {
+            if (SetProperty(ref _colorFilter, value))
+            {
+                Refresh();
+            }
+        }
+    }
+
+    /// <summary>排序方式。实时生效。</summary>
+    public NoteSortOrder SortOrder
+    {
+        get => _sortOrder;
+        set
+        {
+            if (SetProperty(ref _sortOrder, value))
+            {
+                Refresh();
+            }
+        }
+    }
+
+    /// <summary>当前列表（已按查询、筛选、排序处理）；整表替换 + 变更通知。</summary>
     public IReadOnlyList<NoteListItem> Items
     {
         get => _items;
@@ -77,6 +117,9 @@ public sealed class ManagerViewModel : ObservableObject, IDisposable
         return _windows.DeleteNoteAsync(note);
     }
 
+    /// <summary>重建列表。便签变化事件进来时自动调用，也可显式调。</summary>
+    public void Refresh() => _ = RefreshAsync();
+
     public void Dispose()
     {
         if (_isDisposed)
@@ -91,36 +134,53 @@ public sealed class ManagerViewModel : ObservableObject, IDisposable
 
     private void OnNotesChanged(object? sender, EventArgs e) => Refresh();
 
-    /// <summary>重建列表：按当前查询走排序或搜索。便签变化事件进来时自动调用，也可显式调。</summary>
-    /// <remarks>
-    /// 便签集合每次都从 <see cref="NoteWindowManager"/> 现取——它的列表才是唯一可变的真身
-    /// （新建、删除、恢复都改它）。自己持一份构造时的快照会与管理器的增删脱钩：
-    /// 删除后列表不更新、新建后不出现，都是那个形态的后果。
-    /// </remarks>
-    public void Refresh()
+    private async Task RefreshAsync()
     {
         IReadOnlyList<Note> notes = _windows.Notes;
-        string query = Query.Trim();
 
-        IReadOnlyList<Note> ordered;
-        if (query.Length == 0)
+        var request = new NoteSearchRequest
         {
-            ordered = [.. NoteSearch.OrderForList(notes)];
-        }
-        else
+            Notes = notes,
+            Query = _query,
+            Sort = _sortOrder,
+            Color = _colorFilter,
+            TopMostIds = TopMostIds(notes),
+            Now = _clock.Now,
+        };
+
+        // 过期的结果不许覆盖新结果（本地搜索同步完成、不会乱序；这是为将来
+        // 会走网络的 AI 搜索实现预留的守卫——输入比响应快是那种实现的常态）。
+        int version = ++_refreshVersion;
+
+        IReadOnlyList<SearchHit> hits;
+        try
         {
-            // 每次刷新重建「id → 纯文本」映射：便签集合是可变的（新建、标题更新都会改它）。
-            Dictionary<Guid, string> plainText =
-                notes.ToDictionary(static note => note.Id, static note => note.Content);
-
-            ordered =
-            [
-                .. NoteSearch.Search(notes, query, id => plainText[id], TopMostIds(notes), _clock.Now)
-                    .Select(static hit => hit.Note),
-            ];
+            hits = await _search.SearchAsync(request);
+        }
+        catch (Exception exception)
+        {
+            // 本地实现不抛；兜底是为了 fire-and-forget（Build 在 Refresh 里）的异常
+            // 不至于变成没人管的未观察任务——列表保持上一份内容。
+            System.Diagnostics.Debug.WriteLine(exception);
+            return;
         }
 
-        Items = [.. ordered.Select(note => new NoteListItem(note, _windows.IsTitleGenerating(note.Id)))];
+        if (version != _refreshVersion || _isDisposed)
+        {
+            return;
+        }
+
+        // 摘要按当前查询词在标题与正文里分别定位；没有查询词时退化为开头预览。
+        string[] terms = NoteSearch.SplitTerms(_query);
+
+        Items =
+        [
+            .. hits.Select(hit => new NoteListItem(
+                hit.Note,
+                _windows.IsTitleGenerating(hit.Note.Id),
+                SnippetBuilder.Build(hit.Note.Title, terms),
+                SnippetBuilder.Build(hit.Note.Content, terms))),
+        ];
     }
 
     /// <summary>置顶便签的 id 集合（§12.2 的加分项）；一张都没有时返回 null 省一次加分支。</summary>
