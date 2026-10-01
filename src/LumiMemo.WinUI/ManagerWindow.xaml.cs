@@ -37,7 +37,6 @@ public sealed partial class ManagerWindow : Window
     private readonly TrashPage _trashPage;
     private readonly SettingsPage _settingsPage;
     private AcrylicBackdrop? _backdrop;
-    private bool _allowClose;
     private ManagerPage _currentPage = ManagerPage.Notes;
 
     public ManagerWindow(
@@ -74,6 +73,8 @@ public sealed partial class ManagerWindow : Window
             presenter.IsMaximizable = false;
         }
 
+        // 控制器要活满窗口的整个生命周期，所以持有引用；本窗口永不真正关闭
+        // （见 OnWindowClosing），因此这里刻意不 Dispose。
         _backdrop = AcrylicBackdrop.Apply(this, Root);
 
         ShowPage(ManagerPage.Notes);
@@ -92,12 +93,6 @@ public sealed partial class ManagerWindow : Window
     }
 
     public void HideWindow() => AppWindow.Hide();
-
-    public void CloseForExit()
-    {
-        _allowClose = true;
-        Close();
-    }
 
     public async Task ShowAboutAsync()
     {
@@ -155,16 +150,10 @@ public sealed partial class ManagerWindow : Window
 
     private void OnWindowClosing(AppWindow sender, AppWindowClosingEventArgs args)
     {
-        if (!_allowClose)
-        {
-            args.Cancel = true;
-            HideWindow();
-            return;
-        }
-
-        _viewModel.Dispose();
-        _backdrop?.Dispose();
-        _backdrop = null;
+        // 管理器窗口永远不真正关闭：点 X 只是隐藏；退出时进程直接收尾
+        // （见 App.ExitFromTray——原生关窗路径会以 0xC000027B 存置异常猝死）。
+        args.Cancel = true;
+        HideWindow();
     }
 
     private enum ManagerPage

@@ -167,15 +167,21 @@ public partial class App : Application
             await GetService<ILayoutStore>().FlushAsync();
             Step("退出：layout 已落盘。");
 
-            GetService<ManagerWindow>().CloseForExit();
-            Step("退出：管理器已关闭。");
+            // 退出时不再关闭管理器窗口：它的原生 Close() 反复以 0xC000027B（存置异常，
+            // WER 定为 combase + E_POINTER）猝死，四轮对照实验（托盘服务先释放、Closing
+            // 兜底、图标元素摘树、亚克力释放挪到关窗后）均未拦住——失败在纯原生侧，
+            // 托管层摸不到。而这一步本来就是多余的：关窗不保存任何状态，下一行就是
+            // Environment.Exit。隐藏只是让可见窗口立刻消失，别等进程收尾的间隔。
+            GetService<ManagerWindow>().HideWindow();
+            Step("退出：管理器已隐藏（不再走原生关窗）。");
         }
         catch (Exception exception)
         {
             Step($"退出：关闭阶段出错（{exception.GetType().Name}），继续收尾。");
         }
 
-        // 托盘控件在窗口关干净之后释放：它挂在管理器窗口的树里。
+        // 托盘在进程收尾前显式释放，让任务栏图标立刻消失（管理器窗口不再关闭，
+        // 只是隐藏；图标等不到窗口销毁那一步）。
         _trayIcon?.Dispose();
         _trayIcon = null;
         Step("退出：托盘已释放。");

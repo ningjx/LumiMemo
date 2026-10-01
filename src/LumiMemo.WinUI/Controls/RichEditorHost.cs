@@ -344,9 +344,9 @@ public sealed class RichEditorHost : IRichTextDocument, IDisposable
     }
 
     /// <summary>
-    /// XAML 回调跨界到 WinRT 时，逃出去的异常会被"存置"成 0xC000027B 直接崩掉进程——
-    /// 窗口关闭、文档卸载期间尤其容易踩到（用户报过退出时崩在 Microsoft.ui.xaml.dll）。
-    /// 生命周期类回调统一在这里吞掉并记日志：崩不了，VS 输出窗口也留得下线索。
+    /// XAML 回调跨界到 WinRT 时，逃出去的异常会被"存置"、稍后在原生边界爆成 0xC000027B
+    /// 崩掉进程——窗口关闭、文档卸载期间回调仍在触发（选中、文本、指针都在摸半销毁的
+    /// 文档）。统一在这里吞掉并记日志：崩不了，VS 输出窗口也留得下线索。
     /// </summary>
     private static void Safe(string member, Action body)
     {
