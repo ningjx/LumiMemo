@@ -14,20 +14,27 @@ namespace LumiMemo.WinUI;
 public sealed partial class ManagerWindow : Window
 {
     private readonly ManagerViewModel _viewModel;
+    private readonly TrashWindow _trashWindow;
     private readonly AppSettings _settings;
     private readonly ISettingsStore _settingsStore;
     private AcrylicBackdrop? _backdrop;
     private bool _allowClose;
 
-    public ManagerWindow(ManagerViewModel viewModel, AppSettings settings, ISettingsStore settingsStore)
+    public ManagerWindow(
+        ManagerViewModel viewModel,
+        TrashWindow trashWindow,
+        AppSettings settings,
+        ISettingsStore settingsStore)
     {
         ArgumentNullException.ThrowIfNull(viewModel);
+        ArgumentNullException.ThrowIfNull(trashWindow);
         ArgumentNullException.ThrowIfNull(settings);
         ArgumentNullException.ThrowIfNull(settingsStore);
 
         InitializeComponent();
 
         _viewModel = viewModel;
+        _trashWindow = trashWindow;
         _settings = settings;
         _settingsStore = settingsStore;
 
@@ -101,6 +108,48 @@ public sealed partial class ManagerWindow : Window
     }
 
     private void OnHideClick(object sender, RoutedEventArgs e) => HideWindow();
+
+    private void OnTrashClick(object sender, RoutedEventArgs e) => _trashWindow.ShowWindow();
+
+    private void OnItemOpenMenuClick(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is NoteListItem item)
+        {
+            _viewModel.OpenNote(item.Note);
+        }
+    }
+
+    private async void OnItemDeleteMenuClick(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not NoteListItem item)
+        {
+            return;
+        }
+
+        try
+        {
+            if (!await _viewModel.DeleteNoteAsync(item.Note))
+            {
+                // false 的含义是「窗口内容还没存下来」——不删除，让用户先处理保存失败。
+                await ShowDialogAsync("未删除", "便笺有修改尚未保存成功，已保留原地。请稍后再试。");
+            }
+        }
+        catch (Exception exception)
+        {
+            await ShowDialogAsync("删除失败", exception.Message);
+        }
+    }
+
+    private async Task ShowDialogAsync(string title, string content)
+    {
+        await new ContentDialog
+        {
+            XamlRoot = Root.XamlRoot,
+            Title = title,
+            Content = content,
+            CloseButtonText = "确定",
+        }.ShowAsync();
+    }
 
     private void OnSearchTextChanged(object sender, TextChangedEventArgs e) =>
         _viewModel.Query = SearchBox.Text;

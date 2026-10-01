@@ -163,9 +163,27 @@ public sealed partial class MainWindow : Window
 
     public void HideWindow() => AppWindow.Hide();
 
-    /// <summary>托盘退出路径：保存尽力而为，无论成败都关——「退出总会发生」。</summary>
-    public async Task CloseForExitAsync()
+    /// <summary>删除流程的关窗：先把最新内容落盘再关；保存失败留在原地并返回 false。</summary>
+    /// <remarks>
+    /// 与普通关闭的区别：删除是一条不可逆的动作链（文件马上要进回收站），
+    /// 保存失败时必须停在窗口里让用户看见，不能默默把旧内容删掉。
+    /// </remarks>
+    public async Task<bool> PersistAndCloseForDeleteAsync()
     {
+        if (!await _viewModel.TryPersistOnCloseAsync())
+        {
+            return false;
+        }
+
+        _closeApproved = true;
+        CaptureLayout();
+        Close();
+
+        return true;
+    }
+
+    /// <summary>托盘退出路径：保存尽力而为，无论成败都关——「退出总会发生」。</summary>
+    public async Task CloseForExitAsync()    {
         _isApplicationExiting = true;
 
         try

@@ -69,6 +69,19 @@ public sealed class ManagerViewModelTests
         Assert.Equal(pinned.Id, h.ViewModel.Items[0].Note.Id);
     }
 
+    [Fact]
+    public async Task 删除便签_列表跟着移除()
+    {
+        using var h = new Harness();
+        Note note = h.AddNote("# 文档");
+        Assert.Single(h.ViewModel.Items);
+
+        await h.Windows.DeleteNoteAsync(note);
+
+        Assert.Empty(h.ViewModel.Items);
+        Assert.Single(h.Trash.Moved);
+    }
+
     /// <summary>列表窗口的整套替身与 ViewModel（窗口管理器用真对象，替身只到存储/布局层）。</summary>
     private sealed class Harness : IDisposable
     {
@@ -79,6 +92,7 @@ public sealed class ManagerViewModelTests
         {
             Clock = new FakeClock(Now);
             Storage = new FakeNoteStorage();
+            Trash = new FakeTrashStore();
             Layouts = new InMemoryLayoutStore();
 
             _titles = new NoteTitleCoordinator(
@@ -88,9 +102,9 @@ public sealed class ManagerViewModelTests
 
             var factory = new NoteWindowFactory(
                 Storage, Clock, Layouts, _autoSave, _titles, NullLoggerFactory.Instance);
-            var windows = new NoteWindowManager(Notes, Storage, Layouts, _titles, factory);
+            Windows = new NoteWindowManager(Notes, Storage, Trash, Layouts, _titles, factory);
 
-            ViewModel = new ManagerViewModel(Notes, Layouts, Clock, windows);
+            ViewModel = new ManagerViewModel(Layouts, Clock, Windows);
         }
 
         public DateTimeOffset Now { get; } = new(2026, 9, 19, 12, 0, 0, TimeSpan.Zero);
@@ -99,9 +113,13 @@ public sealed class ManagerViewModelTests
 
         public FakeNoteStorage Storage { get; }
 
+        public FakeTrashStore Trash { get; }
+
         public InMemoryLayoutStore Layouts { get; }
 
         public FakeClock Clock { get; }
+
+        public NoteWindowManager Windows { get; }
 
         public ManagerViewModel ViewModel { get; }
 
@@ -116,8 +134,10 @@ public sealed class ManagerViewModelTests
                 CreatedAt = Now.AddYears(-1),
                 UpdatedAt = updatedAt ?? Now,
             };
-            Notes.Add(note);
             Layouts.GetOrCreate(id);
+
+            // 走管理器的唯一列表入口——便签集合的真身在 NoteWindowManager 里。
+            Windows.RegisterRestoredNote(note);
 
             return note;
         }

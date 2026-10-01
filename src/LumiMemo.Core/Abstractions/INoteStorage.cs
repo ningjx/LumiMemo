@@ -25,6 +25,13 @@ public interface INoteStorage
     /// </remarks>
     Task<IReadOnlyList<Note>> LoadAllAsync(CancellationToken ct = default);
 
+    /// <summary>读取单个便笺文件；坏文件返回 <see langword="null"/> 并记日志。</summary>
+    /// <remarks>
+    /// 给「单文件场景」用——回收站恢复之后要把恢复出来的那个文件读成便笺，
+    /// 不必为此重扫整个目录。
+    /// </remarks>
+    Task<Note?> TryLoadAsync(string path, CancellationToken ct = default);
+
     /// <summary>把便笺整份写回磁盘（原子写入）。</summary>
     Task SaveAsync(Note note, CancellationToken ct = default);
 

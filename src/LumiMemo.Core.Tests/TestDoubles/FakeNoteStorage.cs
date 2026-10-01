@@ -46,6 +46,11 @@ public sealed class FakeNoteStorage : INoteStorage
     }
 
     /// <inheritdoc />
+    public Task<Note?> TryLoadAsync(string path, CancellationToken ct = default) =>
+        Task.FromResult(NotesToLoad.Find(
+            note => string.Equals(note.FilePath, path, StringComparison.OrdinalIgnoreCase)));
+
+    /// <inheritdoc />
     public Task SaveAsync(Note note, CancellationToken ct = default)
     {
         Saved.Add(note);

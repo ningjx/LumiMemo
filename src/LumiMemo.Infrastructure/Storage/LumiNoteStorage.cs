@@ -80,7 +80,7 @@ public sealed class LumiNoteStorage : INoteStorage
         {
             ct.ThrowIfCancellationRequested();
 
-            Note? note = await TryReadAsync(path, ct).ConfigureAwait(false);
+            Note? note = await TryLoadAsync(path, ct).ConfigureAwait(false);
             if (note is null)
             {
                 continue;
@@ -146,8 +146,10 @@ public sealed class LumiNoteStorage : INoteStorage
     }
 
     /// <summary>读一个文件；坏文件返回 <see langword="null"/> 并记日志，不抛出。</summary>
-    private async Task<Note?> TryReadAsync(string path, CancellationToken ct)
+    public async Task<Note?> TryLoadAsync(string path, CancellationToken ct = default)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+
         try
         {
             await using var stream = File.OpenRead(path);

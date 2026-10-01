@@ -8,6 +8,7 @@ namespace LumiMemo.WinUI.Services;
 public sealed class NoteWindowManager
 {
     private readonly INoteStorage _storage;
+    private readonly ITrashStore _trash;
     private readonly ILayoutStore _layouts;
     private readonly NoteTitleCoordinator _titles;
     private readonly NoteWindowFactory _factory;
@@ -17,18 +18,21 @@ public sealed class NoteWindowManager
     public NoteWindowManager(
         IReadOnlyList<Note> notes,
         INoteStorage storage,
+        ITrashStore trash,
         ILayoutStore layouts,
         NoteTitleCoordinator titles,
         NoteWindowFactory windowFactory)
     {
         ArgumentNullException.ThrowIfNull(notes);
         ArgumentNullException.ThrowIfNull(storage);
+        ArgumentNullException.ThrowIfNull(trash);
         ArgumentNullException.ThrowIfNull(layouts);
         ArgumentNullException.ThrowIfNull(titles);
         ArgumentNullException.ThrowIfNull(windowFactory);
 
         _notes = [.. notes];
         _storage = storage;
+        _trash = trash;
         _layouts = layouts;
         _titles = titles;
         _factory = windowFactory;
@@ -99,6 +103,43 @@ public sealed class NoteWindowManager
         _titles.Register(note);
         NotesChanged?.Invoke(this, EventArgs.Empty);
         OpenNote(note.Id);
+    }
+
+    /// <summary>删除一张便签：窗口（若开着）先落盘再关，然后把文件移入回收站。</summary>
+    /// <returns>窗口内容保存失败时返回 <see langword="false"/> 且不删除。</returns>
+    public async Task<bool> DeleteNoteAsync(Note note)
+    {
+        ArgumentNullException.ThrowIfNull(note);
+
+        if (_windows.TryGetValue(note.Id, out MainWindow? window))
+        {
+            // 开着窗口：先把最新内容落盘——进回收站的那份必须是用户最后看到的样子；
+            // 保存失败就不删，让用户先处理失败（状态条上已经显示出来了）。
+            if (!await window.PersistAndCloseForDeleteAsync())
+            {
+                return false;
+            }
+        }
+
+        await _trash.MoveToTrashAsync(note);
+        _notes.Remove(note);
+        NotesChanged?.Invoke(this, EventArgs.Empty);
+
+        return true;
+    }
+
+    /// <summary>把从回收站恢复回来的便签登记进列表（回收站窗口用）。</summary>
+    public void RegisterRestoredNote(Note note)
+    {
+        ArgumentNullException.ThrowIfNull(note);
+
+        if (_notes.Any(existing => existing.Id == note.Id))
+        {
+            return;
+        }
+
+        _notes.Add(note);
+        NotesChanged?.Invoke(this, EventArgs.Empty);
     }
 
     public void HideAllNotes()

@@ -11,6 +11,7 @@ using LumiMemo.Infrastructure.Llm;
 using LumiMemo.Infrastructure.Logging;
 using LumiMemo.Infrastructure.Settings;
 using LumiMemo.Infrastructure.Storage;
+using LumiMemo.Infrastructure.Trash;
 using LumiMemo.Infrastructure.Windows;
 using LumiMemo.WinUI.Services;
 using LumiMemo.WinUI.ViewModels;
@@ -88,6 +89,19 @@ public partial class App : Application
             _guard.StartListening();
 
             AppSettings settings = GetService<AppSettings>();
+
+            // 回收站过期清理。失败只记日志：维护动作不该拦住启动或弹任何东西。
+            try
+            {
+                TimeSpan retention = TimeSpan.FromDays(settings.TrashRetentionDays);
+                await GetService<ITrashStore>().PurgeExpiredAsync(retention);
+            }
+            catch (Exception exception)
+            {
+                GetService<ILogger<App>>().LogWarning(
+                    "回收站过期清理失败（{ExceptionType}）。", exception.GetType().Name);
+            }
+
             if (settings.ShowTrayIcon)
             {
                 _trayIcon = new TrayIconService(manager.TrayIconHost);
@@ -225,6 +239,9 @@ public partial class App : Application
 
         IReadOnlyList<Note> notes = await storage.LoadAllAsync();
 
+        var trash = new FileSystemTrashStore(
+            settings.NotesFolder, clock, writer, bootstrapFactory.CreateLogger<FileSystemTrashStore>());
+
         var layoutStore = new JsonLayoutStore(
             paths,
             clock,
@@ -252,6 +269,7 @@ public partial class App : Application
         services.AddSingleton<ISettingsStore>(settingsStore);
         services.AddSingleton<ILayoutStore>(layoutStore);
         services.AddSingleton<INoteStorage>(storage);
+        services.AddSingleton<ITrashStore>(trash);
         services.AddSingleton(notes);
         services.AddSingleton(httpClient);
         services.AddSingleton<ITitleGenerator>(new OpenAiCompatibleTitleGenerator(httpClient));
@@ -275,6 +293,8 @@ public partial class App : Application
         services.AddSingleton<NoteWindowManager>();
         services.AddSingleton<ManagerViewModel>();
         services.AddSingleton<ManagerWindow>();
+        services.AddSingleton<TrashViewModel>();
+        services.AddSingleton<TrashWindow>();
 
         return services.BuildServiceProvider(new ServiceProviderOptions
         {

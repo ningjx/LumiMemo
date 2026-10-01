@@ -30,6 +30,9 @@
                 <Button Width="36" Height="30" Content="⚙" Click="OnLlmSettingsClick"
                         Background="Transparent" BorderBrush="Transparent"
                         ToolTipService.ToolTip="自动标题设置" />
+                <Button Padding="10,0" Height="30" Content="回收站" Click="OnTrashClick"
+                        Background="Transparent" BorderBrush="Transparent"
+                        ToolTipService.ToolTip="回收站" />
                 <Button Width="36" Height="30" Content="×" Click="OnHideClick"
                         Background="Transparent" BorderBrush="Transparent"
                         ToolTipService.ToolTip="隐藏列表" />
@@ -52,6 +55,12 @@
             <ListView.ItemTemplate>
                 <DataTemplate>
                     <Grid Padding="10,8" MinHeight="62">
+                        <Grid.ContextFlyout>
+                            <MenuFlyout>
+                                <MenuFlyoutItem Text="打开" Click="OnItemOpenMenuClick" />
+                                <MenuFlyoutItem Text="删除" Click="OnItemDeleteMenuClick" />
+                            </MenuFlyout>
+                        </Grid.ContextFlyout>
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />

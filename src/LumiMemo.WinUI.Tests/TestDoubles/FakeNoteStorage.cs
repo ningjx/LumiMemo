@@ -31,6 +31,10 @@ public sealed class FakeNoteStorage : INoteStorage
         return Task.FromResult<IReadOnlyList<Note>>(NotesToLoad);
     }
 
+    public Task<Note?> TryLoadAsync(string path, CancellationToken ct = default) =>
+        Task.FromResult(NotesToLoad.Find(
+            note => string.Equals(note.FilePath, path, StringComparison.OrdinalIgnoreCase)));
+
     public async Task SaveAsync(Note note, CancellationToken ct = default)
     {
         if (SaveGate is { } gate)
