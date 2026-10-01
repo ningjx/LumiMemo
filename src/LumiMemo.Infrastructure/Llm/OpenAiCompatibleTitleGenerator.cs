@@ -44,7 +44,16 @@ public sealed class OpenAiCompatibleTitleGenerator(HttpClient httpClient) : ITit
                 new { role = "system", content = settings.Prompt },
                 new { role = "user", content = content.Length > 4000 ? content[..4000] : content }
             },
-            stream = false
+            stream = false,
+
+            // DeepSeek V4 系列的思考模式默认开启（thinking.type 默认 enabled），
+            // 不显式关掉的话每次生成标题都会先跑一整段思维链——非流式下还要等
+            // 「思考 + 标题」全部输出完才返回，这是标题变慢的主要来源。
+            // 拟一个 20 字标题不需要思考，显式关闭。
+            //
+            // 注意：thinking 是 DeepSeek 的扩展字段；换用其他 OpenAI 兼容服务时
+            // 若遇到「未知参数」类报错，先删掉这一行再试。
+            thinking = new { type = "disabled" }
         });
 
         using HttpResponseMessage response = await httpClient.SendAsync(request, ct).ConfigureAwait(false);
