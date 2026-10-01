@@ -1,61 +1,27 @@
-using LumiMemo.WinUI.Services;
 using LumiMemo.WinUI.ViewModels;
-using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
-using Windows.Graphics;
 
-namespace LumiMemo.WinUI;
+namespace LumiMemo.WinUI.Pages;
 
-/// <summary>回收站窗口：列出已删除的便笺，恢复或彻底删除。</summary>
-public sealed partial class TrashWindow : Window
+/// <summary>回收站页面：列出已删除的便笺，恢复或彻底删除。由壳在切到本页时刷新。</summary>
+public sealed partial class TrashPage : UserControl
 {
     private readonly TrashViewModel _viewModel;
-    private AcrylicBackdrop? _backdrop;
-    private bool _allowClose;
 
-    public TrashWindow(TrashViewModel viewModel)
+    public TrashPage(TrashViewModel viewModel)
     {
         ArgumentNullException.ThrowIfNull(viewModel);
 
-        InitializeComponent();
-
         _viewModel = viewModel;
-
-        ExtendsContentIntoTitleBar = true;
-        SetTitleBar(TrashTitleBar);
-        AppWindow.Resize(new SizeInt32(460, 520));
-        AppWindow.Closing += OnWindowClosing;
-
-        if (AppWindow.Presenter is OverlappedPresenter presenter)
-        {
-            presenter.SetBorderAndTitleBar(true, false);
-            presenter.IsMinimizable = true;
-            presenter.IsMaximizable = false;
-        }
-
-        _backdrop = AcrylicBackdrop.Apply(this, Root);
+        InitializeComponent();
     }
 
     /// <summary>XAML 的 x:Bind 从这里取值。</summary>
     public TrashViewModel ViewModel => _viewModel;
 
-    public async void ShowWindow()
-    {
-        AppWindow.Show();
-        Activate();
-        await RefreshAsync();
-    }
-
-    public void HideWindow() => AppWindow.Hide();
-
-    public void CloseForExit()
-    {
-        _allowClose = true;
-        Close();
-    }
-
-    private async Task RefreshAsync()
+    /// <summary>每次显示本页时调：重新读回收站目录。</summary>
+    public async Task RefreshAsync()
     {
         try
         {
@@ -84,8 +50,6 @@ public sealed partial class TrashWindow : Window
         RestoreButton.IsEnabled = selected;
         PurgeButton.IsEnabled = selected;
     }
-
-    private void OnHideClick(object sender, RoutedEventArgs e) => HideWindow();
 
     private async void OnRestoreClick(object sender, RoutedEventArgs e)
     {
@@ -164,7 +128,7 @@ public sealed partial class TrashWindow : Window
     {
         var dialog = new ContentDialog
         {
-            XamlRoot = Root.XamlRoot,
+            XamlRoot = XamlRoot,
             Title = title,
             Content = content,
             CloseButtonText = close,
@@ -177,18 +141,5 @@ public sealed partial class TrashWindow : Window
         }
 
         return await dialog.ShowAsync() == ContentDialogResult.Primary;
-    }
-
-    private void OnWindowClosing(AppWindow sender, AppWindowClosingEventArgs args)
-    {
-        if (!_allowClose)
-        {
-            args.Cancel = true;
-            HideWindow();
-            return;
-        }
-
-        _backdrop?.Dispose();
-        _backdrop = null;
     }
 }

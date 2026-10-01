@@ -153,11 +153,49 @@ public sealed class NoteViewModelTests
         Assert.Equal(2, h.Storage.Saved.Count);
     }
 
+    [Fact]
+    public void 刷新标题_未启用自动标题时给出提示()
+    {
+        using var h = new Harness();
+
+        h.ViewModel.RegenerateTitle();
+
+        Assert.Contains("自动标题未启用", h.ViewModel.StatusText);
+    }
+
+    [Fact]
+    public async Task 刷新标题_生成中按钮禁用_完成后标题更新()
+    {
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var h = new Harness(llmEnabled: true, generator: new GatedGenerator(gate));
+
+        h.ViewModel.RegenerateTitle();
+
+        // 生成中：刷新按钮禁用（防叠请求）。
+        Assert.False(h.ViewModel.CanRegenerateTitle);
+
+        gate.SetResult();
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await WaitUntilAsync(() => h.ViewModel.CanRegenerateTitle, cancellation.Token);
+
+        Assert.Equal("门后的标题", h.ViewModel.Title);
+    }
+
     private static async Task WaitUntilAsync(Func<bool> condition, CancellationToken ct)
     {
         while (!condition())
         {
             await Task.Delay(25, ct);
+        }
+    }
+
+    private sealed class GatedGenerator(TaskCompletionSource gate) : ITitleGenerator
+    {
+        public async Task<string> GenerateAsync(string content, LlmSettings settings, CancellationToken ct = default)
+        {
+            await gate.Task.WaitAsync(ct);
+
+            return "门后的标题";
         }
     }
 

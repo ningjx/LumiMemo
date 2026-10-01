@@ -3,15 +3,14 @@
     x:Class="LumiMemo.WinUI.ManagerWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    xmlns:controls="using:LumiMemo.WinUI.Controls"
     xmlns:tb="using:H.NotifyIcon"
     Title="LumiMemo 便笺列表">
 
     <Grid x:Name="Root" Background="Transparent">
         <Grid.RowDefinitions>
             <RowDefinition Height="44" />
-            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
+            <RowDefinition Height="28" />
         </Grid.RowDefinitions>
 
         <Grid x:Name="ManagerTitleBar" Padding="16,0,8,0" Background="#18FFFFFF">
@@ -25,118 +24,44 @@
                        FontWeight="SemiBold"
                        Foreground="#FF403747" />
             <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4">
-                <Button Width="36" Height="30" Content="＋" Click="OnNewNoteClick"
-                        Background="Transparent" BorderBrush="Transparent"
-                        ToolTipService.ToolTip="新建便笺" />
-                <Button Width="36" Height="30" Content="⚙" Click="OnLlmSettingsClick"
-                        Background="Transparent" BorderBrush="Transparent"
-                        ToolTipService.ToolTip="自动标题设置" />
-                <Button Padding="10,0" Height="30" Content="回收站" Click="OnTrashClick"
-                        Background="Transparent" BorderBrush="Transparent"
-                        ToolTipService.ToolTip="回收站" />
-                <Button Width="36" Height="30" Content="×" Click="OnHideClick"
-                        Background="Transparent" BorderBrush="Transparent"
-                        ToolTipService.ToolTip="隐藏列表" />
+                <Button x:Name="NewNoteButton"
+                        Style="{StaticResource IconButtonStyle}"
+                        Click="OnNewNoteClick"
+                        ToolTipService.ToolTip="新建便笺">
+                    <FontIcon Glyph="&#xE710;" FontSize="14" />
+                </Button>
+                <Button x:Name="SettingsButton"
+                        Style="{StaticResource IconButtonStyle}"
+                        Click="OnSettingsPageClick"
+                        ToolTipService.ToolTip="设置">
+                    <FontIcon Glyph="&#xE713;" FontSize="14" />
+                </Button>
+                <Button x:Name="TrashButton"
+                        Style="{StaticResource IconButtonStyle}"
+                        Click="OnTrashPageClick"
+                        ToolTipService.ToolTip="回收站">
+                    <FontIcon Glyph="&#xE74D;" FontSize="14" />
+                </Button>
+                <Button x:Name="CloseButton"
+                        Style="{StaticResource IconButtonStyle}"
+                        Click="OnHideClick"
+                        ToolTipService.ToolTip="隐藏列表">
+                    <FontIcon Glyph="&#xE8BB;" FontSize="14" />
+                </Button>
             </StackPanel>
         </Grid>
 
-        <StackPanel Grid.Row="1" Margin="14,12,14,8" Spacing="8">
-            <TextBox x:Name="SearchBox"
-                     PlaceholderText="搜索便笺（空格分隔多个关键词）"
-                     TextChanged="OnSearchTextChanged" />
+        <!-- 页面容器：三个页面由 code-behind 构造并叠放，切页只改 Visibility（保住页面状态）。 -->
+        <Grid x:Name="PageHost" Grid.Row="1" />
 
-            <Grid>
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="Auto" />
-                </Grid.ColumnDefinitions>
-
-                <!-- 颜色筛选：一排色块单选，「全部」是默认；选中态由代码加粗描边。 -->
-                <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
-                    <TextBlock Text="颜色" FontSize="12" Foreground="#FF75697C" VerticalAlignment="Center" />
-                    <Button x:Name="ColorFilterAll" Content="全部" FontSize="12"
-                            MinWidth="0" Padding="9,1" CornerRadius="11"
-                            BorderThickness="3" BorderBrush="#FF403747"
-                            Click="OnColorFilterClick" />
-                    <Button x:Name="ColorFilterYellow" Tag="Yellow" Width="22" Height="22" Padding="0"
-                            CornerRadius="11" BorderThickness="1" BorderBrush="#40FFFFFF"
-                            Background="#FFB58900" Click="OnColorFilterClick"
-                            ToolTipService.ToolTip="黄色" />
-                    <Button x:Name="ColorFilterPink" Tag="Pink" Width="22" Height="22" Padding="0"
-                            CornerRadius="11" BorderThickness="1" BorderBrush="#40FFFFFF"
-                            Background="#FFB0356B" Click="OnColorFilterClick"
-                            ToolTipService.ToolTip="粉色" />
-                    <Button x:Name="ColorFilterBlue" Tag="Blue" Width="22" Height="22" Padding="0"
-                            CornerRadius="11" BorderThickness="1" BorderBrush="#40FFFFFF"
-                            Background="#FF1F5FA8" Click="OnColorFilterClick"
-                            ToolTipService.ToolTip="蓝色" />
-                    <Button x:Name="ColorFilterGreen" Tag="Green" Width="22" Height="22" Padding="0"
-                            CornerRadius="11" BorderThickness="1" BorderBrush="#40FFFFFF"
-                            Background="#FF2E7D46" Click="OnColorFilterClick"
-                            ToolTipService.ToolTip="绿色" />
-                    <Button x:Name="ColorFilterPurple" Tag="Purple" Width="22" Height="22" Padding="0"
-                            CornerRadius="11" BorderThickness="1" BorderBrush="#40FFFFFF"
-                            Background="#FF6A3FA0" Click="OnColorFilterClick"
-                            ToolTipService.ToolTip="紫色" />
-                    <Button x:Name="ColorFilterOrange" Tag="Orange" Width="22" Height="22" Padding="0"
-                            CornerRadius="11" BorderThickness="1" BorderBrush="#40FFFFFF"
-                            Background="#FFB75E12" Click="OnColorFilterClick"
-                            ToolTipService.ToolTip="橙色" />
-                    <Button x:Name="ColorFilterGray" Tag="Gray" Width="22" Height="22" Padding="0"
-                            CornerRadius="11" BorderThickness="1" BorderBrush="#40FFFFFF"
-                            Background="#FF5F5F5F" Click="OnColorFilterClick"
-                            ToolTipService.ToolTip="灰色" />
-                </StackPanel>
-
-                <ComboBox x:Name="SortBox" Grid.Column="1" MinWidth="112"
-                          SelectionChanged="OnSortChanged">
-                    <ComboBoxItem Content="相关度" />
-                    <ComboBoxItem Content="按修改时间" />
-                </ComboBox>
-            </Grid>
-        </StackPanel>
-
-        <ListView x:Name="NotesList"
-                  Grid.Row="2"
-                  Margin="8,0,8,10"
-                  ItemsSource="{x:Bind ViewModel.Items, Mode=OneWay}"
-                  IsItemClickEnabled="True"
-                  ItemClick="OnNoteItemClick"
-                  SelectionMode="None">
-            <ListView.ItemTemplate>
-                <DataTemplate>
-                    <Grid Padding="10,8" MinHeight="62">
-                        <Grid.ContextFlyout>
-                            <MenuFlyout>
-                                <MenuFlyoutItem Text="打开" Click="OnItemOpenMenuClick" />
-                                <MenuFlyoutItem Text="删除" Click="OnItemDeleteMenuClick" />
-                            </MenuFlyout>
-                        </Grid.ContextFlyout>
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                        </Grid.RowDefinitions>
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <controls:SnippetTextBlock Snippet="{Binding TitleSnippet}"
-                                                       NoteColor="{Binding Note.Color}"
-                                                       IsTitle="True" />
-                            <ProgressRing Grid.Column="1" Width="16" Height="16"
-                                          Margin="8,0,0,0" IsActive="{Binding IsGenerating}"
-                                          Visibility="{Binding ProgressVisibility}" />
-                        </Grid>
-                        <!-- 两行封顶、尾部省略与配色由控件自己固定（见 SnippetTextBlock）。 -->
-                        <controls:SnippetTextBlock Grid.Row="1"
-                                                   Margin="0,4,0,0"
-                                                   Snippet="{Binding Snippet}"
-                                                   NoteColor="{Binding Note.Color}" />
-                    </Grid>
-                </DataTemplate>
-            </ListView.ItemTemplate>
-        </ListView>
+        <!-- 右下角计数：无筛选时是便签总数，搜索/筛选后是"命中数/总数"。 -->
+        <Border Grid.Row="2" Background="#18FFFFFF" Padding="16,0">
+            <TextBlock HorizontalAlignment="Right"
+                       VerticalAlignment="Center"
+                       FontSize="12"
+                       Foreground="#FF75697C"
+                       Text="{x:Bind ViewModel.CountText, Mode=OneWay}" />
+        </Border>
 
         <!--
             托盘控件必须挂在窗口的可视化树里：库内部的通知消息处理与菜单展开

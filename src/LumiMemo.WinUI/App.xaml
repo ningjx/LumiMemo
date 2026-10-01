@@ -10,7 +10,18 @@
                 <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
                 <!-- Other merged dictionaries here -->
             </ResourceDictionary.MergedDictionaries>
-            <!-- Other app resources here -->
+
+            <!-- 玻璃窗口上的图标按钮：透明底无边框，悬停底色由默认模板给。
+                 只做具名样式（不碰 ButtonBackground 之类的主题键），设置页与对话框的常规按钮不受影响。 -->
+            <Style x:Key="IconButtonStyle" TargetType="Button">
+                <Setter Property="Background" Value="Transparent" />
+                <Setter Property="BorderBrush" Value="Transparent" />
+                <Setter Property="BorderThickness" Value="0" />
+                <Setter Property="CornerRadius" Value="6" />
+                <Setter Property="Padding" Value="0" />
+                <Setter Property="Width" Value="32" />
+                <Setter Property="Height" Value="28" />
+            </Style>
         </ResourceDictionary>
     </Application.Resources>
 </Application>

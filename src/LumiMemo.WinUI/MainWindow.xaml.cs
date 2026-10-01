@@ -21,6 +21,7 @@ public sealed partial class MainWindow : Window
     private readonly NoteLayout _layout;
     private readonly ILayoutStore _layoutStore;
     private readonly Action<Guid> _onClosed;
+    private readonly INoteWindowActions _actions;
     private readonly RichEditorHost _editor;
     private readonly AppWindow _appWindow;
     private AcrylicBackdrop? _backdrop;
@@ -32,12 +33,14 @@ public sealed partial class MainWindow : Window
         NoteViewModel viewModel,
         NoteLayout layout,
         ILayoutStore layoutStore,
-        Action<Guid> onClosed)
+        Action<Guid> onClosed,
+        INoteWindowActions actions)
     {
         ArgumentNullException.ThrowIfNull(viewModel);
         ArgumentNullException.ThrowIfNull(layout);
         ArgumentNullException.ThrowIfNull(layoutStore);
         ArgumentNullException.ThrowIfNull(onClosed);
+        ArgumentNullException.ThrowIfNull(actions);
 
         InitializeComponent();
         _appWindow = AppWindow;
@@ -46,6 +49,7 @@ public sealed partial class MainWindow : Window
         _layout = layout;
         _layoutStore = layoutStore;
         _onClosed = onClosed;
+        _actions = actions;
 
         _editor = new RichEditorHost(EditorHost);
         _viewModel.AttachDocument(_editor);
@@ -116,6 +120,37 @@ public sealed partial class MainWindow : Window
     }
 
     // ---- 编辑命令转发（命令属于编辑区，窗口只做转手） ----
+
+    private async void OnNewNoteClick(object sender, RoutedEventArgs e) =>
+        await _actions.CreateNoteAsync();
+
+    private async void OnDeleteNoteClick(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            if (!await _actions.DeleteNoteAsync(_viewModel.Note))
+            {
+                // false 的含义是「存不下来」——窗口还开着，提示用户先处理保存失败。
+                await ShowDialogAsync("未删除", "便签有修改尚未保存成功，已保留原地。请稍后再试。");
+            }
+        }
+        catch (Exception exception)
+        {
+            // 入回收站失败时本窗口已被管理器关掉：没地方弹提示，只能记日志。
+            System.Diagnostics.Debug.WriteLine(exception);
+        }
+    }
+
+    private void OnRefreshTitleClick(object sender, RoutedEventArgs e) => _viewModel.RegenerateTitle();
+
+    private async Task ShowDialogAsync(string title, string content) =>
+        await new ContentDialog
+        {
+            XamlRoot = Root.XamlRoot,
+            Title = title,
+            Content = content,
+            CloseButtonText = "确定",
+        }.ShowAsync();
 
     private void OnBoldClick(object sender, RoutedEventArgs e) => _editor.ExecuteCommand("bold");
 

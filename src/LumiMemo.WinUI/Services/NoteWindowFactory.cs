@@ -21,7 +21,11 @@ public sealed class NoteWindowFactory(
     ILoggerFactory loggerFactory)
 {
     public MainWindow Create(
-        Note note, NoteLayout layout, Action<Guid> onClosed, Action onNoteChanged)
+        Note note,
+        NoteLayout layout,
+        Action<Guid> onClosed,
+        Action onNoteChanged,
+        INoteWindowActions actions)
     {
         var viewModel = new NoteViewModel(
             note,
@@ -34,6 +38,6 @@ public sealed class NoteWindowFactory(
             onNoteChanged,
             loggerFactory.CreateLogger<NoteViewModel>());
 
-        return new MainWindow(viewModel, layout, layouts, onClosed);
+        return new MainWindow(viewModel, layout, layouts, onClosed, actions);
     }
 }

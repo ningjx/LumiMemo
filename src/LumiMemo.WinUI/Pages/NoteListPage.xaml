@@ -1,0 +1,187 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<UserControl
+    x:Class="LumiMemo.WinUI.Pages.NoteListPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:LumiMemo.WinUI.Controls">
+
+    <UserControl.Resources>
+        <controls:NoteColorBrushConverter x:Key="StripBrushConverter" />
+    </UserControl.Resources>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <StackPanel Margin="14,12,14,6" Spacing="8">
+            <TextBox x:Name="SearchBox"
+                     PlaceholderText="搜索便签（空格分隔多个关键词）"
+                     TextChanged="OnSearchTextChanged" />
+
+            <!--
+                筛选/排序：平时只露两个图标。点图标横向展开对应条件行，
+                点条件再展开取值行（颜色取值点击立即生效）。
+            -->
+            <StackPanel Spacing="6">
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                    <Button x:Name="FilterIconButton"
+                            Style="{StaticResource IconButtonStyle}"
+                            Click="OnFilterIconClick"
+                            ToolTipService.ToolTip="筛选">
+                        <FontIcon Glyph="&#xE71C;" FontSize="14" />
+                    </Button>
+                    <Button x:Name="SortIconButton"
+                            Style="{StaticResource IconButtonStyle}"
+                            Click="OnSortIconClick"
+                            ToolTipService.ToolTip="排序">
+                        <FontIcon Glyph="&#xE8CB;" FontSize="14" />
+                    </Button>
+                </StackPanel>
+
+                <StackPanel x:Name="FilterConditions"
+                            Orientation="Horizontal" Spacing="6"
+                            Visibility="Collapsed">
+                    <Button x:Name="ColorFilterChip"
+                            Style="{StaticResource IconButtonStyle}"
+                            Click="OnColorChipClick"
+                            ToolTipService.ToolTip="颜色">
+                        <FontIcon Glyph="&#xE790;" FontSize="14" />
+                    </Button>
+                </StackPanel>
+
+                <!-- 颜色取值行：互斥单选，点击立即生效；「全部」= 不筛颜色。选中态由代码加深描边。 -->
+                <StackPanel x:Name="ColorFilterValues"
+                            Orientation="Horizontal" Spacing="6"
+                            Visibility="Collapsed">
+                    <Button x:Name="ColorFilterAll" Content="全部" FontSize="12"
+                            MinWidth="0" Padding="9,1" CornerRadius="11"
+                            BorderThickness="3" BorderBrush="#FF403747"
+                            Click="OnColorFilterClick" />
+                    <Button x:Name="ColorFilterYellow" Tag="Yellow" Width="22" Height="22" Padding="0"
+                            CornerRadius="11" BorderThickness="1" BorderBrush="#40FFFFFF"
+                            Background="#FFB58900" Click="OnColorFilterClick"
+                            ToolTipService.ToolTip="黄色" />
+                    <Button x:Name="ColorFilterPink" Tag="Pink" Width="22" Height="22" Padding="0"
+                            CornerRadius="11" BorderThickness="1" BorderBrush="#40FFFFFF"
+                            Background="#FFB0356B" Click="OnColorFilterClick"
+                            ToolTipService.ToolTip="粉色" />
+                    <Button x:Name="ColorFilterBlue" Tag="Blue" Width="22" Height="22" Padding="0"
+                            CornerRadius="11" BorderThickness="1" BorderBrush="#40FFFFFF"
+                            Background="#FF1F5FA8" Click="OnColorFilterClick"
+                            ToolTipService.ToolTip="蓝色" />
+                    <Button x:Name="ColorFilterGreen" Tag="Green" Width="22" Height="22" Padding="0"
+                            CornerRadius="11" BorderThickness="1" BorderBrush="#40FFFFFF"
+                            Background="#FF2E7D46" Click="OnColorFilterClick"
+                            ToolTipService.ToolTip="绿色" />
+                    <Button x:Name="ColorFilterPurple" Tag="Purple" Width="22" Height="22" Padding="0"
+                            CornerRadius="11" BorderThickness="1" BorderBrush="#40FFFFFF"
+                            Background="#FF6A3FA0" Click="OnColorFilterClick"
+                            ToolTipService.ToolTip="紫色" />
+                    <Button x:Name="ColorFilterOrange" Tag="Orange" Width="22" Height="22" Padding="0"
+                            CornerRadius="11" BorderThickness="1" BorderBrush="#40FFFFFF"
+                            Background="#FFB75E12" Click="OnColorFilterClick"
+                            ToolTipService.ToolTip="橙色" />
+                    <Button x:Name="ColorFilterGray" Tag="Gray" Width="22" Height="22" Padding="0"
+                            CornerRadius="11" BorderThickness="1" BorderBrush="#40FFFFFF"
+                            Background="#FF5F5F5F" Click="OnColorFilterClick"
+                            ToolTipService.ToolTip="灰色" />
+                </StackPanel>
+
+                <!-- 排序条件行：点击即加入排序链（再点取消）；本轮只有一个条件。 -->
+                <StackPanel x:Name="SortConditions"
+                            Orientation="Horizontal" Spacing="6"
+                            Visibility="Collapsed">
+                    <Button x:Name="ModifiedTimeSortChip"
+                            Style="{StaticResource IconButtonStyle}"
+                            Click="OnModifiedTimeSortClick"
+                            ToolTipService.ToolTip="按修改时间（新的在前）">
+                        <FontIcon Glyph="&#xE823;" FontSize="14" />
+                    </Button>
+                </StackPanel>
+            </StackPanel>
+        </StackPanel>
+
+        <ListView x:Name="NotesList"
+                  Grid.Row="1"
+                  Margin="8,0,8,10"
+                  ItemsSource="{x:Bind ViewModel.Items, Mode=OneWay}"
+                  IsItemClickEnabled="True"
+                  ItemClick="OnNoteItemClick"
+                  SelectionMode="None">
+            <ListView.ItemTemplate>
+                <DataTemplate>
+                    <!-- 根 Grid 必须有背景，否则空白区域的悬停事件收不到。 -->
+                    <Grid x:Name="ItemRoot"
+                          Background="Transparent"
+                          Padding="10,8"
+                          MinHeight="62"
+                          PointerEntered="OnItemPointerEntered"
+                          PointerExited="OnItemPointerExited">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+
+                        <!-- 便签颜色的常显色条。 -->
+                        <Border Width="4"
+                                CornerRadius="2"
+                                Margin="0,2,10,2"
+                                Background="{Binding Note.Color, Converter={StaticResource StripBrushConverter}}" />
+
+                        <Grid Grid.Column="1">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <controls:SnippetTextBlock Snippet="{Binding TitleSnippet}"
+                                                           NoteColor="{Binding Note.Color}"
+                                                           IsTitle="True" />
+                                <ProgressRing Grid.Column="1" Width="16" Height="16"
+                                              Margin="8,0,0,0" IsActive="{Binding IsGenerating}"
+                                              Visibility="{Binding ProgressVisibility}" />
+                            </Grid>
+                            <!-- 两行封顶、尾部省略与配色由控件自己固定（见 SnippetTextBlock）。 -->
+                            <controls:SnippetTextBlock Grid.Row="1"
+                                                       Margin="0,4,0,0"
+                                                       Snippet="{Binding Snippet}"
+                                                       NoteColor="{Binding Note.Color}" />
+                        </Grid>
+
+                        <!-- 悬停时右上角浮出的操作按钮（淡入淡出由代码控制）。 -->
+                        <StackPanel x:Name="ItemActions"
+                                    Grid.Column="1"
+                                    Orientation="Horizontal" Spacing="2"
+                                    HorizontalAlignment="Right" VerticalAlignment="Top"
+                                    Opacity="0" IsHitTestVisible="False">
+                            <Button Width="28" Height="24"
+                                    Style="{StaticResource IconButtonStyle}"
+                                    Click="OnItemColorClick"
+                                    ToolTipService.ToolTip="修改颜色">
+                                <FontIcon Glyph="&#xE790;" FontSize="12" />
+                            </Button>
+                            <Button Width="28" Height="24"
+                                    Style="{StaticResource IconButtonStyle}"
+                                    Click="OnItemDuplicateClick"
+                                    ToolTipService.ToolTip="复制">
+                                <FontIcon Glyph="&#xE8C8;" FontSize="12" />
+                            </Button>
+                            <Button Width="28" Height="24"
+                                    Style="{StaticResource IconButtonStyle}"
+                                    Click="OnItemDeleteClick"
+                                    ToolTipService.ToolTip="删除">
+                                <FontIcon Glyph="&#xE74D;" FontSize="12" />
+                            </Button>
+                        </StackPanel>
+                    </Grid>
+                </DataTemplate>
+            </ListView.ItemTemplate>
+        </ListView>
+    </Grid>
+</UserControl>

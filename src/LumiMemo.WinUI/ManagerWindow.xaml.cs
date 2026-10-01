@@ -1,6 +1,7 @@
 using H.NotifyIcon;
 using LumiMemo.Core.Abstractions;
 using LumiMemo.Core.Models;
+using LumiMemo.WinUI.Pages;
 using LumiMemo.WinUI.Services;
 using LumiMemo.WinUI.ViewModels;
 using Microsoft.UI.Windowing;
@@ -12,33 +13,54 @@ using Windows.UI;
 
 namespace LumiMemo.WinUI;
 
-/// <summary>便笺列表：搜索、打开与新建。业务状态在 <see cref="ManagerViewModel"/> 里。</summary>
+/// <summary>
+/// 管理窗口壳：标题栏（新建/设置/回收站/关闭 全图标）、页面容器与右下角计数。
+/// </summary>
+/// <remarks>
+/// 便笺列表 / 回收站 / 设置是三个页面（<see cref="UserControl"/>），
+/// 由本窗口叠放并通过 Visibility 切换——切页不重建，搜索词与筛选状态都留在页内。
+/// 业务状态在各页自己的 ViewModel 里。
+/// </remarks>
 public sealed partial class ManagerWindow : Window
 {
+    private static readonly SolidColorBrush PageSelectedBackground =
+        new(Color.FromArgb(0x20, 0xFF, 0xFF, 0xFF));
+
+    private static readonly SolidColorBrush PageSelectedBorder =
+        new(Color.FromArgb(0x58, 0xFF, 0xFF, 0xFF));
+
+    private static readonly SolidColorBrush TransparentBrush =
+        new(Color.FromArgb(0, 0, 0, 0));
+
     private readonly ManagerViewModel _viewModel;
-    private readonly TrashWindow _trashWindow;
-    private readonly AppSettings _settings;
-    private readonly ISettingsStore _settingsStore;
+    private readonly NoteListPage _noteListPage;
+    private readonly TrashPage _trashPage;
+    private readonly SettingsPage _settingsPage;
     private AcrylicBackdrop? _backdrop;
     private bool _allowClose;
+    private ManagerPage _currentPage = ManagerPage.Notes;
 
     public ManagerWindow(
         ManagerViewModel viewModel,
-        TrashWindow trashWindow,
+        TrashViewModel trashViewModel,
         AppSettings settings,
         ISettingsStore settingsStore)
     {
         ArgumentNullException.ThrowIfNull(viewModel);
-        ArgumentNullException.ThrowIfNull(trashWindow);
+        ArgumentNullException.ThrowIfNull(trashViewModel);
         ArgumentNullException.ThrowIfNull(settings);
         ArgumentNullException.ThrowIfNull(settingsStore);
 
         InitializeComponent();
 
         _viewModel = viewModel;
-        _trashWindow = trashWindow;
-        _settings = settings;
-        _settingsStore = settingsStore;
+
+        _noteListPage = new NoteListPage(viewModel);
+        _trashPage = new TrashPage(trashViewModel);
+        _settingsPage = new SettingsPage(settings, settingsStore);
+        PageHost.Children.Add(_noteListPage);
+        PageHost.Children.Add(_trashPage);
+        PageHost.Children.Add(_settingsPage);
 
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(ManagerTitleBar);
@@ -54,8 +76,7 @@ public sealed partial class ManagerWindow : Window
 
         _backdrop = AcrylicBackdrop.Apply(this, Root);
 
-        // 初始排序在 ViewModel 赋值之后设置：早于它的话 SelectionChanged 会撞上未初始化的字段。
-        SortBox.SelectedIndex = 0;
+        ShowPage(ManagerPage.Notes);
     }
 
     /// <summary>XAML 的 x:Bind 从这里取值。</summary>
@@ -94,114 +115,42 @@ public sealed partial class ManagerWindow : Window
     private async void OnNewNoteClick(object sender, RoutedEventArgs e) =>
         await _viewModel.CreateNoteAsync();
 
-    private async void OnLlmSettingsClick(object sender, RoutedEventArgs e)
-    {
-        try
-        {
-            await LlmSettingsDialog.ShowAsync(Root.XamlRoot, _settings, _settingsStore);
-        }
-        catch (Exception exception)
-        {
-            await new ContentDialog
-            {
-                XamlRoot = Root.XamlRoot,
-                Title = "设置保存失败",
-                Content = exception.Message,
-                CloseButtonText = "确定",
-            }.ShowAsync();
-        }
-    }
+    private void OnSettingsPageClick(object sender, RoutedEventArgs e) =>
+        ShowPage(_currentPage == ManagerPage.Settings ? ManagerPage.Notes : ManagerPage.Settings);
+
+    private void OnTrashPageClick(object sender, RoutedEventArgs e) =>
+        ShowPage(_currentPage == ManagerPage.Trash ? ManagerPage.Notes : ManagerPage.Trash);
 
     private void OnHideClick(object sender, RoutedEventArgs e) => HideWindow();
 
-    private void OnTrashClick(object sender, RoutedEventArgs e) => _trashWindow.ShowWindow();
-
-    private void OnItemOpenMenuClick(object sender, RoutedEventArgs e)
+    private void ShowPage(ManagerPage page)
     {
-        if ((sender as FrameworkElement)?.DataContext is NoteListItem item)
+        _currentPage = page;
+
+        _noteListPage.Visibility = page == ManagerPage.Notes ? Visibility.Visible : Visibility.Collapsed;
+        _trashPage.Visibility = page == ManagerPage.Trash ? Visibility.Visible : Visibility.Collapsed;
+        _settingsPage.Visibility = page == ManagerPage.Settings ? Visibility.Visible : Visibility.Collapsed;
+
+        SetPageSelected(SettingsButton, page == ManagerPage.Settings);
+        SetPageSelected(TrashButton, page == ManagerPage.Trash);
+
+        switch (page)
         {
-            _viewModel.OpenNote(item.Note);
+            case ManagerPage.Trash:
+                // 每次切入都重读回收站目录（别的实例或清理任务可能改过它）。
+                _ = _trashPage.RefreshAsync();
+                break;
+            case ManagerPage.Settings:
+                _settingsPage.Reload();
+                break;
         }
     }
 
-    private async void OnItemDeleteMenuClick(object sender, RoutedEventArgs e)
+    /// <summary>页面图标的选中态（当前页亮起；再点一下会回到列表页）。</summary>
+    private static void SetPageSelected(Button button, bool selected)
     {
-        if ((sender as FrameworkElement)?.DataContext is not NoteListItem item)
-        {
-            return;
-        }
-
-        try
-        {
-            if (!await _viewModel.DeleteNoteAsync(item.Note))
-            {
-                // false 的含义是「窗口内容还没存下来」——不删除，让用户先处理保存失败。
-                await ShowDialogAsync("未删除", "便笺有修改尚未保存成功，已保留原地。请稍后再试。");
-            }
-        }
-        catch (Exception exception)
-        {
-            await ShowDialogAsync("删除失败", exception.Message);
-        }
-    }
-
-    private async Task ShowDialogAsync(string title, string content)
-    {
-        await new ContentDialog
-        {
-            XamlRoot = Root.XamlRoot,
-            Title = title,
-            Content = content,
-            CloseButtonText = "确定",
-        }.ShowAsync();
-    }
-
-    private void OnSearchTextChanged(object sender, TextChangedEventArgs e) =>
-        _viewModel.Query = SearchBox.Text;
-
-    private void OnColorFilterClick(object sender, RoutedEventArgs e)
-    {
-        if (sender is not Button clicked)
-        {
-            return;
-        }
-
-        // 互斥单选：选中项加深描边；「全部」表示不筛颜色。
-        foreach (Button button in ColorFilterButtons())
-        {
-            bool selected = ReferenceEquals(button, clicked);
-            button.BorderThickness = new Thickness(selected ? 3 : 1);
-            button.BorderBrush = new SolidColorBrush(selected
-                ? Color.FromArgb(255, 0x40, 0x37, 0x47)
-                : Color.FromArgb(0x40, 0xFF, 0xFF, 0xFF));
-        }
-
-        _viewModel.ColorFilter = clicked.Tag is string name && Enum.TryParse(name, out NoteColor color)
-            ? color
-            : null;
-    }
-
-    private void OnSortChanged(object sender, SelectionChangedEventArgs e) =>
-        _viewModel.SortByModifiedTime = SortBox.SelectedIndex == 1;
-
-    private IEnumerable<Button> ColorFilterButtons()
-    {
-        yield return ColorFilterAll;
-        yield return ColorFilterYellow;
-        yield return ColorFilterPink;
-        yield return ColorFilterBlue;
-        yield return ColorFilterGreen;
-        yield return ColorFilterPurple;
-        yield return ColorFilterOrange;
-        yield return ColorFilterGray;
-    }
-
-    private void OnNoteItemClick(object sender, ItemClickEventArgs e)
-    {
-        if (e.ClickedItem is NoteListItem item)
-        {
-            _viewModel.OpenNote(item.Note);
-        }
+        button.Background = selected ? PageSelectedBackground : TransparentBrush;
+        button.BorderBrush = selected ? PageSelectedBorder : TransparentBrush;
     }
 
     private void OnWindowClosing(AppWindow sender, AppWindowClosingEventArgs args)
@@ -216,5 +165,12 @@ public sealed partial class ManagerWindow : Window
         _viewModel.Dispose();
         _backdrop?.Dispose();
         _backdrop = null;
+    }
+
+    private enum ManagerPage
+    {
+        Notes,
+        Trash,
+        Settings,
     }
 }

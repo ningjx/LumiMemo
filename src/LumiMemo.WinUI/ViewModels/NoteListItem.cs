@@ -8,6 +8,8 @@ namespace LumiMemo.WinUI.ViewModels;
 /// <remarks>
 /// 标题与内容各自带一份摘要切片：命中可能只落在标题里（比如搜 AI 标题的词，
 /// 正文里没有），只高亮内容会让用户觉得「搜到了标题词却什么反馈都没有」。
+/// 不放画刷之类的 XAML 对象：那要在 XAML 运行时里才能构造，测试宿主一碰就炸——
+/// 颜色到画刷的换算在 XAML 转换器里做（NoteListPage）。
 /// </remarks>
 public sealed class NoteListItem(
     Note note,

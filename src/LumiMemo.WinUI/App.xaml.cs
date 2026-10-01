@@ -299,7 +299,6 @@ public partial class App : Application
         services.AddSingleton<ManagerViewModel>();
         services.AddSingleton<ManagerWindow>();
         services.AddSingleton<TrashViewModel>();
-        services.AddSingleton<TrashWindow>();
 
         return services.BuildServiceProvider(new ServiceProviderOptions
         {

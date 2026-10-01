@@ -104,7 +104,25 @@ public sealed class NoteViewModel : ObservableObject, IDisposable
     public bool IsTitleGenerating
     {
         get => _isTitleGenerating;
-        private set => SetProperty(ref _isTitleGenerating, value);
+        private set
+        {
+            if (SetProperty(ref _isTitleGenerating, value))
+            {
+                OnPropertyChanged(nameof(CanRegenerateTitle));
+            }
+        }
+    }
+
+    /// <summary>「刷新标题」按钮可点：生成中禁用（再点会作废进行中的请求，禁掉更直观）。</summary>
+    public bool CanRegenerateTitle => !_isTitleGenerating;
+
+    /// <summary>手动刷新标题；未启用自动标题（或没配模型）时在状态条上提示。</summary>
+    public void RegenerateTitle()
+    {
+        if (!_titles.Regenerate(Note))
+        {
+            ShowHint("自动标题未启用 · 请先在设置里配置模型");
+        }
     }
 
     /// <summary>置顶镜像。界面绑定它；setter 负责写 <see cref="NoteLayout"/> 并请求落盘。</summary>

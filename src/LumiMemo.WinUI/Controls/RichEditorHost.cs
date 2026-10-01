@@ -33,15 +33,27 @@ public sealed class RichEditorHost : IRichTextDocument, IDisposable
         {
             HorizontalAlignment = HorizontalAlignment.Stretch,
             VerticalAlignment = VerticalAlignment.Stretch,
-            Background = Transparent(),
+            // 近白的"奶油纸"底：WinUI 的光标是"光标下像素的反色"，浅底上它才稳定呈黑色；
+            // 顺带给正文区一个比全透明毛玻璃更安静的阅读面。
+            Background = EditorBackground(),
             Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 48, 43, 57)),
             BorderThickness = new Thickness(0),
             Padding = new Thickness(18, 16, 18, 16)
         };
 
+        // 正文自动换行，横向滚动条没有存在价值；禁掉免得它偶尔露头。
+        ScrollViewer.SetHorizontalScrollBarVisibility(_editor, ScrollBarVisibility.Disabled);
+
         foreach (string key in new[]
         {
-            "TextControlBackground", "TextControlBackgroundPointerOver", "TextControlBackgroundFocused",
+            "TextControlBackground", "TextControlBackgroundPointerOver", "TextControlBackgroundFocused"
+        })
+        {
+            _editor.Resources[key] = EditorBackground();
+        }
+
+        foreach (string key in new[]
+        {
             "TextControlBorderBrush", "TextControlBorderBrushPointerOver", "TextControlBorderBrushFocused"
         })
         {
@@ -152,6 +164,10 @@ public sealed class RichEditorHost : IRichTextDocument, IDisposable
 
     private static SolidColorBrush Transparent() =>
         new(Windows.UI.Color.FromArgb(0, 255, 255, 255));
+
+    /// <summary>编辑区底色：暖白近纸（约九成不透明），光标反色后稳定是深色。</summary>
+    private static SolidColorBrush EditorBackground() =>
+        new(Windows.UI.Color.FromArgb(0xF0, 0xFC, 0xF9, 0xF5));
 
     private void OnTextChanged(object sender, RoutedEventArgs args)
     {

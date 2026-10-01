@@ -190,6 +190,34 @@ public sealed class ManagerViewModelTests
         Assert.Contains(item.TitleSnippet, static segment => segment.IsMatch);
     }
 
+    [Fact]
+    public async Task 改色_落盘并刷新列表()
+    {
+        using var h = new Harness();
+        Note note = h.AddNote("# 文档");
+
+        await h.ViewModel.ChangeColorAsync(note, NoteColor.Blue);
+
+        Assert.Equal(NoteColor.Blue, Assert.Single(h.ViewModel.Items).Note.Color);
+        Assert.Single(h.Storage.Saved);
+    }
+
+    [Fact]
+    public async Task 复制_副本进入列表且内容原样()
+    {
+        using var h = new Harness();
+        Note note = h.AddNote("# 文档");
+        note.Color = NoteColor.Purple;
+
+        Note copy = await h.ViewModel.DuplicateNoteAsync(note);
+
+        Assert.NotEqual(note.Id, copy.Id);
+        Assert.Equal("# 文档", copy.Content);
+        Assert.Equal(NoteColor.Purple, copy.Color);
+        Assert.Equal(2, h.ViewModel.Items.Count);
+        Assert.Contains(copy.Id, h.ViewModel.Items.Select(static item => item.Note.Id));
+    }
+
     /// <summary>列表窗口的整套替身与 ViewModel（窗口管理器用真对象，替身只到存储/布局层）。</summary>
     private sealed class Harness : IDisposable
     {

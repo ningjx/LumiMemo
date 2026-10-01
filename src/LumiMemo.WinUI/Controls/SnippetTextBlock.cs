@@ -127,7 +127,7 @@ public sealed class SnippetTextBlock : UserControl
 
         var highlighter = new TextHighlighter
         {
-            Background = new SolidColorBrush(NoteColorBackgrounds.Of(NoteColor)),
+            Background = new SolidColorBrush(NoteColorPalette.Paper(NoteColor)),
             Foreground = MatchForeground,
         };
 
@@ -152,19 +152,4 @@ public sealed class SnippetTextBlock : UserControl
             _text.TextHighlighters.Add(highlighter);
         }
     }
-}
-
-/// <summary>便签颜色 → 便签纸背景色（与旧版 WPF 的 Colors.xaml 取同一组色值）。</summary>
-internal static class NoteColorBackgrounds
-{
-    public static Color Of(NoteColor color) => color switch
-    {
-        NoteColor.Pink => Color.FromArgb(255, 0xFB, 0xE0, 0xEA),
-        NoteColor.Blue => Color.FromArgb(255, 0xDF, 0xED, 0xFB),
-        NoteColor.Green => Color.FromArgb(255, 0xE0, 0xF3, 0xE0),
-        NoteColor.Purple => Color.FromArgb(255, 0xED, 0xE3, 0xF9),
-        NoteColor.Orange => Color.FromArgb(255, 0xFC, 0xE7, 0xD4),
-        NoteColor.Gray => Color.FromArgb(255, 0xEF, 0xEF, 0xEF),
-        _ => Color.FromArgb(255, 0xFD, 0xF3, 0xC4),   // Yellow 与兜底
-    };
 }

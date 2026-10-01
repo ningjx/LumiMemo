@@ -158,6 +158,22 @@ public sealed class ManagerViewModel : ObservableObject, IDisposable
         return _windows.DeleteNoteAsync(note);
     }
 
+    /// <summary>改一张便签的颜色并落盘；失败时向上抛（调用方弹提示）。</summary>
+    public Task ChangeColorAsync(Note note, NoteColor color)
+    {
+        ArgumentNullException.ThrowIfNull(note);
+
+        return _windows.ChangeColorAsync(note, color);
+    }
+
+    /// <summary>复制一张便签（原样复制），副本出现在列表里。</summary>
+    public Task<Note> DuplicateNoteAsync(Note note)
+    {
+        ArgumentNullException.ThrowIfNull(note);
+
+        return _windows.DuplicateNoteAsync(note);
+    }
+
     /// <summary>重建列表。便签变化事件进来时自动调用，也可显式调。</summary>
     public void Refresh() => _ = RefreshAsync();
 

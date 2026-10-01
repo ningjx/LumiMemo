@@ -5,7 +5,7 @@ using LumiMemo.Core.Services;
 namespace LumiMemo.WinUI.Services;
 
 /// <summary>一张便签一个窗口的生命周期协调：映射、恢复、批量收起与退出。</summary>
-public sealed class NoteWindowManager
+public sealed class NoteWindowManager : INoteWindowActions
 {
     private readonly INoteStorage _storage;
     private readonly ITrashStore _trash;
@@ -83,7 +83,7 @@ public sealed class NoteWindowManager
         layout.IsOpen = true;
         _layouts.MarkDirty();
 
-        MainWindow window = _factory.Create(note, layout, OnWindowClosed, OnNoteChanged);
+        MainWindow window = _factory.Create(note, layout, OnWindowClosed, OnNoteChanged, this);
         _windows.Add(note.Id, window);
 
         if (activate)
@@ -126,6 +126,42 @@ public sealed class NoteWindowManager
         NotesChanged?.Invoke(this, EventArgs.Empty);
 
         return true;
+    }
+
+    /// <summary>改一张便签的颜色并落盘（列表项的「修改颜色」）。</summary>
+    /// <remarks>失败时颜色回滚并向上抛——调用方弹错误提示，列表保持原色。</remarks>
+    public async Task ChangeColorAsync(Note note, NoteColor color)
+    {
+        ArgumentNullException.ThrowIfNull(note);
+
+        NoteColor previous = note.Color;
+        note.Color = color;
+
+        try
+        {
+            await _storage.SaveAsync(note);
+        }
+        catch
+        {
+            note.Color = previous;
+            throw;
+        }
+
+        NotesChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>复制一张便签（原样：正文/格式/颜色/标题），副本进入列表。</summary>
+    /// <remarks>不自动开窗——复制常常是连做好几张，弹窗反而碍事；列表里立即可见。</remarks>
+    public async Task<Note> DuplicateNoteAsync(Note note)
+    {
+        ArgumentNullException.ThrowIfNull(note);
+
+        Note copy = await _storage.DuplicateAsync(note);
+        _notes.Add(copy);
+        _titles.Register(copy);
+        NotesChanged?.Invoke(this, EventArgs.Empty);
+
+        return copy;
     }
 
     /// <summary>把从回收站恢复回来的便签登记进列表（回收站窗口用）。</summary>
