@@ -51,6 +51,7 @@ public sealed class RichEditorHost : IRichTextDocument, IDisposable
     private Windows.Foundation.Point? _pointerPressPoint;
     private int _hoverIndex = -1;
     private int _dropIndex = -1;
+    private bool _disposed;
     private ScrollViewer? _viewer;
 
     public RichEditorHost(Grid host)
@@ -233,7 +234,7 @@ public sealed class RichEditorHost : IRichTextDocument, IDisposable
     private static SolidColorBrush EditorFrost() =>
         new(Windows.UI.Color.FromArgb(0x2E, 0xF7, 0xF3, 0xFD));
 
-    private void OnEditorLoaded(object sender, RoutedEventArgs e)
+    private void OnEditorLoaded(object sender, RoutedEventArgs e) => Safe(nameof(OnEditorLoaded), () =>
     {
         _editor.Loaded -= OnEditorLoaded;
         ApplyScrollBarCursor();
@@ -249,11 +250,13 @@ public sealed class RichEditorHost : IRichTextDocument, IDisposable
         }
 
         _editor.SizeChanged += OnEditorSizeChanged;
-    }
+    });
 
-    private void OnEditorViewChanged(object? sender, ScrollViewerViewChangedEventArgs e) => _adorner.Refresh();
+    private void OnEditorViewChanged(object? sender, ScrollViewerViewChangedEventArgs e) =>
+        Safe(nameof(OnEditorViewChanged), () => _adorner.Refresh());
 
-    private void OnEditorSizeChanged(object sender, SizeChangedEventArgs e) => _adorner.Refresh();
+    private void OnEditorSizeChanged(object sender, SizeChangedEventArgs e) =>
+        Safe(nameof(OnEditorSizeChanged), () => _adorner.Refresh());
 
     /// <summary>滚动条悬停时不该是文本的 I 形光标——它从 RichEditBox 继承了那个；给滚动条自己设成普通箭头。</summary>
     private void ApplyScrollBarCursor()
@@ -264,7 +267,7 @@ public sealed class RichEditorHost : IRichTextDocument, IDisposable
         }
     }
 
-    private void OnTextChanged(object sender, RoutedEventArgs args)
+    private void OnTextChanged(object sender, RoutedEventArgs args) => Safe(nameof(OnTextChanged), () =>
     {
         if (_loading || _composing)
         {
@@ -283,28 +286,29 @@ public sealed class RichEditorHost : IRichTextDocument, IDisposable
         }
 
         NotifyUserEdited();
-    }
+    });
 
     private void OnCompositionStarted(RichEditBox sender, TextCompositionStartedEventArgs args) =>
         _composing = true;
 
-    private void OnCompositionEnded(RichEditBox sender, TextCompositionEndedEventArgs args)
-    {
-        _composing = false;
-
-        // 组字期间的 TextChanged 被压下了；结束时补一次比较，确实落了字的算用户编辑。
-        if (!string.Equals(PlainText, _lastEditorText, StringComparison.Ordinal))
+    private void OnCompositionEnded(RichEditBox sender, TextCompositionEndedEventArgs args) =>
+        Safe(nameof(OnCompositionEnded), () =>
         {
-            NotifyUserEdited();
-        }
+            _composing = false;
 
-        if (_adorner.IsShowing)
-        {
-            _adorner.Refresh();
-        }
-    }
+            // 组字期间的 TextChanged 被压下了；结束时补一次比较，确实落了字的算用户编辑。
+            if (!string.Equals(PlainText, _lastEditorText, StringComparison.Ordinal))
+            {
+                NotifyUserEdited();
+            }
 
-    private void OnKeyDown(object sender, KeyRoutedEventArgs args)
+            if (_adorner.IsShowing)
+            {
+                _adorner.Refresh();
+            }
+        });
+
+    private void OnKeyDown(object sender, KeyRoutedEventArgs args) => Safe(nameof(OnKeyDown), () =>
     {
         // 待办行的 Enter：续行/退出在正文层完成，且必须一次原子（撤销步数）。
         if (args.Key == VirtualKey.Enter && !_composing && TryHandleTodoEnter())
@@ -331,12 +335,29 @@ public sealed class RichEditorHost : IRichTextDocument, IDisposable
             args.Handled = true;
             ExecuteCommand(command);
         }
-    }
+    });
 
     private void NotifyUserEdited()
     {
         _lastEditorText = PlainText;
         UserEdited?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>
+    /// XAML 回调跨界到 WinRT 时，逃出去的异常会被"存置"成 0xC000027B 直接崩掉进程——
+    /// 窗口关闭、文档卸载期间尤其容易踩到（用户报过退出时崩在 Microsoft.ui.xaml.dll）。
+    /// 生命周期类回调统一在这里吞掉并记日志：崩不了，VS 输出窗口也留得下线索。
+    /// </summary>
+    private static void Safe(string member, Action body)
+    {
+        try
+        {
+            body();
+        }
+        catch (Exception exception)
+        {
+            System.Diagnostics.Debug.WriteLine($"[RichEditorHost] {member} 回调异常（已吞掉）：{exception}");
+        }
     }
 
     // ---- 分点（列表） ----
@@ -556,68 +577,70 @@ public sealed class RichEditorHost : IRichTextDocument, IDisposable
 
     // ---- 图片装饰器 ----
 
-    private void OnSelectionChanged(object sender, RoutedEventArgs args)
-    {
-        if (_composing)
+    private void OnSelectionChanged(object sender, RoutedEventArgs args) =>
+        Safe(nameof(OnSelectionChanged), () =>
         {
-            return;
-        }
-
-        ITextSelection selection = _editor.Document.Selection;
-        if (selection.EndPosition == selection.StartPosition + 1 && IsImageAt(selection.StartPosition))
-        {
-            // 选中一张图片（点击图片时 RichEdit 会把图片字符选成一整段）→ 出手柄。
-            _adorner.ShowForImage(selection.StartPosition);
-        }
-        else
-        {
-            _adorner.Hide();
-        }
-    }
-
-    private void OnResizeCommitted(object? sender, ImageResizeRequest request)
-    {
-        RichEditTextDocument document = _editor.Document;
-        ITextRange range;
-        try
-        {
-            range = document.GetRange(request.Index, request.Index + 1);
-            range.GetText(TextGetOptions.FormatRtf, out string fragment);
-
-            if (RtfPict.TryResize(fragment, request.Width, request.Height, out string resized))
+            if (_composing)
             {
-                // 主路径：按比例改写 \picwgoal/\pichgoal 后回写，像素数据不动。
-                document.BeginUndoGroup();
-                try
-                {
-                    range.SetText(TextSetOptions.FormatRtf, resized);
-                }
-                finally
-                {
-                    document.EndUndoGroup();
-                }
-
-                _adorner.Refresh();
-                NotifyUserEdited();
-                _editor.Focus(FocusState.Programmatic);
                 return;
             }
 
-            if (RtfPict.TryExtractImage(fragment, out byte[] pixels, out string blipKind) && RtfPict.IsRaster(blipKind))
+            ITextSelection selection = _editor.Document.Selection;
+            if (selection.EndPosition == selection.StartPosition + 1 && IsImageAt(selection.StartPosition))
             {
-                // 降级路径：取像素删旧图、按新尺寸重插（矢量图没有可重插的位图数据）。
-                _ = ReinsertResizedImageAsync(request.Index, pixels, request.Width, request.Height);
-                return;
+                // 选中一张图片（点击图片时 RichEdit 会把图片字符选成一整段）→ 出手柄。
+                _adorner.ShowForImage(selection.StartPosition);
             }
-        }
-        catch (Exception exception)
-        {
-            HintRequested?.Invoke(this, $"缩放图片失败：{exception.Message}");
-        }
+            else
+            {
+                _adorner.Hide();
+            }
+        });
 
-        HintRequested?.Invoke(this, "这张图片暂时无法缩放（格式不支持）");
-        _adorner.Refresh();
-    }
+    private void OnResizeCommitted(object? sender, ImageResizeRequest request) =>
+        Safe(nameof(OnResizeCommitted), () =>
+        {
+            RichEditTextDocument document = _editor.Document;
+            ITextRange range;
+            try
+            {
+                range = document.GetRange(request.Index, request.Index + 1);
+                range.GetText(TextGetOptions.FormatRtf, out string fragment);
+
+                if (RtfPict.TryResize(fragment, request.Width, request.Height, out string resized))
+                {
+                    // 主路径：按比例改写 \picwgoal/\pichgoal 后回写，像素数据不动。
+                    document.BeginUndoGroup();
+                    try
+                    {
+                        range.SetText(TextSetOptions.FormatRtf, resized);
+                    }
+                    finally
+                    {
+                        document.EndUndoGroup();
+                    }
+
+                    _adorner.Refresh();
+                    NotifyUserEdited();
+                    _editor.Focus(FocusState.Programmatic);
+                    return;
+                }
+
+                if (RtfPict.TryExtractImage(fragment, out byte[] pixels, out string blipKind) && RtfPict.IsRaster(blipKind))
+                {
+                    // 降级路径：取像素删旧图、按新尺寸重插（矢量图没有可重插的位图数据）。
+                    _ = ReinsertResizedImageAsync(request.Index, pixels, request.Width, request.Height);
+                    return;
+                }
+            }
+            catch (Exception exception)
+            {
+                HintRequested?.Invoke(this, $"缩放图片失败：{exception.Message}");
+            }
+
+            HintRequested?.Invoke(this, "这张图片暂时无法缩放（格式不支持）");
+            _adorner.Refresh();
+        });
 
     private async Task ReinsertResizedImageAsync(int index, byte[] pixels, int width, int height)
     {
@@ -629,6 +652,12 @@ public sealed class RichEditorHost : IRichTextDocument, IDisposable
                 writer.WriteBytes(pixels);
                 await writer.StoreAsync();
                 writer.DetachStream();
+            }
+
+            // 等回来时窗口可能已经关了，别再碰文档。
+            if (_disposed)
+            {
+                return;
             }
 
             stream.Seek(0);
@@ -658,59 +687,63 @@ public sealed class RichEditorHost : IRichTextDocument, IDisposable
     // ---- 指针旁听：悬停提示 / 点击切换待办 / 图片命中 ----
 
     private void OnEditorPointerPressed(object sender, PointerRoutedEventArgs args) =>
-        _pointerPressPoint = args.GetCurrentPoint(_editor).Position;
+        Safe(nameof(OnEditorPointerPressed), () =>
+            _pointerPressPoint = args.GetCurrentPoint(_editor).Position);
 
-    private void OnEditorPointerReleased(object sender, PointerRoutedEventArgs args)
-    {
-        if (_pointerPressPoint is not Windows.Foundation.Point press)
+    private void OnEditorPointerReleased(object sender, PointerRoutedEventArgs args) =>
+        Safe(nameof(OnEditorPointerReleased), () =>
         {
-            return;
-        }
+            if (_pointerPressPoint is not Windows.Foundation.Point press)
+            {
+                return;
+            }
 
-        _pointerPressPoint = null;
-        Windows.Foundation.Point position = args.GetCurrentPoint(_editor).Position;
-        double dx = position.X - press.X;
-        double dy = position.Y - press.Y;
-        if ((dx * dx) + (dy * dy) > ClickSlack * ClickSlack)
+            _pointerPressPoint = null;
+            Windows.Foundation.Point position = args.GetCurrentPoint(_editor).Position;
+            double dx = position.X - press.X;
+            double dy = position.Y - press.Y;
+            if ((dx * dx) + (dy * dy) > ClickSlack * ClickSlack)
+            {
+                return; // 拖选，不理会
+            }
+
+            // 方框判定直接用「点击后的光标落点」——那是引擎对这次点击自己的解释，
+            // 比我们再算一遍指针→字符映射少一层口径风险。
+            TryToggleTodoAt(_editor.Document.Selection.StartPosition);
+        });
+
+    private void OnEditorPointerMoved(object sender, PointerRoutedEventArgs args) =>
+        Safe(nameof(OnEditorPointerMoved), () =>
         {
-            return; // 拖选，不理会
-        }
+            if (_adorner.IsSelected)
+            {
+                return;
+            }
 
-        // 方框判定直接用「点击后的光标落点」——那是引擎对这次点击自己的解释，
-        // 比我们再算一遍指针→字符映射少一层口径风险。
-        TryToggleTodoAt(_editor.Document.Selection.StartPosition);
-    }
+            Windows.Foundation.Point position = args.GetCurrentPoint(_editor).Position;
+            int imageIndex = FindImageNear(IndexFromPoint(position));
+            if (imageIndex < 0)
+            {
+                _hoverIndex = -1;
+                _adorner.HideHover();
+                return;
+            }
 
-    private void OnEditorPointerMoved(object sender, PointerRoutedEventArgs args)
-    {
-        if (_adorner.IsSelected)
-        {
-            return;
-        }
+            if (imageIndex == _hoverIndex && _adorner.IsShowing)
+            {
+                return;
+            }
 
-        Windows.Foundation.Point position = args.GetCurrentPoint(_editor).Position;
-        int imageIndex = FindImageNear(IndexFromPoint(position));
-        if (imageIndex < 0)
+            _hoverIndex = imageIndex;
+            _adorner.HoverAt(imageIndex);
+        });
+
+    private void OnEditorPointerExited(object sender, PointerRoutedEventArgs args) =>
+        Safe(nameof(OnEditorPointerExited), () =>
         {
             _hoverIndex = -1;
             _adorner.HideHover();
-            return;
-        }
-
-        if (imageIndex == _hoverIndex && _adorner.IsShowing)
-        {
-            return;
-        }
-
-        _hoverIndex = imageIndex;
-        _adorner.HoverAt(imageIndex);
-    }
-
-    private void OnEditorPointerExited(object sender, PointerRoutedEventArgs args)
-    {
-        _hoverIndex = -1;
-        _adorner.HideHover();
-    }
+        });
 
     private int IndexFromPoint(Windows.Foundation.Point position)
     {
@@ -773,62 +806,66 @@ public sealed class RichEditorHost : IRichTextDocument, IDisposable
 
     // ---- 拖放插图 ----
 
-    private void OnDragEnter(object sender, DragEventArgs args)
-    {
-        if (HasImagePayload(args.DataView))
+    private void OnDragEnter(object sender, DragEventArgs args) =>
+        Safe(nameof(OnDragEnter), () =>
         {
+            if (HasImagePayload(args.DataView))
+            {
+                args.AcceptedOperation = DataPackageOperation.Copy;
+            }
+        });
+
+    private void OnDragOver(object sender, DragEventArgs args) =>
+        Safe(nameof(OnDragOver), () =>
+        {
+            if (!HasImagePayload(args.DataView))
+            {
+                return; // 非图片数据不干预，保持原生文本拖放
+            }
+
             args.AcceptedOperation = DataPackageOperation.Copy;
-        }
-    }
 
-    private void OnDragOver(object sender, DragEventArgs args)
-    {
-        if (!HasImagePayload(args.DataView))
+            int index = IndexFromPoint(args.GetPosition(_editor));
+            if (index < 0)
+            {
+                return;
+            }
+
+            _dropIndex = index;
+            _adorner.ShowDropIndicator(index);
+
+            // 尝试让真实插入符跟着指针走；拖动期间插入符渲染不了就靠指示线兜底。
+            try
+            {
+                _editor.Document.Selection.SetRange(index, index);
+            }
+            catch (Exception)
+            {
+                // 忽略：指示线仍在。
+            }
+        });
+
+    private void OnDragLeave(object sender, DragEventArgs args) =>
+        Safe(nameof(OnDragLeave), () =>
         {
-            return; // 非图片数据不干预，保持原生文本拖放
-        }
+            _dropIndex = -1;
+            _adorner.HideDropIndicator();
+        });
 
-        args.AcceptedOperation = DataPackageOperation.Copy;
-
-        int index = IndexFromPoint(args.GetPosition(_editor));
-        if (index < 0)
+    private void OnDrop(object sender, DragEventArgs args) =>
+        Safe(nameof(OnDrop), () =>
         {
-            return;
-        }
+            _adorner.HideDropIndicator();
+            if (!HasImagePayload(args.DataView))
+            {
+                return;
+            }
 
-        _dropIndex = index;
-        _adorner.ShowDropIndicator(index);
-
-        // 尝试让真实插入符跟着指针走；拖动期间插入符渲染不了就靠指示线兜底。
-        try
-        {
-            _editor.Document.Selection.SetRange(index, index);
-        }
-        catch (Exception)
-        {
-            // 忽略：指示线仍在。
-        }
-    }
-
-    private void OnDragLeave(object sender, DragEventArgs args)
-    {
-        _dropIndex = -1;
-        _adorner.HideDropIndicator();
-    }
-
-    private void OnDrop(object sender, DragEventArgs args)
-    {
-        _adorner.HideDropIndicator();
-        if (!HasImagePayload(args.DataView))
-        {
-            return;
-        }
-
-        args.Handled = true;
-        int index = _dropIndex;
-        _dropIndex = -1;
-        _ = InsertDroppedImageAsync(args.DataView, index);
-    }
+            args.Handled = true;
+            int index = _dropIndex;
+            _dropIndex = -1;
+            _ = InsertDroppedImageAsync(args.DataView, index);
+        });
 
     private static bool HasImagePayload(DataPackageView view) =>
         view.Contains(StandardDataFormats.StorageItems) || view.Contains(StandardDataFormats.Bitmap);
@@ -908,6 +945,13 @@ public sealed class RichEditorHost : IRichTextDocument, IDisposable
     private async Task InsertImageAsync(IRandomAccessStream stream, string name, int index)
     {
         BitmapDecoder decoder = await BitmapDecoder.CreateAsync(stream);
+
+        // 解码是异步的：等回来时窗口可能已经关了，别再碰文档。
+        if (_disposed)
+        {
+            return;
+        }
+
         double scale = Math.Min(1.0, MaxInsertImageEdge / Math.Max(decoder.PixelWidth, decoder.PixelHeight));
         int width = Math.Max(1, (int)Math.Round(decoder.PixelWidth * scale));
         int height = Math.Max(1, (int)Math.Round(decoder.PixelHeight * scale));
@@ -989,6 +1033,7 @@ public sealed class RichEditorHost : IRichTextDocument, IDisposable
 
     public void Dispose()
     {
+        _disposed = true;
         _editor.TextChanged -= OnTextChanged;
         _editor.SelectionChanged -= OnSelectionChanged;
         _editor.Paste -= OnPaste;

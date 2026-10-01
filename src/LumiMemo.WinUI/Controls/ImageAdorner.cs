@@ -402,68 +402,85 @@ internal sealed class ImageAdorner
         }
     }
 
-    private void OnHandlePressed(object sender, PointerRoutedEventArgs args)
-    {
-        if (sender is not Border box || box.Tag is not ResizeHandle handle)
+    private void OnHandlePressed(object sender, PointerRoutedEventArgs args) =>
+        Safe(nameof(OnHandlePressed), () =>
         {
-            return;
-        }
+            if (sender is not Border box || box.Tag is not ResizeHandle handle)
+            {
+                return;
+            }
 
-        args.Handled = true;
-        box.CapturePointer(args.Pointer);
-        _dragHandle = handle;
-        _dragStartRect = _rect;
-        // 宽度上限：编辑区可视宽减掉编辑器左右内边距（18×2），保证不出现横向溢出。
-        _dragMaxWidth = Math.Max(AdornerGeometry.MinEdge, _editor.ActualWidth - 36);
-    }
+            args.Handled = true;
+            box.CapturePointer(args.Pointer);
+            _dragHandle = handle;
+            _dragStartRect = _rect;
+            // 宽度上限：编辑区可视宽减掉编辑器左右内边距（18×2），保证不出现横向溢出。
+            _dragMaxWidth = Math.Max(AdornerGeometry.MinEdge, _editor.ActualWidth - 36);
+        });
 
-    private void OnHandleMoved(object sender, PointerRoutedEventArgs args)
-    {
-        if (_dragHandle == ResizeHandle.None)
+    private void OnHandleMoved(object sender, PointerRoutedEventArgs args) =>
+        Safe(nameof(OnHandleMoved), () =>
         {
-            return;
-        }
+            if (_dragHandle == ResizeHandle.None)
+            {
+                return;
+            }
 
-        args.Handled = true;
-        PointD pointer = ToPoint(args.GetCurrentPoint(_canvas).Position);
-        PointD size = AdornerGeometry.Resize(_dragStartRect, _dragHandle, pointer, _dragMaxWidth);
+            args.Handled = true;
+            PointD pointer = ToPoint(args.GetCurrentPoint(_canvas).Position);
+            PointD size = AdornerGeometry.Resize(_dragStartRect, _dragHandle, pointer, _dragMaxWidth);
 
-        // 锚点 = 图片左上角：内嵌图片在行里就是从左上向右下展开，预览即结果。
-        var preview = new RectD(_dragStartRect.X, _dragStartRect.Y, size.X, size.Y);
-        UpdateRect(preview);
-        ShowSizeLabel(preview);
-    }
+            // 锚点 = 图片左上角：内嵌图片在行里就是从左上向右下展开，预览即结果。
+            var preview = new RectD(_dragStartRect.X, _dragStartRect.Y, size.X, size.Y);
+            UpdateRect(preview);
+            ShowSizeLabel(preview);
+        });
 
-    private void OnHandleReleased(object sender, PointerRoutedEventArgs args)
-    {
-        if (_dragHandle == ResizeHandle.None || sender is not Border box)
+    private void OnHandleReleased(object sender, PointerRoutedEventArgs args) =>
+        Safe(nameof(OnHandleReleased), () =>
         {
-            return;
-        }
+            if (_dragHandle == ResizeHandle.None || sender is not Border box)
+            {
+                return;
+            }
 
-        args.Handled = true;
-        ResizeHandle handle = _dragHandle;
-        _dragHandle = ResizeHandle.None;
-        box.ReleasePointerCapture(args.Pointer);
+            args.Handled = true;
+            ResizeHandle handle = _dragHandle;
+            _dragHandle = ResizeHandle.None;
+            box.ReleasePointerCapture(args.Pointer);
 
-        PointD pointer = ToPoint(args.GetCurrentPoint(_canvas).Position);
-        PointD size = AdornerGeometry.Resize(_dragStartRect, handle, pointer, _dragMaxWidth);
+            PointD pointer = ToPoint(args.GetCurrentPoint(_canvas).Position);
+            PointD size = AdornerGeometry.Resize(_dragStartRect, handle, pointer, _dragMaxWidth);
 
-        _sizeLabel.Visibility = Visibility.Collapsed;
-        ResizeCommitted?.Invoke(this, new ImageResizeRequest(_index, (int)Math.Round(size.X), (int)Math.Round(size.Y)));
-    }
+            _sizeLabel.Visibility = Visibility.Collapsed;
+            ResizeCommitted?.Invoke(this, new ImageResizeRequest(_index, (int)Math.Round(size.X), (int)Math.Round(size.Y)));
+        });
 
-    private void OnHandleCaptureLost(object sender, PointerRoutedEventArgs args)
-    {
-        if (_dragHandle == ResizeHandle.None)
+    private void OnHandleCaptureLost(object sender, PointerRoutedEventArgs args) =>
+        Safe(nameof(OnHandleCaptureLost), () =>
         {
-            return;
-        }
+            if (_dragHandle == ResizeHandle.None)
+            {
+                return;
+            }
 
-        // 拖拽被打断（释放捕获、窗口切走等）：取消这次预览。
-        _dragHandle = ResizeHandle.None;
-        _sizeLabel.Visibility = Visibility.Collapsed;
-        UpdateRect(_rect);
+            // 拖拽被打断（释放捕获、窗口切走等）：取消这次预览。
+            _dragHandle = ResizeHandle.None;
+            _sizeLabel.Visibility = Visibility.Collapsed;
+            UpdateRect(_rect);
+        });
+
+    /// <summary>手柄回调跨越 WinRT 边界抛异常会成"存置异常"崩掉进程（与 RichEditorHost.Safe 同理）——吞掉并记日志。</summary>
+    private static void Safe(string member, Action body)
+    {
+        try
+        {
+            body();
+        }
+        catch (Exception exception)
+        {
+            System.Diagnostics.Debug.WriteLine($"[ImageAdorner] {member} 回调异常（已吞掉）：{exception}");
+        }
     }
 
     private void ShowSizeLabel(RectD preview)
