@@ -54,6 +54,7 @@ public sealed partial class MainWindow : Window
 
         _editor = new RichEditorHost(EditorHost);
         _viewModel.AttachDocument(_editor);
+        _editor.HintRequested += OnEditorHintRequested;
         _viewModel.TopMostChanged += OnTopMostChanged;
 
         Title = "LumiMemo";
@@ -254,29 +255,12 @@ public sealed partial class MainWindow : Window
 
     private void OnStrikeClick(object sender, RoutedEventArgs e) => _editor.ExecuteCommand("strikethrough");
 
-    private async void OnInsertImageClick(object sender, RoutedEventArgs e)
-    {
-        var picker = new Windows.Storage.Pickers.FileOpenPicker();
-        picker.FileTypeFilter.Add(".png");
-        picker.FileTypeFilter.Add(".jpg");
-        picker.FileTypeFilter.Add(".jpeg");
-        WinRT.Interop.InitializeWithWindow.Initialize(
-            picker, WinRT.Interop.WindowNative.GetWindowHandle(this));
-        Windows.Storage.StorageFile? file = await picker.PickSingleFileAsync();
-        if (file is null)
-        {
-            return;
-        }
+    private void OnBulletClick(object sender, RoutedEventArgs e) => _editor.ExecuteCommand("bullet");
 
-        try
-        {
-            await _editor.InsertImageAsync(file.Path);
-        }
-        catch (Exception exception)
-        {
-            _viewModel.ShowHint($"插入图片失败：{exception.Message}");
-        }
-    }
+    private void OnTodoClick(object sender, RoutedEventArgs e) => _editor.ExecuteCommand("todo");
+
+    /// <summary>编辑区的提示（插图/缩放失败等）转发到状态栏。</summary>
+    private void OnEditorHintRequested(object? sender, string message) => _viewModel.ShowHint(message);
 
     // ---- 关闭与退出 ----
 
@@ -377,6 +361,7 @@ public sealed partial class MainWindow : Window
     {
         // 先做同步清理：窗口管理器要立刻把这个实例摘掉（否则同一张便签重开拿不到新窗口）。
         _viewModel.TopMostChanged -= OnTopMostChanged;
+        _editor.HintRequested -= OnEditorHintRequested;
         Closed -= OnWindowClosed;
         _onClosed(_viewModel.Id);
         _appWindow.Changed -= OnAppWindowChanged;
