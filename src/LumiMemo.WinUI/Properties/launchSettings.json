@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "LumiMemo.WinUI (Unpackaged)": {
+      "commandName": "Project",
+      "nativeDebugging": true
+    }
+  }
+}

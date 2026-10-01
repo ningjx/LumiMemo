@@ -1,0 +1,66 @@
+:root {
+  color-scheme: light;
+  --lumi-foreground: #3f3745;
+  --lumi-muted: #75697c;
+  --lumi-accent: #8d6aa3;
+  --lumi-selection: rgba(178, 132, 210, 0.28);
+  font-family: "Microsoft YaHei UI", "Segoe UI", sans-serif;
+}
+
+html, body, #editor {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 100%;
+  margin: 0;
+  background: transparent !important;
+}
+
+body {
+  overflow-x: hidden;
+  color: var(--lumi-foreground);
+}
+
+::selection { background: var(--lumi-selection); }
+
+.milkdown,
+.milkdown .editor,
+.milkdown .ProseMirror {
+  box-sizing: border-box;
+  min-height: 100vh;
+  max-width: none !important;
+  margin: 0 !important;
+  background: transparent !important;
+}
+
+.milkdown .ProseMirror {
+  padding: 12px 14px 52px !important;
+  color: var(--lumi-foreground);
+  caret-color: var(--lumi-accent);
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.65;
+  outline: none;
+}
+
+.milkdown .ProseMirror p { margin: 0.25em 0; }
+.milkdown .ProseMirror h1 { font-size: 1.55em; margin: .7em 0 .35em; }
+.milkdown .ProseMirror h2 { font-size: 1.3em; margin: .65em 0 .3em; }
+.milkdown .ProseMirror h3 { font-size: 1.12em; margin: .55em 0 .25em; }
+.milkdown .ProseMirror blockquote {
+  margin: .5em 0;
+  padding-left: .8em;
+  border-left: 3px solid color-mix(in srgb, var(--lumi-accent) 62%, transparent);
+  color: var(--lumi-muted);
+}
+.milkdown .ProseMirror code {
+  border-radius: 5px;
+  padding: .08em .32em;
+  background: color-mix(in srgb, var(--lumi-accent) 12%, transparent);
+}
+.milkdown .ProseMirror ul,
+.milkdown .ProseMirror ol { padding-left: 1.55em; }
+.milkdown .ProseMirror li { margin: .12em 0; }
+.milkdown .ProseMirror a { color: var(--lumi-accent); }
+
+/* Crepe 的浮动格式栏由 WPF 底栏代替；块编辑和表格控件继续保留。 */
+[data-milkdown-plugin="toolbar"] { display: none !important; }

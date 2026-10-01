@@ -110,4 +110,8 @@ public sealed class AppSettings
 
     [JsonPropertyName("logLevel")]
     public string LogLevel { get; set; } = "Information";
+
+    /// <summary>自动标题配置；旧设置文件缺少此项时保持关闭。</summary>
+    [JsonPropertyName("llm")]
+    public LlmSettings Llm { get; set; } = new();
 }

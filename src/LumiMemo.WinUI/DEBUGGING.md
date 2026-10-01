@@ -1,0 +1,20 @@
+# WinUI 富文本实验版：Visual Studio 调试
+
+## 启动
+
+1. 用 Visual Studio 打开 `src/LumiMemo.sln`。
+2. 在解决方案资源管理器中右键 `LumiMemo.WinUI`，选择“设为启动项目”。
+3. 工具栏选择 `Debug`、`x64` 和 `LumiMemo.WinUI (Unpackaged)` 启动配置。
+4. 按 `F5`。该启动配置已启用托管代码与本机代码混合调试。
+
+项目以 `WindowsPackageType=None` 构建，因此不要改成 MSIX Package 启动。
+
+## 关闭后重开便笺
+
+1. 在便笺列表中打开一张 `.lumi` 富文本便笺，尤其是含图片的便笺。
+2. 关闭便笺窗口，再从列表重新打开；可能需要重复一次。
+3. 旧版曾在再次打开时触发 `ShowFromTray()` 的空引用异常，随后 WinUI 将异常报告为 `0xC000027B`。窗口管理器保留了已经关闭的窗口实例。现在使用 `Window.Closed` 移除该实例，用户已实测多次关闭、重开正常。
+
+相关代码：`MainWindow.xaml.cs` 的 `OnWindowClosing` 和 `OnWindowClosed`。便笺数据由 `LumiNoteRepository.cs` 保存在 `.lumi` 文件中；旧 `.md` 文件不会由这个 WinUI 实验版读取。
+
+Visual Studio 中可在“调试 > 窗口 > 异常设置”观察异常，并在崩溃时查看“调用堆栈”。由于这是 WinUI 的延迟抛出异常，最终崩溃栈可能并非最初出错的位置；也要留意此前的首次异常和“输出”窗口。

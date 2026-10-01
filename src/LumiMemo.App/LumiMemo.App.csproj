@@ -2,7 +2,8 @@
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net10.0-windows</TargetFramework>
+    <!-- CompositionControl 使用 Windows Runtime 合成 API，最低平台版本需显式写入 TFM。 -->
+    <TargetFramework>net10.0-windows10.0.17763.0</TargetFramework>
     <UseWPF>true</UseWPF>
     <RootNamespace>LumiMemo.App</RootNamespace>
     <AssemblyName>LumiMemo.App</AssemblyName>
@@ -27,6 +28,8 @@
     <!-- §2.2：服务组装。只用它注册与解析根对象，不用 Generic Host（§4.3） -->
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
     <PackageReference Include="Microsoft.Extensions.Logging" />
+    <!-- Milkdown 编辑器的 WPF 宿主；CompositionControl 能与自绘/透明窗口正确合成。 -->
+    <PackageReference Include="Microsoft.Web.WebView2" />
   </ItemGroup>
 
   <ItemGroup>
@@ -42,6 +45,13 @@
       换访问方式不影响资源本身。
     -->
     <EmbeddedResource Update="Resources\Strings.resx" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 由 editor/ 的 Vite 构建生成；运行时只读取本地固定源，不访问公网。 -->
+    <Content Include="EditorAssets\**\*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
 
 </Project>
