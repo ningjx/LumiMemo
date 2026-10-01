@@ -1,6 +1,10 @@
 # ADR 0001：采用 Milkdown + WebView2CompositionControl 作为 Markdown 编辑内核
 
-- 状态：实施中；阶段 A、阶段 B 已完成，阶段 C 图片待开发
+> **已被 [ADR 0002](0002-private-lumi-format.md) 取代（2026-10-01）**：本文的方向随 WPF
+> 项目一起废弃——便笺改为私有 `.lumi` 格式与 WinUI 原生编辑器，外部编辑兼容不再成立。
+> 以下内容只保留为历史记录。
+
+- 状态：已被 ADR 0002 取代
 - 日期：2026-09-26
 - 决策范围：便笺正文编辑、Markdown 互操作、图片与附件、格式工具栏
 

@@ -727,6 +727,8 @@ protected override async void OnStartup(StartupEventArgs e)
 
 # 5. 数据设计
 
+> **2026-10-01 决策注记**：本章的 Markdown / Front Matter 文件体系（§5.1–§5.10，连同 §10、§11 的外部同步机制）已被「私有 `.lumi` 格式」决策整体取代——便笺是 JSON（版本 / RTF 权威内容 / 纯文本投影 / 颜色 / 标签 / 时间戳 / AI 标题），**只由本程序读写**，放弃外部编辑兼容与同步。删除 WPF 项目后，`Note` 模型也已去掉行尾 / BOM / Front Matter 等保真字段。现有实现见 `LumiMemo.Infrastructure/Storage/LumiNoteStorage.cs`，决策记录见 [ADR 0002](docs/adr/0002-private-lumi-format.md)。以下内容只保留为历史设计记录。
+
 ## 5.1 Markdown 为唯一真实数据源
 
 每个便签对应笔记目录下的一个 Markdown 文件：
@@ -1998,6 +2000,8 @@ public sealed class SearchIndex
 ---
 
 # 10. 文件监听
+
+> **2026-10-01 决策注记**：整章作废——便笺不再支持外部编辑（见 §5 注记），文件监听、三路比较与冲突裁决随之退役。这些机制曾在 WPF 版实现（FileWatchService / FileSystemWatcherAdapter），已随 WPF 项目一并删除。WinUI 版当前不接受、也不需要外部修改感知。
 
 外部编辑器改了 Markdown，程序必须能感知。这一章决定"与 Obsidian 互通"能否真正兑现。
 
@@ -4240,6 +4244,8 @@ PinSlip 的"便签组"允许把多张便签归成一组，整组一起移动、�
 # 16. 编辑器
 
 > **2026-09-26 架构更新**：本章原先的“源码编辑 + 独立预览 + 自写 FlowDocument 渲染器”方案已经被 [ADR 0001](docs/adr/0001-markdown-editor.md) 替代。后续实现以 `WebView2CompositionControl + Milkdown Crepe` 为准；本章以下旧内容只保留为历史设计记录，不得继续据此扩展现有 `MarkdownRichTextBox`。
+
+> **2026-10-01 决策注记**：上面的 WebView2/Milkdown 方向随 WPF 项目一起废弃（ADR 0001 被 [ADR 0002](docs/adr/0002-private-lumi-format.md) 取代）。当前唯一实现是 **WinUI 3 原生编辑器**：`RichEditBox`（`LumiMemo.WinUI/Controls/RichEditorHost.cs`），RTF 为权威内容、纯文本投影供标题派生与搜索，集成方式见 §5 注记。
 
 ## 16.1 编辑与预览
 
