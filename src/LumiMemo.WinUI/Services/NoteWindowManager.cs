@@ -4,43 +4,40 @@ using LumiMemo.Core.Services;
 
 namespace LumiMemo.WinUI.Services;
 
-/// <summary>Coordinates the one-window-per-note lifecycle for the WinUI shell.</summary>
+/// <summary>一张便签一个窗口的生命周期协调：映射、恢复、批量收起与退出。</summary>
 public sealed class NoteWindowManager
 {
-    private readonly INoteRepository _repository;
-    private readonly IClock _clock;
-    private readonly AppSettings _settings;
+    private readonly INoteStorage _storage;
     private readonly ILayoutStore _layouts;
     private readonly NoteTitleCoordinator _titles;
+    private readonly NoteWindowFactory _factory;
     private readonly List<Note> _notes;
     private readonly Dictionary<Guid, MainWindow> _windows = [];
 
     public NoteWindowManager(
         IReadOnlyList<Note> notes,
-        INoteRepository repository,
-        IClock clock,
-        AppSettings settings,
+        INoteStorage storage,
         ILayoutStore layouts,
-        NoteTitleCoordinator titles)
+        NoteTitleCoordinator titles,
+        NoteWindowFactory windowFactory)
     {
         ArgumentNullException.ThrowIfNull(notes);
-        ArgumentNullException.ThrowIfNull(repository);
-        ArgumentNullException.ThrowIfNull(clock);
-        ArgumentNullException.ThrowIfNull(settings);
+        ArgumentNullException.ThrowIfNull(storage);
         ArgumentNullException.ThrowIfNull(layouts);
         ArgumentNullException.ThrowIfNull(titles);
+        ArgumentNullException.ThrowIfNull(windowFactory);
 
         _notes = [.. notes];
-        _repository = repository;
-        _clock = clock;
-        _settings = settings;
+        _storage = storage;
         _layouts = layouts;
         _titles = titles;
+        _factory = windowFactory;
         _titles.TitleUpdated += OnTitleUpdated;
         _titles.GenerationStateChanged += OnTitleGenerationStateChanged;
     }
 
     public event EventHandler? NotesChanged;
+
     public event EventHandler? TitleGenerationStateChanged;
 
     public IReadOnlyList<Note> Notes => _notes;
@@ -52,7 +49,7 @@ public sealed class NoteWindowManager
     public int RestoreOpenNotes()
     {
         int restored = 0;
-        foreach (Note note in _notes.OrderBy(item => item.CreatedAt))
+        foreach (Note note in _notes.OrderBy(static item => item.CreatedAt))
         {
             if (_layouts.TryGet(note.Id)?.IsOpen is true)
             {
@@ -82,16 +79,7 @@ public sealed class NoteWindowManager
         layout.IsOpen = true;
         _layouts.MarkDirty();
 
-        var window = new MainWindow(
-            note,
-            _repository,
-            _clock,
-            _settings,
-            _titles,
-            _layouts,
-            layout,
-            OnWindowClosed,
-            OnNoteChanged);
+        MainWindow window = _factory.Create(note, layout, OnWindowClosed, OnNoteChanged);
         _windows.Add(note.Id, window);
 
         if (activate)
@@ -106,19 +94,11 @@ public sealed class NoteWindowManager
 
     public async Task CreateNoteAsync()
     {
-        Note note = await _repository.CreateAsync();
+        Note note = await _storage.CreateAsync();
         _notes.Add(note);
         _titles.Register(note);
         NotesChanged?.Invoke(this, EventArgs.Empty);
         OpenNote(note.Id);
-    }
-
-    public void ShowAllNotes()
-    {
-        foreach (MainWindow window in _windows.Values)
-        {
-            window.ShowFromTray();
-        }
     }
 
     public void HideAllNotes()
@@ -129,14 +109,14 @@ public sealed class NoteWindowManager
         }
     }
 
-    public void CloseAllForExit()
+    /// <summary>托盘退出路径：逐窗保存并关闭（保存失败只留日志，退出总会发生），再收掉标题协调器。</summary>
+    public async Task CloseAllForExitAsync()
     {
         foreach (MainWindow window in _windows.Values.ToArray())
         {
-            window.CloseForExit();
+            await window.CloseForExitAsync();
         }
 
-        _layouts.FlushAsync().GetAwaiter().GetResult();
         _titles.TitleUpdated -= OnTitleUpdated;
         _titles.GenerationStateChanged -= OnTitleGenerationStateChanged;
         _titles.Dispose();

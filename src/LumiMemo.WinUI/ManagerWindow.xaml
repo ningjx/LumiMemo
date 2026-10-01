@@ -3,6 +3,7 @@
     x:Class="LumiMemo.WinUI.ManagerWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:tb="using:H.NotifyIcon"
     Title="LumiMemo 便笺列表">
 
     <Grid x:Name="Root" Background="Transparent">
@@ -44,6 +45,7 @@
         <ListView x:Name="NotesList"
                   Grid.Row="2"
                   Margin="8,0,8,10"
+                  ItemsSource="{x:Bind ViewModel.Items, Mode=OneWay}"
                   IsItemClickEnabled="True"
                   ItemClick="OnNoteItemClick"
                   SelectionMode="None">
@@ -78,5 +80,13 @@
                 </DataTemplate>
             </ListView.ItemTemplate>
         </ListView>
+
+        <!--
+            托盘控件必须挂在窗口的可视化树里：库内部的通知消息处理与菜单展开
+            都经它的 DispatcherQueue 调度。悬空 new 出来的实例会出现
+            「图标在、点了全都没反应」。管理器是常驻窗口（关闭只是隐藏），
+            是它最合适的宿主；管理器没显示时由 TrayIconService 手动 ForceCreate。
+        -->
+        <tb:TaskbarIcon x:Name="TrayIcon" />
     </Grid>
 </Window>

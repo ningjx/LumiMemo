@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows10.0.26100.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <RootNamespace>LumiMemo.WinUI.Tests</RootNamespace>
+    <AssemblyName>LumiMemo.WinUI.Tests</AssemblyName>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+
+    <!--
+      测试宿主只加载 LumiMemo.WinUI 里的非 UI 类型（ViewModel 与保存服务），
+      不初始化 XAML，因此不需要 UseWinUI。WindowsPackageType 与主工程一致，
+      避免 MSIX 校验在测试进程里介入。
+    -->
+    <WindowsPackageType>None</WindowsPackageType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\LumiMemo.Core\LumiMemo.Core.csproj" />
+    <ProjectReference Include="..\LumiMemo.WinUI\LumiMemo.WinUI.csproj" />
+  </ItemGroup>
+
+  <!-- 与其余测试工程同一套：xunit.v3 + MTP，不引 VSTest 路径的组件。 -->
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" />
+  </ItemGroup>
+
+</Project>

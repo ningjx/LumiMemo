@@ -20,7 +20,7 @@ namespace LumiMemo.Infrastructure.Settings;
 /// <para>
 /// 保存策略是<strong>整体保存 + 触发点 + 节流</strong>（§8.5）：<see cref="MarkDirty"/>
 /// 只置一个标志，真正的写盘发生在节流后的 <see cref="FlushAsync"/>。谁负责节流
-/// 由上层决定（<c>LayoutService</c> 持有一个 1 秒的定时器）——本类不做定时，
+/// 由上层决定（WinUI 侧在窗口移动结束后标记、关窗与退出时统一冲刷）——本类不做定时，
 /// 免得「什么时候写」这件事实现在两个地方。
 /// </para>
 /// </remarks>
@@ -147,7 +147,7 @@ public sealed class JsonLayoutStore : ILayoutStore
         }
 
         // 位置留 (0,0) 由调用方接管：新便签该摆哪要按 §13.8 的算位算法与层叠规则定，
-        // 那个决策属于 LayoutService，不属于存储。
+        // 那个决策属于上层，不属于存储。
         var created = new NoteLayout
         {
             NoteId = noteId,

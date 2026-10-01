@@ -12,10 +12,10 @@ public sealed class NoteTitleCoordinatorTests
     public async Task SavedNoteReceivesTitleAfterEditorIsGone()
     {
         var note = new Note { Id = Guid.NewGuid(), FilePath = "note.lumi", Content = "" };
-        var repository = new FakeNoteRepository();
+        var storage = new FakeNoteStorage();
         var settings = new AppSettings { Llm = new LlmSettings { Enabled = true, Model = "test" } };
         using var coordinator = new NoteTitleCoordinator(
-            [note], repository, new FakeClock(), settings, new FakeGenerator());
+            [note], storage, new FakeClock(), settings, new FakeGenerator());
         var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         coordinator.TitleUpdated += _ => completed.TrySetResult();
 
@@ -25,7 +25,7 @@ public sealed class NoteTitleCoordinatorTests
 
         await completed.Task.WaitAsync(TimeSpan.FromSeconds(4), TestContext.Current.CancellationToken);
         Assert.Equal("生成的标题", note.AutoTitle);
-        Assert.Single(repository.Saved);
+        Assert.Single(storage.Saved);
         Assert.False(coordinator.IsPending(note.Id));
     }
 

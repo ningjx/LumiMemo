@@ -6,22 +6,22 @@ namespace LumiMemo.Core.Services;
 /// <summary>按便笺管理标题生成任务；任务独立于便笺窗口生命周期。</summary>
 public sealed class NoteTitleCoordinator : IDisposable
 {
-    private readonly INoteRepository _repository;
+    private readonly INoteStorage _storage;
     private readonly IClock _clock;
     private readonly AppSettings _settings;
     private readonly ITitleGenerator _generator;
     private readonly Dictionary<Guid, State> _states = [];
     private bool _disposed;
 
-    public NoteTitleCoordinator(IEnumerable<Note> notes, INoteRepository repository, IClock clock,
+    public NoteTitleCoordinator(IEnumerable<Note> notes, INoteStorage storage, IClock clock,
         AppSettings settings, ITitleGenerator generator)
     {
         ArgumentNullException.ThrowIfNull(notes);
-        ArgumentNullException.ThrowIfNull(repository);
+        ArgumentNullException.ThrowIfNull(storage);
         ArgumentNullException.ThrowIfNull(clock);
         ArgumentNullException.ThrowIfNull(settings);
         ArgumentNullException.ThrowIfNull(generator);
-        _repository = repository;
+        _storage = storage;
         _clock = clock;
         _settings = settings;
         _generator = generator;
@@ -109,7 +109,7 @@ public sealed class NoteTitleCoordinator : IDisposable
             note.UpdatedAt = _clock.Now;
             try
             {
-                await _repository.SaveAsync(note, request.Token);
+                await _storage.SaveAsync(note, request.Token);
             }
             catch
             {

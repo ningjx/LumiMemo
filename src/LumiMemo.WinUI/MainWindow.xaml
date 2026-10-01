@@ -58,7 +58,7 @@
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
                     <TextBlock x:Name="TitleText"
-                               Text="LumiMemo"
+                               Text="{x:Bind ViewModel.Title, Mode=OneWay}"
                                VerticalAlignment="Center"
                                FontWeight="SemiBold"
                                Foreground="#FF403747"
@@ -66,14 +66,15 @@
                     <ProgressRing x:Name="TitleProgress" Grid.Column="1"
                                   Width="16" Height="16" Margin="6,0,0,0"
                                   VerticalAlignment="Center"
-                                  IsActive="False" Visibility="Collapsed" />
+                                  IsActive="{x:Bind ViewModel.IsTitleGenerating, Mode=OneWay}"
+                                  Visibility="{x:Bind ToVisibility(ViewModel.IsTitleGenerating), Mode=OneWay}" />
                 </Grid>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="3">
                     <ToggleButton x:Name="PinButton"
                                   Style="{StaticResource GlassToggleButtonStyle}"
                                   Width="32" Height="30"
                                   VerticalAlignment="Center"
-                                  Click="OnPinClick"
+                                  IsChecked="{x:Bind ViewModel.IsTopMost, Mode=TwoWay}"
                                   ToolTipService.ToolTip="置顶"
                                   Content="↑" />
                     <Button Width="32" Height="30"
@@ -117,7 +118,7 @@
                            VerticalAlignment="Center"
                            FontSize="12"
                            Foreground="#FF75697C"
-                           Text="已保存 · 0 字" />
+                           Text="{x:Bind ViewModel.StatusText, Mode=OneWay}" />
             </Grid>
         </Border>
 

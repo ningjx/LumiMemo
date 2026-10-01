@@ -22,8 +22,8 @@ namespace LumiMemo.Infrastructure.Storage;
 /// 跨卷会退化成「复制 + 删除」，原子性随之消失。
 /// </para>
 /// <para>
-/// 本类只认字节，不认识 <c>Note</c> 也不认识 Front Matter——序列化由
-/// <see cref="FrontMatterSerializer"/> 负责，这样原子性这件事只有一处实现、一处测试。
+/// 本类只认字节，不认识 <c>Note</c>——序列化由 <see cref="LumiNoteStorage"/> 负责，
+/// 这样原子性这件事只有一处实现、一处测试。
 /// </para>
 /// </remarks>
 public sealed class AtomicFileWriter
@@ -54,17 +54,9 @@ public sealed class AtomicFileWriter
     /// <param name="lastWriteTime">写入成功后设置的文件修改时间，通常取 <c>Note.UpdatedAt</c>。</param>
     /// <param name="cancellationToken">取消标记。取消时若尚未换名，临时文件会被删除。</param>
     /// <remarks>
-    /// <para>
-    /// 本方法<strong>总是</strong>执行写入，不做「内容没变就跳过」的判断。§5.9 的那个自检放在
-    /// 仓储层（<c>MarkdownNoteRepository</c>），因为那条规则要求比较的是
-    /// 「将要写出的字节」与<strong>读入时的原始字节</strong>，而「读入时是什么」只有仓储层知道。
-    /// </para>
-    /// <para>
-    /// 换个问法为什么不在这里比：这里能比对的只有磁盘<strong>当前</strong>的字节。两者在
-    /// 「便签没有改动、但文件被外部程序改过」时结论相反——比磁盘当前内容会认为「不一样」，
-    /// 于是把内存里的旧内容写回去，正好<strong>覆盖掉用户刚在外部做的修改</strong>。
-    /// 按文档的原意比对读入时的字节，这种情况会判定「没变化、跳过写入」，是安全的那一侧。
-    /// </para>
+    /// 本方法<strong>总是</strong>执行写入，不做「内容没变就跳过」的判断——
+    /// 什么时候算「该保存」由调用方决定（<c>LumiNoteStorage</c> 及其上层的编辑节流）。
+    /// 这里能把关的只有「这一次写是不是原子的」，多一分判断就多一处和调用方抢语义的地方。
     /// </remarks>
     public async Task WriteAsync(
         string target,
@@ -89,15 +81,33 @@ public sealed class AtomicFileWriter
         {
             WriteTempFile(tempPath, bytes);
             await PublishAsync(tempPath, target, cancellationToken).ConfigureAwait(false);
-
-            // 临时文件是刚创建的，时间戳是「现在」。必须显式改回便签自己的修改时间，
-            // 否则外部编辑器、文件管理器和同步工具看到的都是错的（§11.2）。
-            File.SetLastWriteTimeUtc(target, lastWriteTime.UtcDateTime);
         }
         catch (Exception)
         {
             TryDelete(tempPath);
             throw;
+        }
+
+        // 临时文件是刚创建的，时间戳是「现在」。必须显式改回便签自己的修改时间，
+        // 否则外部编辑器、文件管理器和同步工具看到的都是错的（§11.2）。
+        TrySetLastWriteTime(target, lastWriteTime);
+    }
+
+    /// <summary>设置文件修改时间；失败<strong>不</strong>视为保存失败。</summary>
+    /// <remarks>
+    /// 走到这里时新内容已经原子换名落盘，时间戳只是元数据。网络盘、被占用的句柄
+    /// 都可能让 <see cref="File.SetLastWriteTimeUtc(string, DateTime)"/> 抛异常——
+    /// 若让它冒泡，一次已经成功的保存会被上层报成失败：数据其实好好的，形同假故障。
+    /// </remarks>
+    private static void TrySetLastWriteTime(string target, DateTimeOffset lastWriteTime)
+    {
+        try
+        {
+            File.SetLastWriteTimeUtc(target, lastWriteTime.UtcDateTime);
+        }
+        catch (Exception exception)
+            when (exception is IOException or UnauthorizedAccessException or ArgumentOutOfRangeException)
+        {
         }
     }
 

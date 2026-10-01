@@ -13,12 +13,17 @@ using Windows.UI.Core;
 namespace LumiMemo.WinUI.Controls;
 
 /// <summary>原生富文本编辑器；RTF 作为无损正文，纯文本仅用于标题和搜索。</summary>
-public sealed class RichEditorHost : IDisposable
+/// <remarks>
+/// 实现 <see cref="IRichTextDocument"/> 供 ViewModel 消费；IME 组字期间不发
+/// <see cref="IRichTextDocument.UserEdited"/>——半截拼音不该被当成一次编辑去触发保存（§15.6）。
+/// </remarks>
+public sealed class RichEditorHost : IRichTextDocument, IDisposable
 {
     private readonly Grid _host;
     private readonly RichEditBox _editor;
     private InMemoryRandomAccessStream? _loadedStream;
     private bool _loading;
+    private bool _composing;
     private string _lastEditorText = string.Empty;
 
     public RichEditorHost(Grid host)
@@ -44,6 +49,8 @@ public sealed class RichEditorHost : IDisposable
         }
 
         _editor.TextChanged += OnTextChanged;
+        _editor.TextCompositionStarted += OnCompositionStarted;
+        _editor.TextCompositionEnded += OnCompositionEnded;
         _editor.KeyDown += OnKeyDown;
         _host.Children.Add(_editor);
     }
@@ -148,12 +155,27 @@ public sealed class RichEditorHost : IDisposable
 
     private void OnTextChanged(object sender, RoutedEventArgs args)
     {
-        if (_loading || string.Equals(PlainText, _lastEditorText, StringComparison.Ordinal))
+        // 组字期间的变化一律压下：拼音串不是内容，等 TextCompositionEnded 再比一次。
+        if (_loading || _composing || string.Equals(PlainText, _lastEditorText, StringComparison.Ordinal))
         {
             return;
         }
 
         NotifyUserEdited();
+    }
+
+    private void OnCompositionStarted(RichEditBox sender, TextCompositionStartedEventArgs args) =>
+        _composing = true;
+
+    private void OnCompositionEnded(RichEditBox sender, TextCompositionEndedEventArgs args)
+    {
+        _composing = false;
+
+        // 组字期间的 TextChanged 被压下了；结束时补一次比较，确实落了字的算用户编辑。
+        if (!string.Equals(PlainText, _lastEditorText, StringComparison.Ordinal))
+        {
+            NotifyUserEdited();
+        }
     }
 
     private void OnKeyDown(object sender, KeyRoutedEventArgs args)
@@ -187,6 +209,8 @@ public sealed class RichEditorHost : IDisposable
     public void Dispose()
     {
         _editor.TextChanged -= OnTextChanged;
+        _editor.TextCompositionStarted -= OnCompositionStarted;
+        _editor.TextCompositionEnded -= OnCompositionEnded;
         _editor.KeyDown -= OnKeyDown;
         _host.Children.Remove(_editor);
         _loadedStream?.Dispose();

@@ -1,6 +1,5 @@
 using LumiMemo.Core.Models;
 using LumiMemo.Core.Search;
-using LumiMemo.Core.Stores;
 using Xunit;
 
 namespace LumiMemo.Core.Tests.Search;
@@ -16,9 +15,8 @@ namespace LumiMemo.Core.Tests.Search;
 /// 修正项的意义就是差值本身，绝对值没有含义。
 /// </para>
 /// <para>
-/// 纯文本走真实的 <see cref="SearchIndex"/>，不自己塞一份假的：标题那一行本来就会
-/// 进纯文本（<c>GetPlainText</c> 拿的是整篇正文），自己造一份会让用例里的
-/// "只命中正文"变成现实中不存在的形态，也会让"出现次数加分"的期望值凭空差一次。
+/// 纯文本直接取 <see cref="Note.Content"/>——.lumi 的 <c>text</c> 字段就是正文本身的
+/// 投影（2026-10 的私有格式里没有 Front Matter 之类要剥的东西），无需任何索引加工。
 /// </para>
 /// </remarks>
 public sealed class NoteSearchTests
@@ -307,10 +305,10 @@ public sealed class NoteSearchTests
         IReadOnlyList<Note> notes,
         IReadOnlySet<Guid>? topMostIds = null)
     {
-        var index = new SearchIndex();
-        index.Rebuild(notes);
+        Dictionary<Guid, string> plainText =
+            notes.ToDictionary(static note => note.Id, static note => note.Content);
 
-        return NoteSearch.Search(notes, query, index.GetPlainText, topMostIds, Now);
+        return NoteSearch.Search(notes, query, id => plainText[id], topMostIds, Now);
     }
 
     private static Note NewNote(string content, DateTimeOffset? updatedAt = null, Guid? id = null)
@@ -320,7 +318,7 @@ public sealed class NoteSearchTests
         return new Note
         {
             Id = noteId,
-            FilePath = $@"D:\notes\{noteId:N}.md",
+            FilePath = $@"D:\notes\{noteId:N}.lumi",
             Content = content,
             CreatedAt = Now.AddYears(-1),
             UpdatedAt = updatedAt ?? Now,

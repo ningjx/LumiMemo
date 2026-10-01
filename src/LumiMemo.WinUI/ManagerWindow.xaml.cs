@@ -1,38 +1,35 @@
+using H.NotifyIcon;
+using LumiMemo.Core.Abstractions;
 using LumiMemo.Core.Models;
 using LumiMemo.WinUI.Services;
 using LumiMemo.WinUI.ViewModels;
-using Microsoft.UI.Composition;
-using Microsoft.UI.Composition.SystemBackdrops;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Windows.Graphics;
-using WinRT;
 
 namespace LumiMemo.WinUI;
 
-/// <summary>Searchable entry point for opening and creating note windows.</summary>
+/// <summary>便笺列表：搜索、打开与新建。业务状态在 <see cref="ManagerViewModel"/> 里。</summary>
 public sealed partial class ManagerWindow : Window
 {
-    private readonly NoteWindowManager _windows;
+    private readonly ManagerViewModel _viewModel;
     private readonly AppSettings _settings;
-    private readonly LumiMemo.Core.Abstractions.ISettingsStore _settingsStore;
-    private DesktopAcrylicController? _acrylicController;
-    private SystemBackdropConfiguration? _backdropConfiguration;
+    private readonly ISettingsStore _settingsStore;
+    private AcrylicBackdrop? _backdrop;
     private bool _allowClose;
 
-    public ManagerWindow(NoteWindowManager windows, AppSettings settings,
-        LumiMemo.Core.Abstractions.ISettingsStore settingsStore)
+    public ManagerWindow(ManagerViewModel viewModel, AppSettings settings, ISettingsStore settingsStore)
     {
-        ArgumentNullException.ThrowIfNull(windows);
+        ArgumentNullException.ThrowIfNull(viewModel);
         ArgumentNullException.ThrowIfNull(settings);
         ArgumentNullException.ThrowIfNull(settingsStore);
+
         InitializeComponent();
-        _windows = windows;
+
+        _viewModel = viewModel;
         _settings = settings;
         _settingsStore = settingsStore;
-        _windows.NotesChanged += OnNotesChanged;
-        _windows.TitleGenerationStateChanged += OnNotesChanged;
 
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(ManagerTitleBar);
@@ -46,9 +43,14 @@ public sealed partial class ManagerWindow : Window
             presenter.IsMaximizable = false;
         }
 
-        EnablePersistentAcrylic();
-        RefreshNotes();
+        _backdrop = AcrylicBackdrop.Apply(this, Root);
     }
+
+    /// <summary>XAML 的 x:Bind 从这里取值。</summary>
+    public ManagerViewModel ViewModel => _viewModel;
+
+    /// <summary>托盘控件（挂在 XAML 树里，由 App 在组装托盘入口时配置）。</summary>
+    public TaskbarIcon TrayIconHost => TrayIcon;
 
     public void ShowWindow()
     {
@@ -77,34 +79,8 @@ public sealed partial class ManagerWindow : Window
         await dialog.ShowAsync();
     }
 
-    private void EnablePersistentAcrylic()
-    {
-        if (!DesktopAcrylicController.IsSupported())
-        {
-            Root.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(
-                Windows.UI.Color.FromArgb(255, 247, 239, 248));
-            return;
-        }
-
-        _backdropConfiguration = new SystemBackdropConfiguration
-        {
-            IsInputActive = true,
-            Theme = SystemBackdropTheme.Light
-        };
-        _acrylicController = new DesktopAcrylicController
-        {
-            Kind = DesktopAcrylicKind.Base,
-            TintColor = Windows.UI.Color.FromArgb(255, 244, 236, 255),
-            TintOpacity = 0.34f,
-            LuminosityOpacity = 0.58f,
-            FallbackColor = Windows.UI.Color.FromArgb(255, 247, 239, 248)
-        };
-        _acrylicController.AddSystemBackdropTarget(this.As<ICompositionSupportsSystemBackdrop>());
-        _acrylicController.SetSystemBackdropConfiguration(_backdropConfiguration);
-    }
-
     private async void OnNewNoteClick(object sender, RoutedEventArgs e) =>
-        await _windows.CreateNoteAsync();
+        await _viewModel.CreateNoteAsync();
 
     private async void OnLlmSettingsClick(object sender, RoutedEventArgs e)
     {
@@ -114,35 +90,27 @@ public sealed partial class ManagerWindow : Window
         }
         catch (Exception exception)
         {
-            await new ContentDialog { XamlRoot = Root.XamlRoot, Title = "设置保存失败",
-                Content = exception.Message, CloseButtonText = "确定" }.ShowAsync();
+            await new ContentDialog
+            {
+                XamlRoot = Root.XamlRoot,
+                Title = "设置保存失败",
+                Content = exception.Message,
+                CloseButtonText = "确定",
+            }.ShowAsync();
         }
     }
 
     private void OnHideClick(object sender, RoutedEventArgs e) => HideWindow();
 
-    private void OnSearchTextChanged(object sender, TextChangedEventArgs e) => RefreshNotes();
+    private void OnSearchTextChanged(object sender, TextChangedEventArgs e) =>
+        _viewModel.Query = SearchBox.Text;
 
     private void OnNoteItemClick(object sender, ItemClickEventArgs e)
     {
         if (e.ClickedItem is NoteListItem item)
         {
-            _windows.OpenNote(item.Note.Id);
+            _viewModel.OpenNote(item.Note);
         }
-    }
-
-    private void OnNotesChanged(object? sender, EventArgs e) => RefreshNotes();
-
-    private void RefreshNotes()
-    {
-        string query = SearchBox.Text.Trim();
-        NotesList.ItemsSource = _windows.Notes
-            .Where(note => query.Length == 0
-                || note.Title.Contains(query, StringComparison.CurrentCultureIgnoreCase)
-                || note.Content.Contains(query, StringComparison.CurrentCultureIgnoreCase))
-            .OrderByDescending(note => note.UpdatedAt)
-            .Select(note => new NoteListItem(note, _windows.IsTitleGenerating(note.Id)))
-            .ToList();
     }
 
     private void OnWindowClosing(AppWindow sender, AppWindowClosingEventArgs args)
@@ -154,10 +122,8 @@ public sealed partial class ManagerWindow : Window
             return;
         }
 
-        _windows.NotesChanged -= OnNotesChanged;
-        _windows.TitleGenerationStateChanged -= OnNotesChanged;
-        _acrylicController?.Dispose();
-        _acrylicController = null;
-        _backdropConfiguration = null;
+        _viewModel.Dispose();
+        _backdrop?.Dispose();
+        _backdrop = null;
     }
 }

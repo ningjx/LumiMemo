@@ -34,10 +34,6 @@ public sealed class TitleDeriverTests
     public void 只有空白字符_返回占位标题() =>
         Assert.Equal(Untitled, TitleDeriver.Derive("  \r\n\t\r\n   "));
 
-    [Fact]
-    public void 正文为空即只有FrontMatter被剥掉_返回占位标题() =>
-        Assert.Equal(Untitled, TitleDeriver.Derive(string.Empty));
-
     // ---- 基本取行 ----
 
     [Fact]

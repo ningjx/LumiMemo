@@ -1,106 +1,84 @@
-using Microsoft.UI.Composition;
-using Microsoft.UI.Composition.SystemBackdrops;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using LumiMemo.Core.Abstractions;
 using LumiMemo.Core.Models;
-using LumiMemo.Core.Services;
 using LumiMemo.WinUI.Controls;
+using LumiMemo.WinUI.Services;
+using LumiMemo.WinUI.ViewModels;
 using Windows.Graphics;
-using WinRT;
 
 namespace LumiMemo.WinUI;
 
-/// <summary>WinUI 3 sticky-note shell used while migrating the existing WPF application.</summary>
+/// <summary>一张便签的窗口：只管窗口本身（AppWindow、玻璃、标题栏、关闭协议），业务状态在 ViewModel 里。</summary>
+/// <remarks>
+/// 之前的 418 行 code-behind（保存编排、标题订阅、状态文案）已经搬进
+/// <see cref="NoteViewModel"/>；这里剩下的每一条都与「窗口」直接相关。
+/// </remarks>
 public sealed partial class MainWindow : Window
 {
-    private DesktopAcrylicController? _acrylicController;
-    private SystemBackdropConfiguration? _backdropConfiguration;
-    private readonly AppWindow _appWindow;
-    private readonly RichEditorHost _editor;
-    private readonly Note _note;
-    private readonly INoteRepository _repository;
-    private readonly IClock _clock;
-    private readonly NoteTitleCoordinator _titles;
-    private readonly ILayoutStore _layoutStore;
+    private readonly NoteViewModel _viewModel;
     private readonly NoteLayout _layout;
+    private readonly ILayoutStore _layoutStore;
     private readonly Action<Guid> _onClosed;
-    private readonly Action _onNoteChanged;
-    private readonly DispatcherTimer _saveTimer;
-    private bool _hasPendingSave;
-    private bool _saving;
-    private int _documentRevision;
+    private readonly RichEditorHost _editor;
+    private readonly AppWindow _appWindow;
+    private AcrylicBackdrop? _backdrop;
     private bool _isApplicationExiting;
+    private bool _closeApproved;
+    private bool _closeInProgress;
 
     public MainWindow(
-        Note note,
-        INoteRepository repository,
-        IClock clock,
-        AppSettings settings,
-        NoteTitleCoordinator titles,
-        ILayoutStore layoutStore,
+        NoteViewModel viewModel,
         NoteLayout layout,
-        Action<Guid> onClosed,
-        Action onNoteChanged)
+        ILayoutStore layoutStore,
+        Action<Guid> onClosed)
     {
-        ArgumentNullException.ThrowIfNull(note);
-        ArgumentNullException.ThrowIfNull(repository);
-        ArgumentNullException.ThrowIfNull(clock);
-        ArgumentNullException.ThrowIfNull(settings);
-        ArgumentNullException.ThrowIfNull(titles);
-        ArgumentNullException.ThrowIfNull(layoutStore);
+        ArgumentNullException.ThrowIfNull(viewModel);
         ArgumentNullException.ThrowIfNull(layout);
+        ArgumentNullException.ThrowIfNull(layoutStore);
         ArgumentNullException.ThrowIfNull(onClosed);
-        ArgumentNullException.ThrowIfNull(onNoteChanged);
 
         InitializeComponent();
         _appWindow = AppWindow;
 
-        _note = note;
-        _repository = repository;
-        _clock = clock;
-        _titles = titles;
-        _layoutStore = layoutStore;
+        _viewModel = viewModel;
         _layout = layout;
+        _layoutStore = layoutStore;
         _onClosed = onClosed;
-        _onNoteChanged = onNoteChanged;
-        _saveTimer = new DispatcherTimer
-        {
-            Interval = TimeSpan.FromMilliseconds(settings.AutoSaveDelayMs)
-        };
-        _saveTimer.Tick += OnSaveTimerTick;
 
         _editor = new RichEditorHost(EditorHost);
-        _titles.GenerationStateChanged += OnGenerationStateChanged;
-        _titles.TitleUpdated += OnTitleUpdated;
-        _titles.GenerationFailed += OnGenerationFailed;
+        _viewModel.AttachDocument(_editor);
+        _viewModel.TopMostChanged += OnTopMostChanged;
 
         Title = "LumiMemo";
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(TitleBarHost);
         ConfigureWindow();
-        EnablePersistentAcrylic();
+        _backdrop = AcrylicBackdrop.Apply(this, Root);
 
-        TitleText.Text = note.Title;
-        UpdateTitleProgress(_titles.IsPending(note.Id));
         EditorHost.Loaded += OnEditorHostLoaded;
         _appWindow.Closing += OnWindowClosing;
         Closed += OnWindowClosed;
-        UpdateStatus(note.Content);
     }
+
+    /// <summary>XAML 的 x:Bind 从这里取值。</summary>
+    public NoteViewModel ViewModel => _viewModel;
+
+    /// <summary>x:Bind 的函数绑定不能直接产 Visibility，借这个转换（生成代码按实例调用）。</summary>
+    private Visibility ToVisibility(bool value) =>
+        value ? Visibility.Visible : Visibility.Collapsed;
 
     private async void OnEditorHostLoaded(object sender, RoutedEventArgs args)
     {
         EditorHost.Loaded -= OnEditorHostLoaded;
         try
         {
-            await _editor.LoadAsync(_note.RichTextContent);
-            _editor.UserEdited += OnUserEdited;
+            await _editor.LoadAsync(_viewModel.Note.RichTextContent);
         }
         catch (Exception exception)
         {
-            StatusText.Text = $"读取便笺失败：{exception.Message}";
+            _viewModel.ShowHint($"读取便笺失败：{exception.Message}");
         }
     }
 
@@ -124,103 +102,29 @@ public sealed partial class MainWindow : Window
             presenter.IsMinimizable = false;
             presenter.IsMaximizable = false;
             presenter.IsAlwaysOnTop = _layout.IsTopMost;
-            PinButton.IsChecked = _layout.IsTopMost;
         }
 
         AppWindow.Changed += OnAppWindowChanged;
     }
 
-    private void EnablePersistentAcrylic()
+    private void OnTopMostChanged(bool isTopMost)
     {
-        if (!DesktopAcrylicController.IsSupported())
+        if (AppWindow.Presenter is OverlappedPresenter presenter)
         {
-            Root.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(
-                Windows.UI.Color.FromArgb(255, 247, 239, 248));
-            return;
-        }
-
-        _backdropConfiguration = new SystemBackdropConfiguration
-        {
-            IsInputActive = true,
-            Theme = SystemBackdropTheme.Light
-        };
-        _acrylicController = new DesktopAcrylicController
-        {
-            Kind = DesktopAcrylicKind.Base,
-            TintColor = Windows.UI.Color.FromArgb(255, 244, 236, 255),
-            TintOpacity = 0.34f,
-            LuminosityOpacity = 0.58f,
-            FallbackColor = Windows.UI.Color.FromArgb(255, 247, 239, 248)
-        };
-        _acrylicController.AddSystemBackdropTarget(
-            this.As<ICompositionSupportsSystemBackdrop>());
-        _acrylicController.SetSystemBackdropConfiguration(_backdropConfiguration);
-    }
-
-    private void OnUserEdited(object? sender, EventArgs args)
-    {
-        _note.Content = _editor.PlainText;
-        _note.UpdatedAt = _clock.Now;
-        _titles.ContentChanged(_note);
-        TitleText.Text = _note.Title;
-        _onNoteChanged();
-        _hasPendingSave = true;
-        _documentRevision++;
-        StatusText.Text = $"正在保存 · {CountCharacters(_note.Content)} 字";
-        _saveTimer.Stop();
-        _saveTimer.Start();
-    }
-
-    private async void OnSaveTimerTick(object? sender, object e)
-    {
-        _saveTimer.Stop();
-        await SavePendingAsync();
-    }
-
-    private async Task SavePendingAsync()
-    {
-        if (!_hasPendingSave || _saving)
-        {
-            return;
-        }
-
-        _saving = true;
-        int revision = _documentRevision;
-        try
-        {
-            _note.RichTextContent = _editor.SaveRtf();
-            await _repository.SaveAsync(_note);
-            if (revision == _documentRevision)
-            {
-                _hasPendingSave = false;
-                UpdateStatus(_note.Content);
-                _titles.ContentSaved(_note);
-            }
-        }
-        catch (Exception)
-        {
-            StatusText.Text = $"保存失败 · {CountCharacters(_note.Content)} 字";
-        }
-        finally
-        {
-            _saving = false;
-            if (_hasPendingSave && revision != _documentRevision)
-            {
-                _saveTimer.Stop();
-                _saveTimer.Start();
-            }
+            presenter.IsAlwaysOnTop = isTopMost;
         }
     }
 
-    private void UpdateStatus(string text) =>
-        StatusText.Text = $"已保存 · {CountCharacters(text)} 字";
-
-    private static int CountCharacters(string text) => text.EnumerateRunes().Count();
+    // ---- 编辑命令转发（命令属于编辑区，窗口只做转手） ----
 
     private void OnBoldClick(object sender, RoutedEventArgs e) => _editor.ExecuteCommand("bold");
+
     private void OnItalicClick(object sender, RoutedEventArgs e) => _editor.ExecuteCommand("italic");
+
     private void OnUnderlineClick(object sender, RoutedEventArgs e) => _editor.ExecuteCommand("underline");
+
     private void OnStrikeClick(object sender, RoutedEventArgs e) => _editor.ExecuteCommand("strikethrough");
+
     private async void OnInsertImageClick(object sender, RoutedEventArgs e)
     {
         var picker = new Windows.Storage.Pickers.FileOpenPicker();
@@ -241,58 +145,13 @@ public sealed partial class MainWindow : Window
         }
         catch (Exception exception)
         {
-            StatusText.Text = $"插入图片失败：{exception.Message}";
+            _viewModel.ShowHint($"插入图片失败：{exception.Message}");
         }
     }
 
-    private void OnGenerationStateChanged(Guid noteId, bool generating)
-    {
-        if (noteId == _note.Id)
-        {
-            UpdateTitleProgress(generating);
-        }
-    }
+    // ---- 关闭与退出 ----
 
-    private void OnTitleUpdated(Guid noteId)
-    {
-        if (noteId == _note.Id)
-        {
-            TitleText.Text = _note.Title;
-        }
-    }
-
-    private void OnGenerationFailed(Guid noteId)
-    {
-        if (noteId == _note.Id)
-        {
-            StatusText.Text = "自动标题失败 · 请检查模型设置";
-        }
-    }
-
-    private void UpdateTitleProgress(bool generating)
-    {
-        TitleProgress.IsActive = generating;
-        TitleProgress.Visibility = generating ? Visibility.Visible : Visibility.Collapsed;
-    }
-
-    private void OnPinClick(object sender, RoutedEventArgs e)
-    {
-        if (AppWindow.Presenter is OverlappedPresenter presenter)
-        {
-            presenter.IsAlwaysOnTop = PinButton.IsChecked is true;
-            _layout.IsTopMost = presenter.IsAlwaysOnTop;
-            _layoutStore.MarkDirty();
-        }
-    }
-
-    private void OnCloseClick(object sender, RoutedEventArgs e)
-    {
-        if (SavePendingOnClose())
-        {
-            CaptureLayout();
-            Close();
-        }
-    }
+    private void OnCloseClick(object sender, RoutedEventArgs e) => _ = TryCloseAsync();
 
     public void ShowFromTray()
     {
@@ -302,96 +161,101 @@ public sealed partial class MainWindow : Window
         Activate();
     }
 
-    public async Task ShowAboutAsync()
-    {
-        ShowFromTray();
-        var dialog = new ContentDialog
-        {
-            XamlRoot = Root.XamlRoot,
-            Title = "关于 LumiMemo",
-            Content = "鹿米便笺 WinUI 富文本实验版\n便笺保存在本地 .lumi 文件中。",
-            CloseButtonText = "确定"
-        };
-        await dialog.ShowAsync();
-    }
-
-    public void CloseForExit()
-    {
-        _isApplicationExiting = true;
-        if (SavePendingOnClose())
-        {
-            CaptureLayout();
-            Close();
-        }
-    }
-
     public void HideWindow() => AppWindow.Hide();
 
-    private void OnWindowClosing(AppWindow sender, AppWindowClosingEventArgs args)
+    /// <summary>托盘退出路径：保存尽力而为，无论成败都关——「退出总会发生」。</summary>
+    public async Task CloseForExitAsync()
     {
-        if (!SavePendingOnClose())
-        {
-            args.Cancel = true;
-            return;
-        }
-
-        CaptureLayout();
-    }
-
-    private bool SavePendingOnClose()
-    {
-        _saveTimer.Stop();
-        if (!_hasPendingSave)
-        {
-            return true;
-        }
+        _isApplicationExiting = true;
 
         try
         {
-            _note.RichTextContent = _editor.SaveRtf();
-            _repository.SaveAsync(_note).GetAwaiter().GetResult();
-            _hasPendingSave = false;
-            _titles.ContentSaved(_note);
-            return true;
+            await _viewModel.TryPersistOnCloseAsync();
         }
         catch (Exception)
         {
-            StatusText.Text = $"保存失败 · {CountCharacters(_note.Content)} 字";
-            return false;
+            // TryPersistOnCloseAsync 契约上不抛；真抛了也只说明这次保存没成，退出照走。
+        }
+
+        _closeApproved = true;
+        CaptureLayout();
+        Close();
+    }
+
+    private void OnWindowClosing(AppWindow sender, AppWindowClosingEventArgs args)
+    {
+        if (_closeApproved)
+        {
+            CaptureLayout();
+            return;
+        }
+
+        if (!_viewModel.HasPendingSave)
+        {
+            _closeApproved = true;
+            CaptureLayout();
+            return;
+        }
+
+        // 有没落盘的内容：先取消这次关闭，等异步保存成功后再关；
+        // 保存失败则留在窗口里，状态条已显示「保存失败」。
+        args.Cancel = true;
+        _ = TryCloseAsync();
+    }
+
+    private async Task TryCloseAsync()
+    {
+        if (_closeInProgress || _closeApproved)
+        {
+            return;
+        }
+
+        _closeInProgress = true;
+        try
+        {
+            if (await _viewModel.TryPersistOnCloseAsync())
+            {
+                _closeApproved = true;
+                CaptureLayout();
+                Close();
+            }
+        }
+        finally
+        {
+            _closeInProgress = false;
         }
     }
 
-    private void OnWindowClosed(object sender, WindowEventArgs args)
+    private async void OnWindowClosed(object sender, WindowEventArgs args)
     {
-        _titles.GenerationStateChanged -= OnGenerationStateChanged;
-        _titles.TitleUpdated -= OnTitleUpdated;
-        _titles.GenerationFailed -= OnGenerationFailed;
+        // 先做同步清理：窗口管理器要立刻把这个实例摘掉（否则同一张便签重开拿不到新窗口）。
+        _viewModel.TopMostChanged -= OnTopMostChanged;
         Closed -= OnWindowClosed;
-        _onClosed(_note.Id);
+        _onClosed(_viewModel.Id);
         _appWindow.Changed -= OnAppWindowChanged;
         _appWindow.Closing -= OnWindowClosing;
-        _saveTimer.Stop();
+        EditorHost.Loaded -= OnEditorHostLoaded;
+
         if (!_isApplicationExiting)
         {
             _layout.IsOpen = false;
         }
+
         _layoutStore.MarkDirty();
+
         try
         {
-            _layoutStore.FlushAsync().GetAwaiter().GetResult();
+            await _layoutStore.FlushAsync();
         }
         catch (Exception)
         {
-            // Closing must remain available even if the device-state file cannot be updated.
+            // 关闭必须可用，即使设备状态文件写不进去。
         }
 
-        _saveTimer.Tick -= OnSaveTimerTick;
-        EditorHost.Loaded -= OnEditorHostLoaded;
-        _editor.UserEdited -= OnUserEdited;
         _editor.Dispose();
-        _acrylicController?.Dispose();
-        _acrylicController = null;
-        _backdropConfiguration = null;
+        _viewModel.Dispose();
+        _backdrop?.Dispose();
+        _backdrop = null;
     }
 
     private void OnAppWindowChanged(AppWindow sender, AppWindowChangedEventArgs args)

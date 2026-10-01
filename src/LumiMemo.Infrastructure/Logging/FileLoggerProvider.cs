@@ -81,14 +81,17 @@ public sealed class FileLoggerProvider : ILoggerProvider
     private int _disposed;
 
     /// <summary>
-    /// 还排在通道里、没走完 <see cref="WriteBatch"/> 的行数。
+    /// 已经从通道读出来、还没走完 <see cref="WriteBatch"/> 的行数。
     /// </summary>
     /// <remarks>
-    /// 给 <see cref="Flush"/> 用。到 0 的含义是「不再堵在通道里了」，
-    /// <strong>不是</strong>「已经成功落盘」——<see cref="WriteBatch"/> 自己吞异常，
-    /// 写不进去的行同样会把计数减掉。日志本身也没有别的办法。
+    /// 给 <see cref="Flush"/> 用。只由消费线程改动（读出时加、写完时减），
+    /// <strong>生产者不记账</strong>：通道溢出时丢的是最旧的行（<see cref="BoundedChannelFullMode.DropOldest"/>），
+    /// 被丢掉的行再也不会被读出，若入队时就加计数，那些计数永远减不掉——
+    /// 一次溢出之后 <see cref="Flush"/> 就再也等不到归零、次次白等满超时。
+    /// 到 0 的含义是「不再堵在通道里了」，<strong>不是</strong>「已经成功落盘」——
+    /// <see cref="WriteBatch"/> 自己吞异常，写不进去的行同样会把计数减掉。
     /// </remarks>
-    private long _pending;
+    private int _unwrittenRows;
 
     /// <summary>本进程当前在写的槽（1 起数）；0 表示还没定过，只在消费线程上改。</summary>
     private int _slot;
@@ -227,14 +230,14 @@ public sealed class FileLoggerProvider : ILoggerProvider
     /// </remarks>
     public bool Flush(TimeSpan timeout)
     {
-        if (Interlocked.Read(ref _pending) == 0)
+        if (IsDrained())
         {
             return true;
         }
 
         long deadline = Environment.TickCount64 + (long)timeout.TotalMilliseconds;
 
-        while (Interlocked.Read(ref _pending) > 0)
+        while (!IsDrained())
         {
             if (Environment.TickCount64 >= deadline)
             {
@@ -246,6 +249,15 @@ public sealed class FileLoggerProvider : ILoggerProvider
 
         return true;
     }
+
+    /// <summary>通道里没有排队的行，且消费线程手里没有未写完的批。</summary>
+    /// <remarks>
+    /// 两个判据合起来覆盖「行从入队到落盘」的全程：还在通道里的（<see cref="ChannelReader{T}.Count"/>）
+    /// 加上已读出未写完的（<see cref="_unwrittenRows"/>）。两个读数之间出现「刚好被读出」的空窗也无妨——
+    /// 轮询间隔本就比消费循环低一个量级，最坏是少等一条可能还没写完的行。
+    /// </remarks>
+    private bool IsDrained() =>
+        _channel.Reader.Count == 0 && Volatile.Read(ref _unwrittenRows) == 0;
 
     /// <summary>不断把通道里的行成批取出来写盘，直到通道被关闭且取空。</summary>
     /// <remarks>
@@ -270,6 +282,7 @@ public sealed class FileLoggerProvider : ILoggerProvider
                     if (reader.TryRead(out string? line))
                     {
                         batch.Add(line);
+                        Interlocked.Increment(ref _unwrittenRows);
 
                         continue;
                     }
@@ -303,6 +316,7 @@ public sealed class FileLoggerProvider : ILoggerProvider
         while (reader.TryRead(out string? rest))
         {
             batch.Add(rest);
+            Interlocked.Increment(ref _unwrittenRows);
 
             if (batch.Count >= BatchSize)
             {
@@ -353,9 +367,9 @@ public sealed class FileLoggerProvider : ILoggerProvider
         }
         finally
         {
-            // 放在这里而不是三个调用点：每一条读出来的行都恰好经过本方法一次，
-            // 记账与「读出来」因此永远配对，漏写一处也不会让 Flush 白等满一个上限。
-            Interlocked.Add(ref _pending, -lines.Count);
+            // 与读出时的 +1 严格配对：每一条读出来的行都恰好经过本方法一次，
+            // 漏写一处也不会让 Flush 白等满一个上限。
+            Interlocked.Add(ref _unwrittenRows, -lines.Count);
         }
     }
 
@@ -489,13 +503,8 @@ public sealed class FileLoggerProvider : ILoggerProvider
                 return;
             }
 
-            // 先记账再入队：反过来的话，消费线程可能在记账之前就把这一行写完并减掉，
-            // 计数会短暂为负。负值虽然也让 Flush 立刻返回，但那个瞬时状态没法解释。
-            Interlocked.Increment(ref provider._pending);
-
-            // 入队失败也不减回去。通道满时丢的是最旧的那条（DropOldest），而不是刚排进去的
-            // 这一条——那条被丢掉的已经记过账，却再也不会经过 WriteBatch。于是计数只会偏多，
-            // 而偏多的方向是安全的：Flush 最多白等满一个上限，不会提前放行走掉。
+            // 通道满时丢最旧的那条（DropOldest）；被丢掉的行不经过任何记账，
+            // Flush 的判据在消费侧（见 _unwrittenRows），天生不理会被丢弃的行。
             provider._channel.Writer.TryWrite(
                 provider.FormatLine(logLevel, categoryName, formatter(state, exception), exception));
         }
