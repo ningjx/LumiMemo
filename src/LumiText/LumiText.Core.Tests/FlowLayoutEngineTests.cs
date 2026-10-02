@@ -121,7 +121,7 @@ public sealed class FlowLayoutEngineTests
         Assert.Equal(30f, result.Lines[0].X);
         Assert.Equal(30f, result.Lines[1].X);
         // 段落 2 起于 y=45（段落 1 两行 40 + 段后距 5），仍与浮动相交 → 首行缩进
-        Assert.Equal(1, result.Lines[2].ParagraphIndex);
+        Assert.Equal(1, result.Lines[2].BlockIndex);
         Assert.Equal(45f, result.Lines[2].Y);
         Assert.Equal(30f, result.Lines[2].X);
         // y=65 越过浮动底缘（50）后恢复全宽
@@ -202,7 +202,7 @@ public sealed class FlowLayoutEngineTests
 
         Assert.Equal(2, result.Lines.Count);
         Assert.Equal(40f, result.Lines[1].Y);  // 20（行）+ 20（空行）
-        Assert.Equal(2, result.Lines[1].ParagraphIndex);
+        Assert.Equal(2, result.Lines[1].BlockIndex);
     }
 
     // 命中测试：行盒反查
@@ -213,7 +213,7 @@ public sealed class FlowLayoutEngineTests
 
         var hit = result.HitTest(50, 5);
         Assert.True(hit.Found);
-        Assert.Equal(0, hit.ParagraphIndex);
+        Assert.Equal(0, hit.BlockIndex);
         Assert.Equal(0, hit.CharIndex);
 
         var floatHit = result.FloatAt(15, 15);

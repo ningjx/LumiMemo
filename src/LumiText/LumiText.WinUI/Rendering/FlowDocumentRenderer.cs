@@ -25,6 +25,7 @@ public sealed class FlowDocumentRenderer
     private static readonly Color FloatFill = Color.FromArgb(70, 122, 90, 220);
     private static readonly Color FloatStroke = Color.FromArgb(190, 122, 90, 220);
     private static readonly Color DebugLineBox = Color.FromArgb(90, 220, 80, 80);
+    private static readonly Color DividerLine = Color.FromArgb(90, 40, 32, 48);
 
     /// <summary>堆叠一致性容差（与引擎 Epsilon 同值）。</summary>
     private const float StackingEpsilon = 0.01f;
@@ -48,17 +49,24 @@ public sealed class FlowDocumentRenderer
 
     /// <summary>全量重排并替换当前结果（旧结果随之释放）。</summary>
     public LayoutResult UpdateLayout(
-        IReadOnlyList<ParagraphBlock> paragraphs,
+        IReadOnlyList<Block> blocks,
         IReadOnlyList<FloatObject> floats,
         float contentWidth)
     {
         var watch = Stopwatch.StartNew();
-        var result = _engine.Layout(paragraphs, floats, contentWidth);
+        var result = _engine.Layout(blocks, floats, contentWidth);
         watch.Stop();
         Current?.Dispose();
         Current = result;
         LastLayoutDuration = watch.Elapsed;
         return result;
+    }
+
+    /// <summary>全量重排（文档模型入口：块列表 + 由 ImageBlock 派生的浮动输入）。</summary>
+    public LayoutResult UpdateLayout(Document document, float contentWidth)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+        return UpdateLayout(document.Blocks, document.GetFloats(), contentWidth);
     }
 
     /// <summary>
@@ -115,6 +123,46 @@ public sealed class FlowDocumentRenderer
                 }
             }
             i = j;
+        }
+
+        // 块级覆盖层（§6.2）：Todo 矢量复选框、Divider 线——与文本批分组正交，单独一遍。
+        foreach (var line in lines)
+        {
+            switch (line.Kind)
+            {
+                case PlacedLineKind.Divider:
+                {
+                    float midY = line.Y + line.Height / 2f;
+                    session.DrawLine(line.X, midY, line.X + line.Width, midY, DividerLine, 1f);
+                    break;
+                }
+                case PlacedLineKind.TodoText
+                    when line.IsBlockStart
+                        && layout.Blocks is { } blocks
+                        && line.BlockIndex < blocks.Count
+                        && blocks[line.BlockIndex] is TodoBlock todo:
+                    DrawCheckbox(session, line, todo, textColor);
+                    break;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Todo 矢量复选框（§6.2/O2）：首行行盒左侧缩进区内、垂直居中于行盒；
+    /// 1.5px 描边 2px 圆角，已勾选时两条线段画对勾；颜色随主题墨色。
+    /// </summary>
+    private static void DrawCheckbox(
+        CanvasDrawingSession session, PlacedLine line, TodoBlock todo, Color ink)
+    {
+        const float boxSize = 20f;
+        float x = line.X - todo.LeftIndent;
+        float y = line.Y + (line.Height - boxSize) / 2f;
+        var rect = new Windows.Foundation.Rect(x, y, boxSize, boxSize);
+        session.DrawRoundedRectangle(rect, 2, 2, ink, 1.5f);
+        if (todo.Checked)
+        {
+            session.DrawLine(x + 4.5f, y + 10.5f, x + 8.5f, y + 14.5f, ink, 2f);
+            session.DrawLine(x + 8.5f, y + 14.5f, x + 15.5f, y + 5.5f, ink, 2f);
         }
     }
 }

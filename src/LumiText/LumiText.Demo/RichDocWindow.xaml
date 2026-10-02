@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Window
+    x:Class="LumiText.Demo.RichDocWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="LumiText M4 — Rich Document Probe">
+
+    <Grid x:Name="RootGrid" Background="Transparent">
+        <Grid x:Name="SurfaceHost" Margin="20,16,20,16" />
+    </Grid>
+</Window>

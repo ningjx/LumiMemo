@@ -53,9 +53,18 @@ public sealed class FlowLayoutEngine
     /// <summary>最近一次 <see cref="Layout"/> 的批量统计。</summary>
     public LayoutStats LastStats { get; private set; }
 
+    /// <summary>对一篇文档做全量排版（块列表 + 由 ImageBlock 派生的浮动输入）。</summary>
+    public LayoutResult Layout(Document document, float contentWidth)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+        return Layout(document.Blocks, document.GetFloats(), contentWidth);
+    }
+
     /// <summary>对整篇文档做一次全量排版。</summary>
-    /// <param name="paragraphs">段落序列（不允许含换行符）。</param>
-    /// <param name="floats">浮动对象（文档坐标矩形）。</param>
+    /// <param name="blocks">块序列（M4 块驱动：Paragraph/Heading/Todo 展开为文本流，
+    /// Divider 产出占位行盒，Image 不进文本流——其浮动由 <see cref="Document.GetFloats"/> 派生）。</param>
+    /// <param name="floats">浮动对象（文档坐标矩形；含 <see cref="FloatObject.Anchor"/> 的
+    /// 锚定浮动将经两遍排版解析位置，§6.3）。</param>
     /// <param name="contentWidth">内容区宽度（dip）。</param>
     /// <remarks>
     /// 浮动矩形先经 <see cref="PlaceFloats"/> 归一化进内容框（窗口收窄时把溢出的浮动拉回，
@@ -63,13 +72,95 @@ public sealed class FlowLayoutEngine
     /// 因此窗口恢复宽度后浮动回到作者原位。
     /// </remarks>
     public LayoutResult Layout(
-        IReadOnlyList<ParagraphBlock> paragraphs,
+        IReadOnlyList<Block> blocks,
         IReadOnlyList<FloatObject> floats,
         float contentWidth)
     {
-        ArgumentNullException.ThrowIfNull(paragraphs);
+        ArgumentNullException.ThrowIfNull(blocks);
         ArgumentNullException.ThrowIfNull(floats);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(contentWidth, 0f);
+
+        // §6.3：有锚定浮动时先排版文本、后定浮动——两遍排版（成本 = 全量 ×2，预算内接受，R1）。
+        if (floats.Any(f => f.Anchor is not null))
+        {
+            floats = ResolveAnchoredFloats(blocks, floats, contentWidth);
+        }
+        return LayoutCore(blocks, floats, contentWidth);
+    }
+
+    /// <summary>
+    /// 浮动锚定解析（§6.3 两遍排版）：第一遍只用矩形直给的浮动排版，得到锚点块
+    /// 首行行盒的 Y，推出锚定浮动矩形；第二遍带全部浮动正式排版（由调用方继续）。
+    /// </summary>
+    private IReadOnlyList<FloatObject> ResolveAnchoredFloats(
+        IReadOnlyList<Block> blocks,
+        IReadOnlyList<FloatObject> floats,
+        float contentWidth)
+    {
+        using var probe = LayoutCore(blocks, floats.Where(f => f.Anchor is null).ToArray(), contentWidth);
+
+        // 各块的「首行文本行盒」顶缘（只认 Text/TodoText；Divider 占位行盒不算文本块）。
+        var firstLineTopByBlock = new Dictionary<int, float>();
+        foreach (var line in probe.Lines)
+        {
+            if (line.Kind is PlacedLineKind.Text or PlacedLineKind.TodoText
+                && !firstLineTopByBlock.ContainsKey(line.BlockIndex))
+            {
+                firstLineTopByBlock[line.BlockIndex] = line.Y;
+            }
+        }
+
+        var resolved = new FloatObject[floats.Count];
+        for (int i = 0; i < floats.Count; i++)
+        {
+            var f = floats[i];
+            if (f.Anchor is not { } anchor)
+            {
+                resolved[i] = f;
+                continue;
+            }
+
+            // 锚点块解析的异常路径（v2）：越界钳到首/末块；锚到非文本块（或无行盒的空块）→
+            // 顺延到其后第一个有行盒的文本块；其后没有 → 钳到其前最后一个；全文无文本行盒 →
+            // 该浮动退化为 Rect 直给路径（兼容 S2 现状行为）。
+            float? anchorTop = null;
+            int start = Math.Clamp(anchor.BlockIndex, 0, Math.Max(0, blocks.Count - 1));
+            for (int b = start; b < blocks.Count && anchorTop is null; b++)
+            {
+                if (firstLineTopByBlock.TryGetValue(b, out var top))
+                {
+                    anchorTop = top;
+                }
+            }
+            for (int b = start - 1; b >= 0 && anchorTop is null; b--)
+            {
+                if (firstLineTopByBlock.TryGetValue(b, out var top))
+                {
+                    anchorTop = top;
+                }
+            }
+            if (anchorTop is null)
+            {
+                resolved[i] = f;   // 全文无文本行盒：Rect 直给（Anchor 保留，按直给矩形排版）
+                continue;
+            }
+
+            float y = anchorTop.Value + anchor.OffsetY;
+            // OffsetX 相对内容区左/右缘（按 Side；Center 按 Right 处理，与既有约定一致）。
+            float x = f.Side == FloatSide.Left
+                ? anchor.OffsetX
+                : contentWidth - f.Rect.Width - anchor.OffsetX;
+            resolved[i] = f with { Rect = f.Rect with { X = x, Y = y } };
+        }
+        return resolved;
+    }
+
+    /// <summary>排版主流程（不含锚定解析；锚定浮动由 <see cref="Layout"/> 解析后传入）。</summary>
+    private LayoutResult LayoutCore(
+        IReadOnlyList<Block> blocks,
+        IReadOnlyList<FloatObject> floats,
+        float contentWidth)
+    {
 
         var placed = PlaceFloats(floats, contentWidth);
         var bands = BuildBands(placed, contentWidth);
@@ -78,32 +169,46 @@ public sealed class FlowLayoutEngine
         var ledger = new BatchLedger();
 
         float yCursor = 0f;
-        for (int pi = 0; pi < paragraphs.Count; pi++)
+        for (int bi = 0; bi < blocks.Count; bi++)
         {
-            var paragraph = paragraphs[pi];
-            // M2 适配：ParagraphBlock 已演进为 runs 模型（v2）；
-            // M3：批量接口直接消费 runs（行内样式由度量器应用）。
-            string text = paragraph.PlainText;
-            if (text.Length == 0)
+            switch (blocks[bi])
             {
-                // 空段落占一个空行高度。
-                var empty = _measurer.MeasureLineHeight(paragraph.EffectiveStyle);
-                yCursor += empty.Total;
-            }
-            else
-            {
-                var cursor = new BatchCursor();
-                int consumed = 0;
-                while (consumed < text.Length)
+                case ParagraphBlock or HeadingBlock or TodoBlock:
                 {
-                    consumed += LayoutRow(
-                        paragraph.Runs, text.Length, consumed, paragraph.EffectiveStyle, pi,
-                        bands, boundaries, contentWidth, ref yCursor, lines, cursor, ledger);
+                    var (runs, text, style, spaceAfter, leftIndent, kind) = ExpandTextBlock(blocks[bi]);
+                    if (text.Length == 0)
+                    {
+                        // 空文本块占一个空行高度（样式随行：空标题占标题行高）。
+                        var empty = _measurer.MeasureLineHeight(style);
+                        yCursor += empty.Total;
+                    }
+                    else
+                    {
+                        var cursor = new BatchCursor();
+                        int consumed = 0;
+                        bool blockLinePlaced = false;
+                        while (consumed < text.Length)
+                        {
+                            int rowConsumed = LayoutRow(
+                                runs, text.Length, consumed, style, bi, leftIndent, kind,
+                                isBlockStart: !blockLinePlaced,
+                                bands, boundaries, contentWidth, ref yCursor, lines, cursor, ledger);
+                            consumed += rowConsumed;
+                            blockLinePlaced |= rowConsumed > 0;
+                        }
+                        // 段尾收尾：批脱离游标；释放统一在 Layout 收尾按行盒引用结算（见 DisposeOrphans）。
+                        DetachBatch(cursor, ledger);
+                    }
+                    yCursor += spaceAfter;
+                    break;
                 }
-                // 段尾收尾：批脱离游标；释放统一在 Layout 收尾按行盒引用结算（见 DisposeOrphans）。
-                DetachBatch(cursor, ledger);
+                case DividerBlock:
+                    LayoutDivider(bi, bands, boundaries, contentWidth, ref yCursor, lines);
+                    break;
+                case ImageBlock:
+                    // 不进文本流；浮动经 Document.GetFloats() 派生交给浮动通道（§4）。
+                    break;
             }
-            yCursor += paragraph.SpaceAfter;
         }
 
         float totalHeight = yCursor;
@@ -114,7 +219,51 @@ public sealed class FlowLayoutEngine
 
         LastStats = new LayoutStats(ledger.Created.Count, ledger.Discarded);
         DisposeOrphans(ledger, lines);
-        return new LayoutResult(lines, placed, totalHeight);
+        return new LayoutResult(lines, placed, totalHeight, blocks);
+    }
+
+    /// <summary>文本块的统一展开视图（§4：Paragraph/Heading/Todo 在排版层都是带预设样式的段落）。</summary>
+    private static (IReadOnlyList<TextRun> Runs, string Text, TextStyle Style, float SpaceAfter,
+        float LeftIndent, PlacedLineKind Kind) ExpandTextBlock(Block block) =>
+        block switch
+        {
+            ParagraphBlock p => (p.Runs, p.PlainText, p.EffectiveStyle, p.SpaceAfter, 0f, PlacedLineKind.Text),
+            HeadingBlock h => (h.Runs, h.PlainText, h.EffectiveStyle, h.SpaceAfter, 0f, PlacedLineKind.Text),
+            TodoBlock t => (t.Runs, t.PlainText, t.EffectiveStyle, t.SpaceAfter, t.LeftIndent, PlacedLineKind.TodoText),
+            _ => throw new ArgumentException($"非文本块：{block.GetType().Name}", nameof(block)),
+        };
+
+    /// <summary>
+    /// 分割线占位行盒（§4）：高度 = <see cref="TextStyle.Default"/> 空行高度的固定占位，
+    /// 跨带取段交集的首个可用段；当前 Y 无任何可用段时推进到下一个带边界（与文本行同纪律）。
+    /// </summary>
+    private void LayoutDivider(
+        int blockIndex,
+        IReadOnlyList<Band> bands,
+        IReadOnlyList<float> boundaries,
+        float contentWidth,
+        ref float yCursor,
+        List<PlacedLine> lines)
+    {
+        var empty = _measurer.MeasureLineHeight(TextStyle.Default);
+        float height = empty.Total;
+        while (true)
+        {
+            var spanning = SegmentsSpanning(bands, yCursor, yCursor + height, contentWidth);
+            foreach (var segment in spanning)
+            {
+                if (segment.Width >= 1f)
+                {
+                    lines.Add(new PlacedLine(
+                        blockIndex, 0, 0, segment.X, yCursor, segment.Width, height,
+                        yCursor + empty.Ascent, Batch: null, LineOffsetY: 0f,
+                        PlacedLineKind.Divider, IsBlockStart: true));
+                    yCursor += height;
+                    return;
+                }
+            }
+            yCursor = NextBoundary(boundaries, yCursor);
+        }
     }
 
     /// <summary>
@@ -267,12 +416,18 @@ public sealed class FlowLayoutEngine
     /// 成功则提交行盒、推进 <paramref name="yCursor"/> 并返回本行消费的字符数；
     /// 当前 Y 放不下任何内容时，把 <paramref name="yCursor"/> 推进到下一个带边界并返回 0。
     /// </summary>
+    /// <param name="leftIndent">段落级左缩进（Todo 悬挂缩进，§3.1）：在 Band 段宽基础上
+    /// 再减缩进、行盒 X 原点同步右移；段宽不足缩进 + 最小字宽时按窄段放弃（T-C2）。</param>
+    /// <param name="isBlockStart">本行是否所属块的第一行（Todo 复选框只画在首行）。</param>
     private int LayoutRow(
         IReadOnlyList<TextRun> runs,
         int textLength,
         int start,
         TextStyle style,
-        int paragraphIndex,
+        int blockIndex,
+        float leftIndent,
+        PlacedLineKind kind,
+        bool isBlockStart,
         IReadOnlyList<Band> bands,
         IReadOnlyList<float> boundaries,
         float contentWidth,
@@ -281,8 +436,12 @@ public sealed class FlowLayoutEngine
         BatchCursor cursor,
         BatchLedger ledger)
     {
-        // 第一次探测：按 yCursor 所在带的段集合。
+        // 第一次探测：按 yCursor 所在带的段集合（缩进在段宽收窄之后生效，§3.1）。
         var segments = SegmentsAt(bands, yCursor, contentWidth);
+        if (leftIndent > 0f)
+        {
+            segments = IndentSegments(segments, leftIndent);
+        }
         var pending = ProbeRow(runs, textLength, start, style, segments, cursor, ledger,
             out float maxAscent, out float maxDescent);
         if (pending.Count == 0)
@@ -295,6 +454,10 @@ public sealed class FlowLayoutEngine
         // 批量口径（§5.4 v2）：交集段宽与当前批不同 → PeekLine 自然弃批重建（计数进统计）。
         float lineHeight = maxAscent + maxDescent;
         var exact = SegmentsSpanning(bands, yCursor, yCursor + lineHeight, contentWidth);
+        if (leftIndent > 0f)
+        {
+            exact = IndentSegments(exact, leftIndent);
+        }
         if (!SameSegments(segments, exact))
         {
             pending = ProbeRow(runs, textLength, start, style, exact, cursor, ledger,
@@ -310,10 +473,11 @@ public sealed class FlowLayoutEngine
         // 提交：同带多段共享基线（"文字在图片两侧同一行对齐"）。
         float baseline = yCursor + maxAscent;
         int rowConsumed = 0;
+        bool firstPending = true;
         foreach (var (segment, line, batch, lineIndex, charStart) in pending)
         {
             lines.Add(new PlacedLine(
-                paragraphIndex,
+                blockIndex,
                 charStart,
                 line.CharsConsumed,
                 segment.X,
@@ -322,7 +486,10 @@ public sealed class FlowLayoutEngine
                 line.Ascent + line.Descent,
                 baseline,
                 batch,
-                line.OffsetY));
+                line.OffsetY,
+                kind,
+                isBlockStart && firstPending));
+            firstPending = false;
             rowConsumed += line.CharsConsumed;
             // 提交游标：仅当行来自当前批且确为下一未消费行（交错段的早段批已被替换，无需推进）。
             if (ReferenceEquals(batch, cursor.Batch) && lineIndex == cursor.NextLine)
@@ -332,6 +499,17 @@ public sealed class FlowLayoutEngine
         }
         yCursor += lineHeight;
         return rowConsumed;
+    }
+
+    /// <summary>段集合整体右移缩进（悬挂缩进：X += indent，右缘不变）。</summary>
+    private static IReadOnlyList<HInterval> IndentSegments(IReadOnlyList<HInterval> segments, float indent)
+    {
+        var shifted = new List<HInterval>(segments.Count);
+        foreach (var s in segments)
+        {
+            shifted.Add(new HInterval(s.X + indent, s.Right));
+        }
+        return shifted;
     }
 
     /// <summary>逐段探测一行：按 X 序填充各段，段间顺序消费文本（只看不取，提交在 LayoutRow）。</summary>

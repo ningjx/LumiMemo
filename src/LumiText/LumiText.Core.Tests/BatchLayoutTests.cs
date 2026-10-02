@@ -63,7 +63,7 @@ public sealed class BatchLayoutTests
         {
             var expected = reference[i];
             var actual = result.Lines[i];
-            Assert.Equal(expected.ParagraphIndex, actual.ParagraphIndex);
+            Assert.Equal(expected.ParagraphIndex, actual.BlockIndex);
             Assert.Equal(expected.CharStart, actual.CharStart);
             Assert.Equal(expected.CharCount, actual.CharCount);
             Assert.Equal(expected.X, actual.X, 2);

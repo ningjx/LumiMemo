@@ -1,12 +1,28 @@
 namespace LumiText.Core.Layout;
 
+/// <summary>行盒种类（渲染层分派绘制路径的依据，Phase 1 设计 §4）。</summary>
+public enum PlacedLineKind
+{
+    /// <summary>普通文本行（Paragraph/Heading 块）。</summary>
+    Text,
+
+    /// <summary>Todo 块文本行（渲染层在块首行的缩进区画矢量复选框，§6.2）。</summary>
+    TodoText,
+
+    /// <summary>分割线占位行盒（无文本，渲染层画 1px 水平线）。</summary>
+    Divider,
+
+    /// <summary>图片占位行盒（预留；M4 的 ImageBlock 走浮动通道，不产生占位行盒）。</summary>
+    ImagePlaceholder,
+}
+
 /// <summary>
 /// 一个已放置的行盒：一段连续文本在某个段（Segment）内的最终位置。
 /// 同行盒被浮动对象挤到图片两侧时，同一"视觉行"会产生多个 <see cref="PlacedLine"/>，
 /// 它们共享同一 <see cref="Baseline"/>。
 /// </summary>
-/// <param name="ParagraphIndex">所属段落在文档中的序号（M4 块输入切换时改名 BlockIndex）。</param>
-/// <param name="CharStart">行内首字符在段落文本中的偏移。</param>
+/// <param name="BlockIndex">所属块在文档块列表中的序号（M4 由 ParagraphIndex 改名——输入已是块列表）。</param>
+/// <param name="CharStart">行内首字符在块文本中的偏移。</param>
 /// <param name="CharCount">行内容纳的字符数。</param>
 /// <param name="X">行盒左上角 X（dip）。</param>
 /// <param name="Y">行盒左上角 Y（dip，文档坐标）。</param>
@@ -15,8 +31,10 @@ namespace LumiText.Core.Layout;
 /// <param name="Baseline">基线的 Y 坐标（文档坐标）。</param>
 /// <param name="Batch">本行所属的批量行（M3）；渲染层据此按批分组绘制（Phase 1 设计 §7.3）。</param>
 /// <param name="LineOffsetY">本行顶缘相对批布局顶缘的偏移（批内定位，取自 <see cref="MeasuredLine.OffsetY"/>）。</param>
+/// <param name="Kind">行盒种类。</param>
+/// <param name="IsBlockStart">是否所属块的第一个行盒（Todo 复选框只画在首行，§6.2）。</param>
 public sealed record PlacedLine(
-    int ParagraphIndex,
+    int BlockIndex,
     int CharStart,
     int CharCount,
     float X,
@@ -25,7 +43,9 @@ public sealed record PlacedLine(
     float Height,
     float Baseline,
     ILineBatch? Batch,
-    float LineOffsetY)
+    float LineOffsetY,
+    PlacedLineKind Kind = PlacedLineKind.Text,
+    bool IsBlockStart = false)
 {
     public LayoutRect Bounds => new(X, Y, Width, Height);
 }

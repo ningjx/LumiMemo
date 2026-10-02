@@ -57,6 +57,7 @@ public partial class App : Application
         {
             "u1" => new ScrollPinWindow(),
             "u3" => new VirtualSurfaceWindow(),
+            "m4" => new RichDocWindow(),
             "perf" => new DemoWindow(autoRunPerf: true),
             _ => new DemoWindow(autoRunU2: probe == "u2"),
         };
