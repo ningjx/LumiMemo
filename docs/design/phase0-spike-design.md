@@ -237,8 +237,9 @@ public record LayoutResult(IReadOnlyList<PlacedLine> Lines,
 
 **实际结果（2026-10-02）**：T1–T10 全过；性能经一轮优化（首行探测由 `DrawToTextRenderer` +
 `GetCharacterRegions` 换成 `LineMetrics`，单次 8.44ms → 0.33ms，全量排版 1900ms → 75.1ms）后，
-[A] 75.1ms / [B] 24.4ms 仍超预算，判**条件 Go**：引擎对外接口沿用，把"按段宽批量取行"
-的结构优化列为 Phase 1 待办（解药量级实测 7.86ms，见 `src/LumiText/LumiText.Demo/RESULTS.md` §2.3）。
+[A] 75.1ms / [B] 24.4ms 仍超预算、[C] Demo 拖动帧率 143.6fps 达标（小文档口径），判**条件 Go**：
+引擎对外接口沿用，把"按段宽批量取行"的结构优化列为 Phase 1 待办
+（解药量级实测 7.86ms，见 `src/LumiText/LumiText.Demo/RESULTS.md` §2.3）。
 判据是真实便签普遍远小于 1 万字符，当前结构在小文档上已达标（Demo 约 3–4ms/帧，用户实测流畅）。
 
 ---
