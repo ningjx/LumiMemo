@@ -28,6 +28,11 @@ public readonly record struct LayoutStats(int BatchesCreated, int BatchesDiscard
 /// 与旧首行探测同成本，正确性不受影响。
 /// </para>
 /// <para>
+/// 批所有权（§5.2 契约）：批的释放统一在 <see cref="Layout"/> 收尾按「是否被行盒引用」
+/// 一次性结算（<see cref="DisposeOrphans"/>），不在换批点即时释放——同行多段时，
+/// 前一段的批在后一段建批的瞬间仍挂在待提交行盒上。
+/// </para>
+/// <para>
 /// 线程模型：单次 <see cref="Layout"/> 调用自带状态（批游标），引擎实例本身不可共享并发排版；
 /// 调用方负责 UI 线程亲和与增量失效策略。
 /// </para>
@@ -70,8 +75,7 @@ public sealed class FlowLayoutEngine
         var bands = BuildBands(placed, contentWidth);
         var boundaries = bands.Select(b => b.YBottom).ToArray();
         var lines = new List<PlacedLine>();
-        int batchesCreated = 0;
-        int batchesDiscarded = 0;
+        var ledger = new BatchLedger();
 
         float yCursor = 0f;
         for (int pi = 0; pi < paragraphs.Count; pi++)
@@ -94,11 +98,10 @@ public sealed class FlowLayoutEngine
                 {
                     consumed += LayoutRow(
                         paragraph.Runs, text.Length, consumed, paragraph.EffectiveStyle, pi,
-                        bands, boundaries, contentWidth, ref yCursor, lines, cursor,
-                        ref batchesCreated, ref batchesDiscarded);
+                        bands, boundaries, contentWidth, ref yCursor, lines, cursor, ledger);
                 }
-                // 段尾收尾：批未提交过行 → 引擎自行释放；已提交 → 所有权归 LayoutResult。
-                DetachBatch(cursor, ref batchesDiscarded);
+                // 段尾收尾：批脱离游标；释放统一在 Layout 收尾按行盒引用结算（见 DisposeOrphans）。
+                DetachBatch(cursor, ledger);
             }
             yCursor += paragraph.SpaceAfter;
         }
@@ -109,8 +112,37 @@ public sealed class FlowLayoutEngine
             totalHeight = Math.Max(totalHeight, f.Rect.Bottom);
         }
 
-        LastStats = new LayoutStats(batchesCreated, batchesDiscarded);
+        LastStats = new LayoutStats(ledger.Created.Count, ledger.Discarded);
+        DisposeOrphans(ledger, lines);
         return new LayoutResult(lines, placed, totalHeight);
+    }
+
+    /// <summary>
+    /// 收尾结算批所有权（§5.2 契约）：行盒引用到的批归 <see cref="LayoutResult"/>，其余由引擎释放。
+    /// </summary>
+    /// <remarks>
+    /// 释放不能在各批的替换点即时进行：一行可横跨多段，后一段建新批时，前一段的批可能已被挂进
+    /// 本行的待提交行盒（此时它未曾提交过，看似可弃），即时释放会让 <see cref="LayoutResult"/>
+    /// 持有已释放的 <see cref="ILineBatch.NativeLayout"/>，渲染层 DrawTextLayout 随即 RO_E_CLOSED。
+    /// </remarks>
+    private static void DisposeOrphans(BatchLedger ledger, List<PlacedLine> lines)
+    {
+        var live = new HashSet<ILineBatch>(ReferenceEqualityComparer.Instance);
+        foreach (var line in lines)
+        {
+            if (line.Batch is not null)
+            {
+                live.Add(line.Batch);
+            }
+        }
+
+        foreach (var batch in ledger.Created)
+        {
+            if (!live.Contains(batch))
+            {
+                batch.Dispose();
+            }
+        }
     }
 
     /// <summary>把浮动矩形归一化进内容框：X 限制在 [0, 内容宽 − 矩形宽]、Y 不小于 0。</summary>
@@ -150,12 +182,18 @@ public sealed class FlowLayoutEngine
         public ILineBatch? Batch;
         public int NextLine;
         public int StartPos;
-        public bool CommittedAny;
+    }
+
+    /// <summary>单次 <see cref="Layout"/> 的批台账：创建过的批（所有权收尾结算用）与弃批计数。</summary>
+    private sealed class BatchLedger
+    {
+        public readonly List<ILineBatch> Created = new();
+        public int Discarded;
     }
 
     /// <summary>
     /// 取批内下一行（不提交）：段匹配且批未耗尽 → 零布局创建；否则以
-    /// 「剩余文本 + 当前段宽」新建一批（旧批按弃批纪律释放）。
+    /// 「剩余文本 + 当前段宽」新建一批（旧批脱离游标，计弃批）。
     /// 返回 <see langword="null"/> = 该段一行都放不下（窄段放弃信号）。
     /// </summary>
     private MeasuredLine? PeekLine(
@@ -164,33 +202,32 @@ public sealed class FlowLayoutEngine
         TextStyle style,
         HInterval segment,
         BatchCursor cursor,
-        ref int batchesCreated,
-        ref int batchesDiscarded)
+        BatchLedger ledger)
     {
         var key = new SegmentKey(segment.X, segment.Width);
         if (cursor.Batch is null || !cursor.Key.Equals(key) || cursor.NextLine >= cursor.Batch.LineCount)
         {
-            DetachBatch(cursor, ref batchesDiscarded);
+            // 换批：旧批是否仍被行盒引用，要等本行提交完才知（同行多段），故此处只脱离游标。
+            DetachBatch(cursor, ledger);
             var batch = _measurer.LayoutLines(SliceRuns(runs, absPos), style, segment.Width);
-            batchesCreated++;
+            ledger.Created.Add(batch);
             cursor.Key = key;
             cursor.Batch = batch;
             cursor.NextLine = 0;
             cursor.StartPos = absPos;
-            cursor.CommittedAny = false;
         }
 
         if (cursor.Batch.LineCount == 0)
         {
             // 窄段：一行都放不下。批不留，由调用方顺延文本（Word 同款，防死循环）。
-            DetachBatch(cursor, ref batchesDiscarded);
+            DetachBatch(cursor, ledger);
             return null;
         }
         return cursor.Batch.GetLine(cursor.NextLine);
     }
 
-    /// <summary>批脱离游标时的统一处理：统计弃批；未提交过行的批由引擎释放（已提交的归 LayoutResult）。</summary>
-    private static void DetachBatch(BatchCursor cursor, ref int batchesDiscarded)
+    /// <summary>批脱离游标：统计弃批（脱离时批内仍有未消费行）。释放不在此时进行——见 <see cref="DisposeOrphans"/>。</summary>
+    private static void DetachBatch(BatchCursor cursor, BatchLedger ledger)
     {
         if (cursor.Batch is null)
         {
@@ -198,11 +235,7 @@ public sealed class FlowLayoutEngine
         }
         if (cursor.NextLine < cursor.Batch.LineCount)
         {
-            batchesDiscarded++;
-        }
-        if (!cursor.CommittedAny)
-        {
-            cursor.Batch.Dispose();
+            ledger.Discarded++;
         }
         cursor.Batch = null;
     }
@@ -246,13 +279,12 @@ public sealed class FlowLayoutEngine
         ref float yCursor,
         List<PlacedLine> lines,
         BatchCursor cursor,
-        ref int batchesCreated,
-        ref int batchesDiscarded)
+        BatchLedger ledger)
     {
         // 第一次探测：按 yCursor 所在带的段集合。
         var segments = SegmentsAt(bands, yCursor, contentWidth);
-        var pending = ProbeRow(runs, textLength, start, style, segments, cursor,
-            ref batchesCreated, ref batchesDiscarded, out float maxAscent, out float maxDescent);
+        var pending = ProbeRow(runs, textLength, start, style, segments, cursor, ledger,
+            out float maxAscent, out float maxDescent);
         if (pending.Count == 0)
         {
             yCursor = NextBoundary(boundaries, yCursor);
@@ -265,8 +297,8 @@ public sealed class FlowLayoutEngine
         var exact = SegmentsSpanning(bands, yCursor, yCursor + lineHeight, contentWidth);
         if (!SameSegments(segments, exact))
         {
-            pending = ProbeRow(runs, textLength, start, style, exact, cursor,
-                ref batchesCreated, ref batchesDiscarded, out maxAscent, out maxDescent);
+            pending = ProbeRow(runs, textLength, start, style, exact, cursor, ledger,
+                out maxAscent, out maxDescent);
             if (pending.Count == 0 || Math.Abs((maxAscent + maxDescent) - lineHeight) > Epsilon)
             {
                 // 交集后放不下，或行高变化导致约束再次改变（罕见）：放弃本 Y，推进。
@@ -296,7 +328,6 @@ public sealed class FlowLayoutEngine
             if (ReferenceEquals(batch, cursor.Batch) && lineIndex == cursor.NextLine)
             {
                 cursor.NextLine++;
-                cursor.CommittedAny = true;
             }
         }
         yCursor += lineHeight;
@@ -311,8 +342,7 @@ public sealed class FlowLayoutEngine
         TextStyle style,
         IReadOnlyList<HInterval> segments,
         BatchCursor cursor,
-        ref int batchesCreated,
-        ref int batchesDiscarded,
+        BatchLedger ledger,
         out float maxAscent,
         out float maxDescent)
     {
@@ -330,8 +360,7 @@ public sealed class FlowLayoutEngine
             {
                 continue;
             }
-            var line = PeekLine(runs, absPos, style, segment, cursor,
-                ref batchesCreated, ref batchesDiscarded);
+            var line = PeekLine(runs, absPos, style, segment, cursor, ledger);
             if (line is not { CharsConsumed: > 0 } found)
             {
                 // 窄段放弃：文本顺延到下一个有空间的段/带（Word 同款，防死循环的关键）。
