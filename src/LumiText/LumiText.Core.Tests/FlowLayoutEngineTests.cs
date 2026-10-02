@@ -222,4 +222,61 @@ public sealed class FlowLayoutEngineTests
 
         Assert.Null(result.FloatAt(95, 95));
     }
+
+    // 窗口收窄：右缘溢出的浮动被拉回内容框，环绕按归一化后的位置生效
+    [Fact]
+    public void FloatBeyondRightEdge_IsPulledBackIntoContent()
+    {
+        var right = new FloatObject(1, new LayoutRect(80, 0, 30, 40), FloatSide.Right);
+        using var result = Layout(FakeTextMeasurer.Text(20), right);
+
+        Assert.Equal(70f, result.Floats[0].Rect.X);      // 右缘贴内容右缘（100 − 30）
+        Assert.Equal(100f, result.Floats[0].Rect.Right);
+        Assert.Equal(new[] { 7, 7, 6 }, result.Lines.Select(l => l.CharCount).ToArray());
+        Assert.Equal(0f, result.Lines[0].X);
+        Assert.Equal(70f, result.Lines[0].Bounds.Right); // 行右端截断于图片左缘
+        Assert.Equal(0f, result.Lines[2].X);             // 越过图片底部恢复全宽
+        Assert.Equal(6, result.Lines[2].CharCount);
+    }
+
+    // 矩形宽于内容区：只贴左缘，不缩放
+    [Fact]
+    public void FloatWiderThanContent_SticksToLeftEdge()
+    {
+        var wide = new FloatObject(1, new LayoutRect(10, 0, 150, 20), FloatSide.Left);
+        using var result = Layout(FakeTextMeasurer.Text(10), wide);
+
+        Assert.Equal(0f, result.Floats[0].Rect.X);
+        Assert.Equal(150f, result.Floats[0].Rect.Right);
+        Assert.Equal(20f, result.Lines[0].Y);  // 整行被推到浮动底缘之下（无可用段宽）
+    }
+
+    // 左/上溢出：钳到原点
+    [Fact]
+    public void NegativeOffsets_ClampToOrigin()
+    {
+        var f = new FloatObject(1, new LayoutRect(-20, -30, 30, 40), FloatSide.Left);
+        using var result = Layout(FakeTextMeasurer.Text(10), f);
+
+        Assert.Equal(0f, result.Floats[0].Rect.X);
+        Assert.Equal(0f, result.Floats[0].Rect.Y);
+    }
+
+    // 归一化只作用于本次排版：内容变宽后浮动回到作者原位
+    [Fact]
+    public void PlacementIsTransient_WideningRestoresAuthoredPosition()
+    {
+        var engine = new FlowLayoutEngine(new FakeTextMeasurer());
+        var paragraphs = new[] { ParagraphBlock.FromText(FakeTextMeasurer.Text(10)) };
+        var right = new FloatObject(1, new LayoutRect(280, 0, 30, 40), FloatSide.Right);
+
+        using (var narrow = engine.Layout(paragraphs, new[] { right }, 200f))
+        {
+            Assert.Equal(170f, narrow.Floats[0].Rect.X);
+        }
+        using (var wide = engine.Layout(paragraphs, new[] { right }, 400f))
+        {
+            Assert.Equal(280f, wide.Floats[0].Rect.X);
+        }
+    }
 }

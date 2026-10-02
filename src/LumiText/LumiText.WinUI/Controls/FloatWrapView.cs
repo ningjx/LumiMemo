@@ -4,6 +4,7 @@ using Microsoft.UI.Input;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Media;
 using LumiText.Core.Documents;
 using LumiText.Core.Layout;
 using LumiText.WinUI.Rendering;
@@ -35,6 +36,11 @@ public sealed class FloatWrapView : Grid
 
     public FloatWrapView()
     {
+        // Panel 的 null 背景只在渲染上等同透明，不参与命中测试：不设背景时指针事件会穿透到
+        // 宿主窗口的其它元素，本控件的 PointerPressed/Moved 一律不触发（拖动随之失效）。
+        // 全透明画刷不改变观感（alpha=0，毛玻璃照透），但让整块内容区可命中。
+        Background = new SolidColorBrush(Color.FromArgb(0, 0, 0, 0));
+
         _renderer = new FlowDocumentRenderer(_measurer);
         _surfaceHost = new Grid();
         Children.Add(_surfaceHost);
@@ -47,6 +53,8 @@ public sealed class FloatWrapView : Grid
         PointerPressed += OnPointerPressed;
         PointerMoved += OnPointerMoved;
         PointerReleased += OnPointerReleased;
+        // 捕获丢失可能替代 PointerReleased 出现（焦点被抢、指针取消等），不复位会残留拖动态。
+        PointerCaptureLost += (_, _) => _dragFloatId = -1;
     }
 
     /// <summary>最近重排耗时变化时触发（毫秒）。</summary>

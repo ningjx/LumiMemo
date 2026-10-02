@@ -36,6 +36,11 @@ public sealed class FlowLayoutEngine
     /// <param name="paragraphs">段落序列（不允许含换行符）。</param>
     /// <param name="floats">浮动对象（文档坐标矩形）。</param>
     /// <param name="contentWidth">内容区宽度（dip）。</param>
+    /// <remarks>
+    /// 浮动矩形先经 <see cref="PlaceFloats"/> 归一化进内容框（窗口收窄时把溢出的浮动拉回，
+    /// 宽于内容区的只贴左缘）；归一化只作用于本次排版结果，调用方持有的原始位置不变，
+    /// 因此窗口恢复宽度后浮动回到作者原位。
+    /// </remarks>
     public LayoutResult Layout(
         IReadOnlyList<ParagraphBlock> paragraphs,
         IReadOnlyList<FloatObject> floats,
@@ -45,7 +50,8 @@ public sealed class FlowLayoutEngine
         ArgumentNullException.ThrowIfNull(floats);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(contentWidth, 0f);
 
-        var bands = BuildBands(floats, contentWidth);
+        var placed = PlaceFloats(floats, contentWidth);
+        var bands = BuildBands(placed, contentWidth);
         var boundaries = bands.Select(b => b.YBottom).ToArray();
         var lines = new List<PlacedLine>();
 
@@ -73,12 +79,35 @@ public sealed class FlowLayoutEngine
         }
 
         float totalHeight = yCursor;
-        foreach (var f in floats)
+        foreach (var f in placed)
         {
             totalHeight = Math.Max(totalHeight, f.Rect.Bottom);
         }
 
-        return new LayoutResult(lines, floats, totalHeight);
+        return new LayoutResult(lines, placed, totalHeight);
+    }
+
+    /// <summary>把浮动矩形归一化进内容框：X 限制在 [0, 内容宽 − 矩形宽]、Y 不小于 0。</summary>
+    /// <remarks>
+    /// 矩形宽于内容区时只贴左缘（不做缩放——图片适配属于渲染层，见 Phase 1 图片对象）。
+    /// </remarks>
+    private static IReadOnlyList<FloatObject> PlaceFloats(
+        IReadOnlyList<FloatObject> floats, float contentWidth)
+    {
+        if (floats.Count == 0)
+        {
+            return floats;
+        }
+
+        var placed = new FloatObject[floats.Count];
+        for (int i = 0; i < floats.Count; i++)
+        {
+            var f = floats[i];
+            float x = Math.Clamp(f.Rect.X, 0f, Math.Max(0f, contentWidth - f.Rect.Width));
+            float y = Math.Max(0f, f.Rect.Y);
+            placed[i] = x == f.Rect.X && y == f.Rect.Y ? f : f.MovedTo(x, y);
+        }
+        return placed;
     }
 
     /// <summary>
