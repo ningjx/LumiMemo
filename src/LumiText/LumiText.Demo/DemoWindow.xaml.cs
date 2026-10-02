@@ -1,6 +1,8 @@
+using System.Diagnostics;
 using Microsoft.UI.Composition;
 using Microsoft.UI.Composition.SystemBackdrops;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Media;
 using LumiText.Core.Documents;
 using LumiText.Core.Layout;
 using WinRT;
@@ -14,7 +16,9 @@ namespace LumiText.Demo;
 public sealed partial class DemoWindow : Window
 {
     private readonly DesktopAcrylicController? _backdropController;
+    private readonly List<double> _frameMs = new();
     private bool _documentSet;
+    private long _lastFrameTicks;
 
     public DemoWindow()
     {
@@ -70,6 +74,56 @@ public sealed partial class DemoWindow : Window
                 new FloatObject(1, new LayoutRect(24, 48, 150, 110), FloatSide.Left, Margin: 8f),
                 new FloatObject(2, new LayoutRect(rightX, 260, 150, 120), FloatSide.Right, Margin: 8f),
             });
+    }
+
+    // ------------------------------------------------------------------
+    // S2 验收：性能测量（设计文档 §3.6）
+    // ------------------------------------------------------------------
+
+    private void OnPerfButtonClick(object sender, RoutedEventArgs e)
+    {
+        PerfButton.IsEnabled = false;
+        StatsText.Text = "测量中：跑 [A] 全量排版与 [B] 拖动逐帧重排…";
+        try
+        {
+            var (report, summary) = PerfBenchmark.RunLayoutBenchmarks();
+            PerfBenchmark.Append($"排版性能（{DateTime.Now:yyyy-MM-dd HH:mm}）", report);
+            StatsText.Text = summary;
+        }
+        catch (Exception ex)
+        {
+            StatsText.Text = $"性能验收失败：{ex.Message}";
+        }
+        finally
+        {
+            PerfButton.IsEnabled = true;
+        }
+    }
+
+    private void OnFrameRecChecked(object sender, RoutedEventArgs e)
+    {
+        _frameMs.Clear();
+        _lastFrameTicks = 0;
+        CompositionTarget.Rendering += OnCompositionRendering;
+        StatsText.Text = "帧率记录中——请连续拖动紫色浮动块，拖动结束后关闭开关";
+    }
+
+    private void OnFrameRecUnchecked(object sender, RoutedEventArgs e)
+    {
+        CompositionTarget.Rendering -= OnCompositionRendering;
+        string summary = PerfBenchmark.FrameStats(_frameMs);
+        PerfBenchmark.Append($"拖动帧率（{DateTime.Now:yyyy-MM-dd HH:mm}，{Environment.OSVersion.VersionString}）", summary);
+        StatsText.Text = $"拖动帧率：{summary}";
+    }
+
+    private void OnCompositionRendering(object? sender, object e)
+    {
+        long now = Stopwatch.GetTimestamp();
+        if (_lastFrameTicks != 0)
+        {
+            _frameMs.Add((now - _lastFrameTicks) * 1000.0 / Stopwatch.Frequency);
+        }
+        _lastFrameTicks = now;
     }
 
     private static ParagraphBlock[] BuildParagraphs()

@@ -1,9 +1,11 @@
 # Phase 0 详细设计：S1 玻璃自绘文本 + S2 浮动环绕排版
 
-- 状态：**待评审（详细设计，不含实现）**
+- 状态：**S2 已实施并验收（条件 Go，2026-10-02）**——结果见
+  `src/LumiText/LumiText.Demo/RESULTS.md`；S1 结果见 `spikes/S1.GlassText/RESULTS.md`
 - 日期：2026-10-02
 - 前置：[custom-renderer-framework.md](custom-renderer-framework.md)（框架稿，已确认）
-- 原则：两个 spike 均为**独立小工程，不修改主项目任何代码**；验收通过后才允许产物迁入 `src/`。
+- 原则：两个 spike 均为**独立小工程，不修改主项目任何代码**；验收通过后才允许产物迁入 `src/`
+  （产物已按 D5 决策迁入 `src/LumiText/`）
 
 ---
 
@@ -150,7 +152,9 @@ Compositor ← Compositor
      a. 定位 y 光标所在 Band → 取其 Segments
      b. 对每个非空 Segment：用剩余文本以"段宽"做布局，只取第一行
         （CanvasTextLayout(remaining, segmentWidth, bandHeight)，
-          借 GetCaretPosition/GetCharacterRegions 读出首行消费的字符数与行高）
+          读 LineMetrics[0] 得首行字符数 / 行高 / 基线，行宽取末字符后的插入符 X）
+        —— 2026-10-02 修正：原方案用 DrawToTextRenderer 探基线 + GetCharacterRegions 求范围，
+           实测单次 8.44ms（占首行探测 97%），换成 LineMetrics 后 0.33ms；见 S2 验收记录 §2.2
      c. 同 Band 多段共享基线：各段行高取 max(ascent)/max(descent)，
         统一基线后各自放置 —— 这就是"文字在图片两侧同一行对齐"的做法
      d. 消费文本，y 光标 += 行高；若 y 光标越过 Band 底 → 进入下一 Band 重取 Segments
@@ -230,6 +234,12 @@ public record LayoutResult(IReadOnlyList<PlacedLine> Lines,
 - **Go**：T1–T10 全过 + 性能达标 + Demo 目视流畅 → 排版引擎设计冻结，接口原样进入 Phase 1 正式工程。
 - **条件 Go**：正确性全过但性能不达标 → 先优化（段缓存粒度、布局对象池），最多一轮迭代；仍不达标则下调目标（拖动期降采样重排：拖动中按节流到 30fps 重排，松手后精排——这是可接受的产品级折中，不算失败）。
 - **No-Go**：环绕正确性做不到（理论上不应发生——算法是自包含的）→ 转方案 B 并放弃环绕。
+
+**实际结果（2026-10-02）**：T1–T10 全过；性能经一轮优化（首行探测由 `DrawToTextRenderer` +
+`GetCharacterRegions` 换成 `LineMetrics`，单次 8.44ms → 0.33ms，全量排版 1900ms → 75.1ms）后，
+[A] 75.1ms / [B] 24.4ms 仍超预算，判**条件 Go**：引擎对外接口沿用，把"按段宽批量取行"
+的结构优化列为 Phase 1 待办（解药量级实测 7.86ms，见 `src/LumiText/LumiText.Demo/RESULTS.md` §2.3）。
+判据是真实便签普遍远小于 1 万字符，当前结构在小文档上已达标（Demo 约 3–4ms/帧，用户实测流畅）。
 
 ---
 

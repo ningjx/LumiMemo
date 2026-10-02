@@ -23,6 +23,17 @@
                 x:Name="DebugToggle"
                 Content="调试覆盖层"
                 Padding="10,4" />
+            <Button
+                x:Name="PerfButton"
+                Content="性能验收"
+                Padding="10,4"
+                Click="OnPerfButtonClick" />
+            <ToggleButton
+                x:Name="FrameRecToggle"
+                Content="帧率记录"
+                Padding="10,4"
+                Checked="OnFrameRecChecked"
+                Unchecked="OnFrameRecUnchecked" />
             <TextBlock
                 x:Name="StatsText"
                 VerticalAlignment="Center"
