@@ -1,6 +1,18 @@
 # 自研文本渲染器 — 框架设计方案（v0.1 框架稿）
 
-- 状态：**框架已确认（2026-10-02）**，详细设计见 [phase0-spike-design.md](phase0-spike-design.md)
+- 状态：**Phase 0（spike）与 Phase 1（只读渲染器）均已验收；Phase 2（编辑层）待设计**
+- 进度总览（2026-10-03 更新）：
+  - 框架已确认（2026-10-02）；
+  - **Phase 0 已验收（条件 Go）**：S1 玻璃自绘文本 / S2 浮动环绕排版——结果见
+    `spikes/S1.GlassText/RESULTS.md`、`src/LumiText/LumiText.Demo/RESULTS.md`，
+    详细设计 [phase0-spike-design.md](phase0-spike-design.md)；
+  - **Phase 1 已验收（总判定 Go，2026-10-03）**：文档模型（.lumi v2 schema 冻结）+
+    批量排版引擎 + 块级渲染（标题/待办/分割线）+ 浮动锚定 + 图片管线 + 滚动虚拟化 +
+    视觉回归对照——Core 测试 54/54 全绿，验收记录
+    `src/LumiText/LumiText.Demo/RESULTS-Phase1.md`，
+    详细设计 [phase1-readonly-renderer-design.md](phase1-readonly-renderer-design.md)；
+  - 下一步：Phase 2（编辑层：光标、选区、撤销、TSF 输入法）详细设计；
+    遗留优化项见 RESULTS-Phase1 §10.4（窄段预筛/文本封顶/CJK 基准变体等，不阻塞）。
 - 日期：2026-10-02
 - 范围：替换 RichEditBox 的便签正文渲染/编辑内核
 - 约束：不破坏现有毛玻璃窗口（`DesktopAcrylicController` 失焦不降级是迁移到 WinUI 的根本原因，属于硬约束）
