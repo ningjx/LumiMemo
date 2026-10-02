@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Window
+    x:Class="LumiText.Demo.ScrollDocWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="LumiText M6 — Scroll Probe">
+
+    <Grid x:Name="RootGrid" Background="Transparent">
+        <ltv:LumiDocumentView x:Name="DocView" xmlns:ltv="using:LumiText.WinUI.Controls" />
+    </Grid>
+</Window>

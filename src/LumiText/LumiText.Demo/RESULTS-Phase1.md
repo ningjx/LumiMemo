@@ -265,3 +265,41 @@ M3（批量度量接口改造 + 引擎行循环 + 等价迁移单测）。M3 的
 
 `m5.png`：左浮动为彩噪位图、右浮动为蓝紫渐变位图（圆角层 + 描边），
 文字在双浮间环绕；标题/样式/待办/分割线全部保持 M4 行为。测试 54/54 全绿（无回归）。
+
+---
+
+## 9. M6：VirtualizedTextSurface + LumiDocumentView + 滚动 —— 通过
+
+### 9.1 交付物
+
+- **`VirtualizedTextSurface`**（§7.3，`CompositionTextSurface` 的姊妹实现，旧类不动）：
+  `CompositionVirtualDrawingSurface` 承载「视口 ±1 屏」切片，高 = min（文档总高， 3×视口高）
+  物理像素；文档 ≤ 3 屏整面覆盖（便签常态只画一次）；
+  `CreateDrawingSession(surface, updateRect)` 整面重绘（v1 不做像素搬移/Trim，见 9.3 修订）。
+- **滚动模型（v4 修订：origin 跟踪替代 §7.2 钉视口）**：SpriteVisual 位于滚动内容内、
+  `Offset.Y = originY` 随内容自然平移；origin 采用**双阈值决策**（视口顶低于 origin+0.5 屏
+  → 吸附「视口顶 −1 屏」；视口底高于 origin+表面高 −0.5 屏 → 吸附「视口底 −2 屏」；值域
+  钳制后自然两态，端点吸附结果与现状相等、天然不振荡——首版单阈值实现曾振荡，截图实证）。
+  **视口在覆盖区间内的滚动 = 零重绘、零表达式动画、零 PropertySet 管理**；
+  与钉视口模型效果等价但更省（U1 验证的表达式钉视口保留为备选记录，§1.2）。
+- **`FlowDocumentRenderer.Render` 视口版**：viewport 参数 + 行盒 Y 有序二分定位 +
+  可见行内分组（批内不可见行落不出裁剪区）；浮动/覆盖层同步裁剪。
+- **`LumiDocumentView`**（§9.1，v4 修订：WinUI 3 的 ScrollViewer 是 **sealed**，
+  设计 §9.1 的继承写法在 WASDK 不成立——改组合：Grid 外壳 + 内部 ScrollViewer）：
+  `SetDocument`（排版上屏 + 图片后台并行预热补画）、`LayoutStatsChanged`、`DebugOverlay`、
+  背景全透明画刷（命中测试铁律）。
+
+### 9.2 滚动验收（`--probe m6`，≈350 行 / 5922 dip / ≈11.5 屏混合文档）
+
+- **重绘基准（§10.3，Release）**：整面（3 屏区）重绘 **中位 0.570 ms / P95 0.728 ms**
+  ——远低于「< 1ms/屏」的退避阈值，**Scroll()/ScrollWithClip 像素搬移优化判定不需要**；
+  覆盖区间内滚动重绘成本为 0（origin 跟踪的固有特性）。
+- **截图序列**：45%（第 11–13 节）→ 底部（第 26 节末段完整）→ 回滚顶部
+  （H1/锚定图片/复选框与初态一致）→ 稳定帧（无残影）。验收口径全过：
+  滚动流畅（合成器驱动）、无上屏残影、origin 回滚后内容完整、瞬时大跳后停止帧完整。
+
+### 9.3 v4 修订记录（M6 实施偏差，设计文档已同步）
+
+1. 滚动模型：origin 跟踪（双阈值）替代钉视口表达式动画（§7.2），效果等价且更省；
+2. `LumiDocumentView` 组合替代继承（ScrollViewer 在 WinUI 3 为 sealed，§9.1 签名同步调整）；
+3. Trim 增量回收未实施：origin 移动即整面重绘，3 屏上限已约束显存（§7.3 既定 v1 口径）。

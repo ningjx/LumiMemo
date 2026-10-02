@@ -77,16 +77,37 @@ public sealed class FlowDocumentRenderer
     }
 
     /// <summary>
-    /// 绘制布局结果。坐标系为 DIP；调用方负责缩放变换（物理像素 = DIP × 倍率）。
+    /// 绘制布局结果（整文档口径，等价 viewport = 全文档）。
+    /// 坐标系为 DIP；调用方负责缩放变换（物理像素 = DIP × 倍率）。
     /// </summary>
-    public void Render(CanvasDrawingSession session, LayoutResult layout, Color textColor, bool debugOverlay)
+    public void Render(CanvasDrawingSession session, LayoutResult layout, Color textColor, bool debugOverlay) =>
+        Render(session, layout, new Windows.Foundation.Rect(0, 0, 1_000_000, 1_000_000), textColor, debugOverlay);
+
+    /// <summary>
+    /// 绘制布局结果与 <paramref name="viewport"/>（文档坐标 DIP）相交的部分（§7.3 视口裁剪版）：
+    /// 行盒 Y 有序，二分定位首行；只画与视口相交的批组、浮动与块级覆盖层。
+    /// 调用方负责把「文档坐标 → surface 局部坐标」的平移放进 session.Transform。
+    /// </summary>
+    public void Render(
+        CanvasDrawingSession session,
+        LayoutResult layout,
+        Windows.Foundation.Rect viewport,
+        Color textColor,
+        bool debugOverlay)
     {
         ArgumentNullException.ThrowIfNull(session);
         ArgumentNullException.ThrowIfNull(layout);
 
+        float viewTop = (float)viewport.Y;
+        float viewBottom = (float)(viewport.Y + viewport.Height);
+
         foreach (var f in layout.Floats)
         {
             var r = f.Rect;
+            if (r.Bottom < viewTop || r.Y > viewBottom)
+            {
+                continue;
+            }
             var rect = new Windows.Foundation.Rect(r.X, r.Y, r.Width, r.Height);
             // §8.2：浮动 ImageBlock 且位图就绪 → 圆角层 + DrawImage；否则画调试占位矩形
             // （未解码完成/解码失败/S2 调试浮动共用占位路径，位图就绪后由宿主 Invalidate 补画）。
@@ -108,12 +129,14 @@ public sealed class FlowDocumentRenderer
         }
 
         var lines = layout.Lines;
-        int i = 0;
-        while (i < lines.Count)
+        int i = FirstLineAt(lines, viewTop);
+        while (i < lines.Count && lines[i].Y < viewBottom)
         {
             // 分组：(Batch, 段 X) 相同且堆叠一致（跨段基线抬升处切新组，正确性优先）。
+            // 分组只在可见行范围内进行（§7.3）；批内不可见行落不出裁剪区，不会误显。
             int j = i + 1;
             while (j < lines.Count
+                && lines[j].Y < viewBottom
                 && ReferenceEquals(lines[j].Batch, lines[i].Batch)
                 && lines[j].X == lines[i].X
                 && Math.Abs(lines[j - 1].Y + lines[j - 1].Height - lines[j].Y) <= StackingEpsilon)
@@ -148,8 +171,9 @@ public sealed class FlowDocumentRenderer
         }
 
         // 块级覆盖层（§6.2）：Todo 矢量复选框、Divider 线——与文本批分组正交，单独一遍。
-        foreach (var line in lines)
+        for (int k = FirstLineAt(lines, viewTop); k < lines.Count && lines[k].Y < viewBottom; k++)
         {
+            var line = lines[k];
             switch (line.Kind)
             {
                 case PlacedLineKind.Divider:
@@ -167,6 +191,26 @@ public sealed class FlowDocumentRenderer
                     break;
             }
         }
+    }
+
+    /// <summary>行盒按 Y 有序：二分找第一行「底缘 ≥ viewTop」的行。</summary>
+    private static int FirstLineAt(IReadOnlyList<PlacedLine> lines, float viewTop)
+    {
+        int lo = 0;
+        int hi = lines.Count;
+        while (lo < hi)
+        {
+            int mid = (lo + hi) / 2;
+            if (lines[mid].Y + lines[mid].Height < viewTop)
+            {
+                lo = mid + 1;
+            }
+            else
+            {
+                hi = mid;
+            }
+        }
+        return lo;
     }
 
     /// <summary>
