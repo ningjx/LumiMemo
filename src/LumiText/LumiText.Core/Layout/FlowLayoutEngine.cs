@@ -2,6 +2,11 @@ using LumiText.Core.Documents;
 
 namespace LumiText.Core.Layout;
 
+/// <summary>一次排版的批量统计（§10.3 基准与 T-B1 断言的数据源）。</summary>
+/// <param name="BatchesCreated">经度量器创建的批数。</param>
+/// <param name="BatchesDiscarded">脱离消费游标时仍有未消费行的批数（弃批：段切换/交集重探/交错段）。</param>
+public readonly record struct LayoutStats(int BatchesCreated, int BatchesDiscarded);
+
 /// <summary>
 /// 浮动环绕排版引擎：Band（垂直带）+ 行盒分割算法。
 /// </summary>
@@ -15,7 +20,15 @@ namespace LumiText.Core.Layout;
 /// 无需任何方向特判。
 /// </para>
 /// <para>
-/// 线程模型：无状态（度量器除外），单次 <see cref="Layout"/> 调用纯计算；
+/// M3 批量消费器（Phase 1 设计 §5.4）：段内维护单个「当前批 + 批内消费游标」，
+/// 段（X，宽）不变时直接取批内下一行（零布局创建）；段变化或批耗尽时以
+/// 「剩余文本 + 当前段宽」新建一批。已论证：任一时刻至多一个批有效
+/// （批的下一未消费行须恰好落在当前文本位置，而这样的位置只有一个），
+/// 因此单游标模型与按段缓存等价；交错段（一行横跨多段）自然退化为逐行建批——
+/// 与旧首行探测同成本，正确性不受影响。
+/// </para>
+/// <para>
+/// 线程模型：单次 <see cref="Layout"/> 调用自带状态（批游标），引擎实例本身不可共享并发排版；
 /// 调用方负责 UI 线程亲和与增量失效策略。
 /// </para>
 /// </remarks>
@@ -31,6 +44,9 @@ public sealed class FlowLayoutEngine
         ArgumentNullException.ThrowIfNull(measurer);
         _measurer = measurer;
     }
+
+    /// <summary>最近一次 <see cref="Layout"/> 的批量统计。</summary>
+    public LayoutStats LastStats { get; private set; }
 
     /// <summary>对整篇文档做一次全量排版。</summary>
     /// <param name="paragraphs">段落序列（不允许含换行符）。</param>
@@ -54,12 +70,17 @@ public sealed class FlowLayoutEngine
         var bands = BuildBands(placed, contentWidth);
         var boundaries = bands.Select(b => b.YBottom).ToArray();
         var lines = new List<PlacedLine>();
+        int batchesCreated = 0;
+        int batchesDiscarded = 0;
 
         float yCursor = 0f;
         for (int pi = 0; pi < paragraphs.Count; pi++)
         {
             var paragraph = paragraphs[pi];
-            if (paragraph.Text.Length == 0)
+            // M2 适配：ParagraphBlock 已演进为 runs 模型（v2）；
+            // M3：批量接口直接消费 runs（行内样式由度量器应用）。
+            string text = paragraph.PlainText;
+            if (text.Length == 0)
             {
                 // 空段落占一个空行高度。
                 var empty = _measurer.MeasureLineHeight(paragraph.EffectiveStyle);
@@ -67,13 +88,17 @@ public sealed class FlowLayoutEngine
             }
             else
             {
+                var cursor = new BatchCursor();
                 int consumed = 0;
-                while (consumed < paragraph.Text.Length)
+                while (consumed < text.Length)
                 {
                     consumed += LayoutRow(
-                        paragraph.Text, consumed, paragraph.EffectiveStyle, pi,
-                        bands, boundaries, contentWidth, ref yCursor, lines);
+                        paragraph.Runs, text.Length, consumed, paragraph.EffectiveStyle, pi,
+                        bands, boundaries, contentWidth, ref yCursor, lines, cursor,
+                        ref batchesCreated, ref batchesDiscarded);
                 }
+                // 段尾收尾：批未提交过行 → 引擎自行释放；已提交 → 所有权归 LayoutResult。
+                DetachBatch(cursor, ref batchesDiscarded);
             }
             yCursor += paragraph.SpaceAfter;
         }
@@ -84,6 +109,7 @@ public sealed class FlowLayoutEngine
             totalHeight = Math.Max(totalHeight, f.Rect.Bottom);
         }
 
+        LastStats = new LayoutStats(batchesCreated, batchesDiscarded);
         return new LayoutResult(lines, placed, totalHeight);
     }
 
@@ -110,13 +136,107 @@ public sealed class FlowLayoutEngine
         return placed;
     }
 
+    // ------------------------------------------------------------------
+    // 批量消费器（§5.4）
+    // ------------------------------------------------------------------
+
+    /// <summary>批复用键：段（X，宽）。仅宽度相同而 X 不同的两段不得共享一批（渲染分组原点依赖）。</summary>
+    private readonly record struct SegmentKey(float X, float Width);
+
+    /// <summary>段内批量消费游标：当前批 + 批内消费位置 + 批的绝对文本起点。</summary>
+    private sealed class BatchCursor
+    {
+        public SegmentKey Key;
+        public ILineBatch? Batch;
+        public int NextLine;
+        public int StartPos;
+        public bool CommittedAny;
+    }
+
+    /// <summary>
+    /// 取批内下一行（不提交）：段匹配且批未耗尽 → 零布局创建；否则以
+    /// 「剩余文本 + 当前段宽」新建一批（旧批按弃批纪律释放）。
+    /// 返回 <see langword="null"/> = 该段一行都放不下（窄段放弃信号）。
+    /// </summary>
+    private MeasuredLine? PeekLine(
+        IReadOnlyList<TextRun> runs,
+        int absPos,
+        TextStyle style,
+        HInterval segment,
+        BatchCursor cursor,
+        ref int batchesCreated,
+        ref int batchesDiscarded)
+    {
+        var key = new SegmentKey(segment.X, segment.Width);
+        if (cursor.Batch is null || !cursor.Key.Equals(key) || cursor.NextLine >= cursor.Batch.LineCount)
+        {
+            DetachBatch(cursor, ref batchesDiscarded);
+            var batch = _measurer.LayoutLines(SliceRuns(runs, absPos), style, segment.Width);
+            batchesCreated++;
+            cursor.Key = key;
+            cursor.Batch = batch;
+            cursor.NextLine = 0;
+            cursor.StartPos = absPos;
+            cursor.CommittedAny = false;
+        }
+
+        if (cursor.Batch.LineCount == 0)
+        {
+            // 窄段：一行都放不下。批不留，由调用方顺延文本（Word 同款，防死循环）。
+            DetachBatch(cursor, ref batchesDiscarded);
+            return null;
+        }
+        return cursor.Batch.GetLine(cursor.NextLine);
+    }
+
+    /// <summary>批脱离游标时的统一处理：统计弃批；未提交过行的批由引擎释放（已提交的归 LayoutResult）。</summary>
+    private static void DetachBatch(BatchCursor cursor, ref int batchesDiscarded)
+    {
+        if (cursor.Batch is null)
+        {
+            return;
+        }
+        if (cursor.NextLine < cursor.Batch.LineCount)
+        {
+            batchesDiscarded++;
+        }
+        if (!cursor.CommittedAny)
+        {
+            cursor.Batch.Dispose();
+        }
+        cursor.Batch = null;
+    }
+
+    /// <summary>截取「剩余文本」的 runs 视图（批量接口的输入）。</summary>
+    private static IReadOnlyList<TextRun> SliceRuns(IReadOnlyList<TextRun> runs, int start)
+    {
+        if (start == 0)
+        {
+            return runs;
+        }
+        var sliced = new List<TextRun>();
+        int pos = 0;
+        foreach (var run in runs)
+        {
+            int runEnd = pos + run.Text.Length;
+            if (runEnd > start)
+            {
+                int offset = Math.Max(0, start - pos);
+                sliced.Add(new TextRun(run.Text[offset..], run.Style));
+            }
+            pos = runEnd;
+        }
+        return sliced;
+    }
+
     /// <summary>
     /// 尝试在 <paramref name="yCursor"/> 处放置一行（可能横跨多个段）。
     /// 成功则提交行盒、推进 <paramref name="yCursor"/> 并返回本行消费的字符数；
     /// 当前 Y 放不下任何内容时，把 <paramref name="yCursor"/> 推进到下一个带边界并返回 0。
     /// </summary>
     private int LayoutRow(
-        string text,
+        IReadOnlyList<TextRun> runs,
+        int textLength,
         int start,
         TextStyle style,
         int paragraphIndex,
@@ -124,13 +244,15 @@ public sealed class FlowLayoutEngine
         IReadOnlyList<float> boundaries,
         float contentWidth,
         ref float yCursor,
-        List<PlacedLine> lines)
+        List<PlacedLine> lines,
+        BatchCursor cursor,
+        ref int batchesCreated,
+        ref int batchesDiscarded)
     {
-        string remaining = text[start..];
-
         // 第一次探测：按 yCursor 所在带的段集合。
         var segments = SegmentsAt(bands, yCursor, contentWidth);
-        var pending = ProbeRow(remaining, style, segments, start, out float maxAscent, out float maxDescent);
+        var pending = ProbeRow(runs, textLength, start, style, segments, cursor,
+            ref batchesCreated, ref batchesDiscarded, out float maxAscent, out float maxDescent);
         if (pending.Count == 0)
         {
             yCursor = NextBoundary(boundaries, yCursor);
@@ -138,16 +260,16 @@ public sealed class FlowLayoutEngine
         }
 
         // 行可能横跨多个带：取所跨各带段集合的交集（最窄约束），变化则重排一次。
+        // 批量口径（§5.4 v2）：交集段宽与当前批不同 → PeekLine 自然弃批重建（计数进统计）。
         float lineHeight = maxAscent + maxDescent;
         var exact = SegmentsSpanning(bands, yCursor, yCursor + lineHeight, contentWidth);
         if (!SameSegments(segments, exact))
         {
-            DiscardNativeLayouts(pending);
-            pending = ProbeRow(remaining, style, exact, start, out maxAscent, out maxDescent);
+            pending = ProbeRow(runs, textLength, start, style, exact, cursor,
+                ref batchesCreated, ref batchesDiscarded, out maxAscent, out maxDescent);
             if (pending.Count == 0 || Math.Abs((maxAscent + maxDescent) - lineHeight) > Epsilon)
             {
                 // 交集后放不下，或行高变化导致约束再次改变（罕见）：放弃本 Y，推进。
-                DiscardNativeLayouts(pending);
                 yCursor = NextBoundary(boundaries, yCursor);
                 return 0;
             }
@@ -156,40 +278,51 @@ public sealed class FlowLayoutEngine
         // 提交：同带多段共享基线（"文字在图片两侧同一行对齐"）。
         float baseline = yCursor + maxAscent;
         int rowConsumed = 0;
-        foreach (var (segment, info, charStart) in pending)
+        foreach (var (segment, line, batch, lineIndex, charStart) in pending)
         {
             lines.Add(new PlacedLine(
                 paragraphIndex,
                 charStart,
-                info.CharsConsumed,
+                line.CharsConsumed,
                 segment.X,
-                baseline - info.Ascent,
-                info.Width,
-                info.Ascent + info.Descent,
+                baseline - line.Ascent,
+                line.Width,
+                line.Ascent + line.Descent,
                 baseline,
-                info.NativeLayout));
-            rowConsumed += info.CharsConsumed;
+                batch,
+                line.OffsetY));
+            rowConsumed += line.CharsConsumed;
+            // 提交游标：仅当行来自当前批且确为下一未消费行（交错段的早段批已被替换，无需推进）。
+            if (ReferenceEquals(batch, cursor.Batch) && lineIndex == cursor.NextLine)
+            {
+                cursor.NextLine++;
+                cursor.CommittedAny = true;
+            }
         }
         yCursor += lineHeight;
         return rowConsumed;
     }
 
-    /// <summary>逐段探测一行：按 X 序填充各段，段间顺序消费文本。</summary>
-    private List<(HInterval Segment, FirstLineInfo Info, int CharStart)> ProbeRow(
-        string remaining,
+    /// <summary>逐段探测一行：按 X 序填充各段，段间顺序消费文本（只看不取，提交在 LayoutRow）。</summary>
+    private List<(HInterval Segment, MeasuredLine Line, ILineBatch Batch, int LineIndex, int CharStart)> ProbeRow(
+        IReadOnlyList<TextRun> runs,
+        int textLength,
+        int start,
         TextStyle style,
         IReadOnlyList<HInterval> segments,
-        int charStartBase,
+        BatchCursor cursor,
+        ref int batchesCreated,
+        ref int batchesDiscarded,
         out float maxAscent,
         out float maxDescent)
     {
-        var pending = new List<(HInterval, FirstLineInfo, int)>();
+        var pending = new List<(HInterval, MeasuredLine, ILineBatch, int, int)>();
         maxAscent = 0f;
         maxDescent = 0f;
-        int rowConsumed = 0;
+        int absPos = start;
         foreach (var segment in segments)
         {
-            if (rowConsumed >= remaining.Length)
+            if (absPos >= textLength)
             {
                 break;
             }
@@ -197,16 +330,17 @@ public sealed class FlowLayoutEngine
             {
                 continue;
             }
-            var info = _measurer.LayoutFirstLine(remaining[rowConsumed..], style, segment.Width);
-            if (info.CharsConsumed <= 0)
+            var line = PeekLine(runs, absPos, style, segment, cursor,
+                ref batchesCreated, ref batchesDiscarded);
+            if (line is not { CharsConsumed: > 0 } found)
             {
                 // 窄段放弃：文本顺延到下一个有空间的段/带（Word 同款，防死循环的关键）。
                 continue;
             }
-            pending.Add((segment, info, charStartBase + rowConsumed));
-            rowConsumed += info.CharsConsumed;
-            maxAscent = Math.Max(maxAscent, info.Ascent);
-            maxDescent = Math.Max(maxDescent, info.Descent);
+            pending.Add((segment, found, cursor.Batch!, cursor.NextLine, absPos));
+            absPos += found.CharsConsumed;
+            maxAscent = Math.Max(maxAscent, found.Ascent);
+            maxDescent = Math.Max(maxDescent, found.Descent);
         }
         return pending;
     }
@@ -345,18 +479,6 @@ public sealed class FlowLayoutEngine
             }
         }
         return true;
-    }
-
-    /// <summary>探测结果被放弃时释放随行的度量器私有布局，避免泄漏（契约见 ITextMeasurer）。</summary>
-    private static void DiscardNativeLayouts(List<(HInterval Segment, FirstLineInfo Info, int CharStart)> pending)
-    {
-        foreach (var (_, info, _) in pending)
-        {
-            if (info.NativeLayout is IDisposable disposable)
-            {
-                disposable.Dispose();
-            }
-        }
     }
 
     /// <summary>大于 y 的最近带边界（恒存在：最后一条边界是 float.MaxValue）。</summary>

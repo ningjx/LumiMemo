@@ -1,0 +1,13 @@
+<!--
+  LumiText 独立解决方案（D5：渲染器为独立库，未来整体拆仓开源为 NuGet 包）。
+  本 slnx 是自包含验收的一部分（Phase 1 M1）：要求 `dotnet build LumiText.slnx` 独立通过，
+  不依赖宿主仓 LumiMemo.sln。
+  注意：各工程目前仍向上继承 src/Directory.Build.props 的编译设置（可空、警告即错误等），
+  拆仓时需一并携带；版本表已独立（本目录 Directory.Packages.props）。
+-->
+<Solution>
+  <Project Path="LumiText.Core/LumiText.Core.csproj" />
+  <Project Path="LumiText.Core.Tests/LumiText.Core.Tests.csproj" />
+  <Project Path="LumiText.WinUI/LumiText.WinUI.csproj" />
+  <Project Path="LumiText.Demo/LumiText.Demo.csproj" />
+</Solution>

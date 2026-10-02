@@ -17,12 +17,16 @@ public sealed partial class DemoWindow : Window
 {
     private readonly DesktopAcrylicController? _backdropController;
     private readonly List<double> _frameMs = new();
+    private readonly bool _autoRunU2;
+    private readonly bool _autoRunPerf;
     private bool _documentSet;
     private long _lastFrameTicks;
 
-    public DemoWindow()
+    public DemoWindow(bool autoRunU2 = false, bool autoRunPerf = false)
     {
         InitializeComponent();
+        _autoRunU2 = autoRunU2;
+        _autoRunPerf = autoRunPerf;
 
         if (DesktopAcrylicController.IsSupported())
         {
@@ -54,7 +58,48 @@ public sealed partial class DemoWindow : Window
         DebugToggle.Unchecked += (_, _) => { WrapView.DebugOverlay = false; WrapView.Relayout(); };
         WrapView.SizeChanged += OnWrapViewSizeChanged;
 
+        if (_autoRunU2)
+        {
+            // M1-U2：启动即跑样式顺序探针，结果写 exe 同目录 m1-probe.txt（Phase 1 设计 §13 M1）。
+            Activated += OnActivatedRunU2;
+        }
+        if (_autoRunPerf)
+        {
+            // M3：启动即跑排版基准（§10.3 带浮动批量基准 + 多样式场景），结果写 m3-perf.txt。
+            Activated += OnActivatedRunPerf;
+        }
+
         Closed += (_, _) => _backdropController?.Dispose();
+    }
+
+    private void OnActivatedRunPerf(object sender, WindowActivatedEventArgs args)
+    {
+        Activated -= OnActivatedRunPerf;
+        try
+        {
+            var (report, summary) = PerfBenchmark.RunLayoutBenchmarks();
+            PerfBenchmark.Append($"M3 批量排版基准（{DateTime.Now:yyyy-MM-dd HH:mm}）", report, "m3-perf.txt");
+            StatsText.Text = summary;
+        }
+        catch (Exception ex)
+        {
+            StatsText.Text = $"M3 基准失败：{ex.Message}";
+        }
+    }
+
+    private void OnActivatedRunU2(object sender, WindowActivatedEventArgs args)
+    {
+        Activated -= OnActivatedRunU2;
+        try
+        {
+            string report = StyleOrderProbe.Run();
+            PerfBenchmark.Append($"M1-U2 样式顺序探针（{DateTime.Now:yyyy-MM-dd HH:mm}）", report, "m1-probe.txt");
+            StatsText.Text = "U2 探针完成 → m1-probe.txt";
+        }
+        catch (Exception ex)
+        {
+            StatsText.Text = $"U2 探针失败：{ex.Message}";
+        }
     }
 
     private void OnWrapViewSizeChanged(object sender, SizeChangedEventArgs e)
@@ -146,8 +191,8 @@ public sealed partial class DemoWindow : Window
             "Phase 2 补齐编辑层（光标、选区、撤销、TSF 输入法）；Phase 3 实现待办复选框、标题层级与排版动画。";
         return new[]
         {
-            new ParagraphBlock(p1, SpaceAfter: 10f),
-            new ParagraphBlock(p2, SpaceAfter: 10f),
+            new ParagraphBlock(p1, spaceAfter: 10f),
+            new ParagraphBlock(p2, spaceAfter: 10f),
             new ParagraphBlock(p3),
         };
     }

@@ -111,7 +111,7 @@ public sealed class FlowLayoutEngineTests
         var engine = new FlowLayoutEngine(new FakeTextMeasurer());
         var paragraphs = new[]
         {
-            new ParagraphBlock(FakeTextMeasurer.Text(10), SpaceAfter: 5f),
+            new ParagraphBlock(FakeTextMeasurer.Text(10), spaceAfter: 5f),
             new ParagraphBlock(FakeTextMeasurer.Text(10)),
         };
         using var result = engine.Layout(paragraphs, new[] { Left(1, 0, 0, 30, 50) }, W);

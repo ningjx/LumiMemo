@@ -37,6 +37,12 @@ public sealed class CompositionTextSurface : IDisposable
     /// </summary>
     public Action<CanvasDrawingSession, Vector2, float>? RenderContent { get; set; }
 
+    /// <summary>
+    /// 承载 surface 的 SpriteVisual（只读）：表达式动画的挂载点，
+    /// 例如滚动钉视口（Phase 1 §7.2，M1-U1 探针验证）。Attach 前为 null。
+    /// </summary>
+    public SpriteVisual? Sprite => _sprite;
+
     public void Attach(FrameworkElement host)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);

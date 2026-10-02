@@ -6,8 +6,8 @@ namespace LumiText.Core.Layout;
 public readonly record struct HitTestResult(bool Found, int ParagraphIndex, int CharIndex);
 
 /// <summary>
-/// 一次完整排版的产物。实现 <see cref="IDisposable"/>：各行
-/// <see cref="PlacedLine.NativeLayout"/> 的释放责任归本对象（去重后逐个 Dispose）。
+/// 一次完整排版的产物。实现 <see cref="IDisposable"/>：各行引用的
+/// <see cref="PlacedLine.Batch"/> 的释放责任归本对象（按引用去重后逐个 Dispose，§5.2 所有权契约）。
 /// </summary>
 public sealed class LayoutResult : IDisposable
 {
@@ -55,12 +55,12 @@ public sealed class LayoutResult : IDisposable
 
     public void Dispose()
     {
-        var seen = new HashSet<object>(ReferenceEqualityComparer.Instance);
+        var seen = new HashSet<ILineBatch>(ReferenceEqualityComparer.Instance);
         foreach (var line in Lines)
         {
-            if (line.NativeLayout is IDisposable disposable && seen.Add(line.NativeLayout))
+            if (line.Batch is not null && seen.Add(line.Batch))
             {
-                disposable.Dispose();
+                line.Batch.Dispose();
             }
         }
     }

@@ -6,19 +6,20 @@ using LumiText.Core.Layout;
 namespace LumiText.WinUI.Text;
 
 /// <summary>
-/// <see cref="ITextMeasurer"/> 的 Win2D/DirectWrite 实现。
-/// 首行探测走 <see cref="CanvasTextLayout.LineMetrics"/>：DirectWrite 建立布局时已完成断行，
-/// 行度量一次读回（每行字符数 / 行高 / 基线），不需要遍历字形。
+/// <see cref="ITextMeasurer"/> 的 Win2D/DirectWrite 实现（M3 批量接口版）。
+/// 一个段（X，宽）只建一次 <see cref="CanvasTextLayout"/>、一次读回该宽度下的全部行
+/// （<see cref="CanvasTextLayout.LineMetrics"/>，1 万字符实测 0.011ms），
+/// 消除旧首行探测逐行重建布局的 O(字符数²/行高) 成本。
 /// </summary>
 /// <remarks>
-/// 旧实现用 <c>DrawToTextRenderer</c> 探基线（把整段每个字形 run 经托管回调封送一遍）
-/// 再用 <c>GetCharacterRegions</c> 求范围，单次首行探测 8.2ms（1 万字符整段 201ms），
-/// 直接导致一次全量排版 2028ms。换 LineMetrics 后同一探测降到 0.3ms 量级，
-/// 依据见 Demo 的性能验收 [A]/[B] 与度量拆解报告。
+/// 行内样式纪律（M1-U2 实证）：必须在读 <see cref="CanvasTextLayout.LineMetrics"/> 之前
+/// 完成全部 Set*——Set* 使既有行度量失效，先读后设 = 拿到无样式旧度量（正确性问题）
+/// 且多付一次无样式排版（≈0.28ms/400 字）。另：CanvasTextLayout 构造是懒惰的，
+/// 真实排版发生在首次读度量时；带样式排版成本约为无样式的 4–5 倍（M3 基准须含多样式场景）。
 /// </remarks>
 public sealed class Win2DTextMeasurer : ITextMeasurer
 {
-    /// <summary>布局高度上限：限制一次布局计算的行数（换取更小的单次延迟）。</summary>
+    /// <summary>布局高度上限：限制一次布局计算的行数（批耗尽后引擎自然以剩余文本建新批，正确性不受影响）。</summary>
     private const float LayoutHeight = 4096f;
 
     private readonly CanvasDevice _device;
@@ -26,38 +27,97 @@ public sealed class Win2DTextMeasurer : ITextMeasurer
 
     public Win2DTextMeasurer()
     {
-        // 共享设备：多窗口/多编辑器只持有一份 D2D 设备（设备丢失重建由渲染层统一处理）。
+        // 共享设备：多窗口/多编辑器只持有一份 D2D 设备（设备丢失重建入口属 R7，Phase 2 实装）。
         _device = CanvasDevice.GetSharedDevice();
     }
 
-    public FirstLineInfo LayoutFirstLine(string text, TextStyle style, float maxWidth)
+    public ILineBatch LayoutLines(IReadOnlyList<TextRun> runs, TextStyle baseStyle, float maxWidth)
     {
-        if (string.IsNullOrEmpty(text) || maxWidth < 1f)
+        ArgumentNullException.ThrowIfNull(runs);
+        if (runs.Count == 0 || maxWidth < 1f)
         {
-            return default;
+            return Win2DLineBatch.Empty;
         }
 
-        var layout = new CanvasTextLayout(_device, text, GetFormat(style), maxWidth, LayoutHeight);
+        string fullText = string.Concat(runs.Select(static r => r.Text));
+        if (fullText.Length == 0)
+        {
+            return Win2DLineBatch.Empty;
+        }
+
+        var layout = new CanvasTextLayout(_device, fullText, GetFormat(baseStyle), maxWidth, LayoutHeight);
         try
         {
-            var lines = layout.LineMetrics;
-            if (lines.Length == 0 || lines[0].CharacterCount <= 0)
+            // U2 纪律：先设样式，后读行度量。
+            ApplyInlineStyles(layout, runs, baseStyle);
+
+            var metrics = layout.LineMetrics;
+            if (metrics.Length == 0 || metrics[0].CharacterCount <= 0)
             {
                 layout.Dispose();
-                return default;
+                return Win2DLineBatch.Empty;
             }
 
-            var first = lines[0];
-            int consumed = Math.Min(first.CharacterCount, text.Length);
-            // 行推进宽度：末字符之后的插入符 X（比逐字符区域并集便宜三个数量级）。
-            float width = layout.GetCaretPosition(consumed, false).X;
-            return new FirstLineInfo(
-                consumed, width, first.Baseline, first.Height - first.Baseline, layout);
+            var lines = new MeasuredLine[metrics.Length];
+            int charStart = 0;
+            float offsetY = 0f;
+            for (int i = 0; i < metrics.Length; i++)
+            {
+                var m = metrics[i];
+                int consumed = Math.Min(m.CharacterCount, fullText.Length - charStart);
+                // 行推进宽度：末字符之后的插入符 X（比逐字符区域并集便宜三个数量级）。
+                float width = layout.GetCaretPosition(charStart + consumed, false).X;
+                lines[i] = new MeasuredLine(
+                    charStart, consumed, width, m.Baseline, m.Height - m.Baseline, offsetY);
+                offsetY += m.Height;
+                charStart += consumed;
+            }
+            return new Win2DLineBatch(layout, lines);
         }
         catch
         {
             layout.Dispose();
             throw;
+        }
+    }
+
+    /// <summary>逐 run 应用行内样式（Win2D API 已查证，V5；调用时机见类注释的 U2 纪律）。</summary>
+    private static void ApplyInlineStyles(
+        CanvasTextLayout layout, IReadOnlyList<TextRun> runs, TextStyle baseStyle)
+    {
+        int start = 0;
+        foreach (var run in runs)
+        {
+            int count = run.Text.Length;
+            if (run.Style is { } style && count > 0)
+            {
+                if (style.Bold)
+                {
+                    layout.SetFontWeight(start, count, Microsoft.UI.Text.FontWeights.Bold);
+                }
+                if (style.Italic)
+                {
+                    layout.SetFontStyle(start, count, Windows.UI.Text.FontStyle.Italic);
+                }
+                if (style.Strikethrough)
+                {
+                    layout.SetStrikethrough(start, count, true);
+                }
+                if (style.Underline)
+                {
+                    layout.SetUnderline(start, count, true);
+                }
+                if (style.Color is { } color)
+                {
+                    layout.SetColor(start, count,
+                        Windows.UI.Color.FromArgb(color.A, color.R, color.G, color.B));
+                }
+                if (style.FontSizeRatio is { } ratio)
+                {
+                    layout.SetFontSize(start, count, baseStyle.FontSize * ratio);
+                }
+            }
+            start += count;
         }
     }
 
@@ -83,5 +143,28 @@ public sealed class Win2DTextMeasurer : ITextMeasurer
             _formats[style] = format;
         }
         return format;
+    }
+
+    /// <summary>一批行的 Win2D 实现：持有整批共享的 <see cref="CanvasTextLayout"/> 与逐行度量。</summary>
+    private sealed class Win2DLineBatch : ILineBatch
+    {
+        public static readonly Win2DLineBatch Empty = new(null, Array.Empty<MeasuredLine>());
+
+        private readonly CanvasTextLayout? _layout;
+        private readonly MeasuredLine[] _lines;
+
+        public Win2DLineBatch(CanvasTextLayout? layout, MeasuredLine[] lines)
+        {
+            _layout = layout;
+            _lines = lines;
+        }
+
+        public int LineCount => _lines.Length;
+
+        public MeasuredLine GetLine(int index) => _lines[index];
+
+        public object? NativeLayout => _layout;
+
+        public void Dispose() => _layout?.Dispose();
     }
 }

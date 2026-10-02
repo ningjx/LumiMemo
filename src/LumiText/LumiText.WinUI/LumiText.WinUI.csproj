@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk" TreatAsLocalProperty="Platform">
 
   <!--
     LumiText.WinUI：渲染层（Composition + Win2D）与编辑器宿主控件。
@@ -11,8 +11,13 @@
     <AssemblyName>LumiText.WinUI</AssemblyName>
     <UseWinUI>true</UseWinUI>
     <WinUISDKReferences>false</WinUISDKReferences>
-    <!-- Win2D 要求具体平台（否则 WIN2D0001）；库不带 RID，用 Platforms 约束默认平台。 -->
+    <!--
+      Win2D 要求具体平台（否则 WIN2D0001）。slnx 没有解决方案平台映射，
+      会把 Platform 以全局属性「Any CPU」传入（全局属性在 csproj 内不可改，
+      故 Project 标签声明 TreatAsLocalProperty）；主 sln 映射 x64 时本条件不触发。
+    -->
     <Platforms>x64</Platforms>
+    <Platform Condition="'$(Platform)' == 'AnyCPU' or '$(Platform)' == 'Any CPU' or '$(Platform)' == ''">x64</Platform>
     <Product>LumiText</Product>
     <Description>Composition/Win2D rendering and editor host for LumiText (WinUI 3).</Description>
   </PropertyGroup>

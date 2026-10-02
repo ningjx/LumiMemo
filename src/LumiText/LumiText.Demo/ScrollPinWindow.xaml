@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Window
+    x:Class="LumiText.Demo.ScrollPinWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="LumiText M1-U1 — Scroll Pin Probe">
+
+    <Grid x:Name="RootGrid" Background="Transparent">
+        <ScrollViewer
+            x:Name="Scroller"
+            HorizontalScrollBarVisibility="Disabled"
+            VerticalScrollBarVisibility="Auto">
+            <StackPanel x:Name="ContentPanel" Margin="20,16,20,16">
+                <!-- 钉住层宿主：pinned surface 挂在这里，表达式动画把它钉回视口 -->
+                <Grid x:Name="PinHost" Height="360" Margin="0,0,0,12" />
+                <StackPanel x:Name="LinesPanel" />
+            </StackPanel>
+        </ScrollViewer>
+    </Grid>
+</Window>

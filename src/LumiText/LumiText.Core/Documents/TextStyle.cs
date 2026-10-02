@@ -1,10 +1,14 @@
+using System.Text.Json.Serialization;
+
 namespace LumiText.Core.Documents;
 
 /// <summary>
-/// 段落级文本样式。当前迭代（S2）刻意只含字体族与字号：环绕排版算法
-/// 与样式维度正交，多样式 run（粗/斜/色）属 Phase 1 的扩展点。
+/// 段落级文本样式。v2 演进（Phase 1 设计 §3.2）：行内样式由 <see cref="InlineStyle"/> 承载
+/// （粗/斜/删/下划/色/行内字号比），段落级仍是字体族 + 字号。
 /// </summary>
-public sealed record TextStyle(string FontFamily, float FontSize)
+public sealed record TextStyle(
+    [property: JsonPropertyName("font")] string FontFamily,
+    [property: JsonPropertyName("size")] float FontSize)
 {
     /// <summary>库内默认样式：跟随系统的正文字体与 15dip 字号。</summary>
     public static TextStyle Default { get; } = new("Segoe UI", 15f);
