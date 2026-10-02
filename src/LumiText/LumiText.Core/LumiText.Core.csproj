@@ -10,6 +10,7 @@
     <AssemblyName>LumiText.Core</AssemblyName>
     <Product>LumiText</Product>
     <Description>Float-wrapping text layout engine and document model (UI-agnostic).</Description>
+    <Platforms>AnyCPU;x64</Platforms>
   </PropertyGroup>
 
 </Project>

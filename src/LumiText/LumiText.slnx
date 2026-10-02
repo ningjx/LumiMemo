@@ -6,8 +6,20 @@
   拆仓时需一并携带；版本表已独立（本目录 Directory.Packages.props）。
 -->
 <Solution>
-  <Project Path="LumiText.Core/LumiText.Core.csproj" />
-  <Project Path="LumiText.Core.Tests/LumiText.Core.Tests.csproj" />
-  <Project Path="LumiText.WinUI/LumiText.WinUI.csproj" />
-  <Project Path="LumiText.Demo/LumiText.Demo.csproj" />
+  <Project Path="LumiText.Core/LumiText.Core.csproj">
+    <Platform Solution="*|x64" Project="x64" />
+  </Project>
+  <Configurations>
+    <Platform Name="Any CPU" />
+    <Platform Name="x64" />
+  </Configurations>
+  <Project Path="LumiText.Core.Tests/LumiText.Core.Tests.csproj">
+    <Platform Solution="*|x64" Project="x64" />
+  </Project>
+  <Project Path="LumiText.WinUI/LumiText.WinUI.csproj">
+    <Platform Solution="*|x64" Project="x64" />
+  </Project>
+  <Project Path="LumiText.Demo/LumiText.Demo.csproj">
+    <Platform Solution="*|x64" Project="x64" />
+  </Project>
 </Solution>
