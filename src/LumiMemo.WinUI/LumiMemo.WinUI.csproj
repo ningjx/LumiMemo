@@ -22,6 +22,11 @@
   <ItemGroup>
     <ProjectReference Include="..\LumiMemo.Core\LumiMemo.Core.csproj" />
     <ProjectReference Include="..\LumiMemo.Infrastructure\LumiMemo.Infrastructure.csproj" />
+    <!--
+      LumiText 独立渲染器库（D5 决策，docs/design/custom-renderer-framework.md）。
+      当前仅引用不启用：正式接入走 Phase 4 的开关灰度，RichEditBox 仍是生产编辑器。
+    -->
+    <ProjectReference Include="..\LumiText\LumiText.WinUI\LumiText.WinUI.csproj" />
   </ItemGroup>
 
   <!--

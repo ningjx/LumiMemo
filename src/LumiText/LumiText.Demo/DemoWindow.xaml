@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Window
+    x:Class="LumiText.Demo.DemoWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:lt="using:LumiText.WinUI.Controls"
+    Title="LumiText S2 — Wrap Layout Demo">
+
+    <Grid x:Name="RootGrid" Background="Transparent">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <lt:FloatWrapView x:Name="WrapView" Margin="20,16,20,8" />
+
+        <StackPanel
+            Grid.Row="1"
+            Orientation="Horizontal"
+            Spacing="16"
+            Margin="20,0,20,12">
+            <ToggleButton
+                x:Name="DebugToggle"
+                Content="调试覆盖层"
+                Padding="10,4" />
+            <TextBlock
+                x:Name="StatsText"
+                VerticalAlignment="Center"
+                FontSize="12"
+                Foreground="#66302834"
+                Text="排版耗时：—" />
+            <TextBlock
+                VerticalAlignment="Center"
+                FontSize="12"
+                Foreground="#66302834"
+                Text="拖动紫色浮动块：文字实时环绕 / 飞到另一侧；悬停浮动块查看自定义光标" />
+        </StackPanel>
+    </Grid>
+</Window>

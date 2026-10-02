@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    LumiText.WinUI：渲染层（Composition + Win2D）与编辑器宿主控件。
+    未来开源拆仓时本工程对应 NuGet 包 LumiText.WinUI。
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows10.0.26100.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+    <RootNamespace>LumiText.WinUI</RootNamespace>
+    <AssemblyName>LumiText.WinUI</AssemblyName>
+    <UseWinUI>true</UseWinUI>
+    <WinUISDKReferences>false</WinUISDKReferences>
+    <!-- Win2D 要求具体平台（否则 WIN2D0001）；库不带 RID，用 Platforms 约束默认平台。 -->
+    <Platforms>x64</Platforms>
+    <Product>LumiText</Product>
+    <Description>Composition/Win2D rendering and editor host for LumiText (WinUI 3).</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\LumiText.Core\LumiText.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Graphics.Win2D" />
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" />
+    <PackageReference Include="Microsoft.WindowsAppSDK" />
+  </ItemGroup>
+
+</Project>

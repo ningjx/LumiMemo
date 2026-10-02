@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Window
+    x:Class="S1.GlassText.GlassTextWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="S1 — Glass Text Spike">
+
+    <Grid x:Name="RootGrid" Background="Transparent">
+        <!-- 自绘文本宿主：CompositionTextSurface 挂在这里 -->
+        <Grid x:Name="TextHost" Margin="20,20,20,44" />
+
+        <!-- 对照组：原生 XAML 文本（右下角小字），肉眼比对 H3 渲染质量 -->
+        <TextBlock
+            HorizontalAlignment="Right"
+            VerticalAlignment="Bottom"
+            Margin="0,0,20,12"
+            FontSize="12"
+            Foreground="#66302834"
+            Text="XAML 原生文本对照 — 玻璃上的自绘文本 S1" />
+    </Grid>
+</Window>

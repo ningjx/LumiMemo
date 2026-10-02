@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    LumiText.Core：文档模型 + 排版引擎，零 UI 依赖、零第三方依赖（D5）。
+    未来开源拆仓时本工程对应 NuGet 包 LumiText.Core。
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>LumiText.Core</RootNamespace>
+    <AssemblyName>LumiText.Core</AssemblyName>
+    <Product>LumiText</Product>
+    <Description>Float-wrapping text layout engine and document model (UI-agnostic).</Description>
+  </PropertyGroup>
+
+</Project>
