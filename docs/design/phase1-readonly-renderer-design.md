@@ -1,6 +1,10 @@
 # Phase 1 详细设计：只读渲染器（文档模型 → 排版 → 绘制全链路）
 
-- 状态：**方案稿（未开工，2026-10-02）**
+- 状态：**方案稿 v2（2026-10-02 评审修订，未开工）**
+- 修订记录（v2）：对照 Phase 0 产物代码评审后补 4 处设计缺口——按批分组绘制（§4/§7.3）、
+  交集重探弃批成本论证（§5.4/§5.5/§10.3）、滚动钉视口模型（§7.2）、Todo 复选框定位通路
+  （§4/§6.2）；另补设备丢失风险（§12 R7）、工程自包含待办（§1/§2/§13 M1）、
+  锚点契约简化（§3.3/§6.3）、Divider 高度基准（§4）、解码并行（§8.1）、对照前提（§9.2）。
 - 前置：[custom-renderer-framework.md](custom-renderer-framework.md)（框架稿，已确认）、
   [phase0-spike-design.md](phase0-spike-design.md)（S1/S2 已验收，条件 Go）
 - 范围红线：本文档只做方案，不修改任何现有代码；开工时按里程碑逐段实施
@@ -51,7 +55,7 @@ RichEditBox 做视觉回归。」
 | `FlowDocumentRenderer` | `LumiText.WinUI/Rendering/FlowDocumentRenderer.cs` | 改为「视口渲染器」：只画可见区行盒 + 图片（§7.3） |
 | `FloatWrapView`（S2 演示控件） | `LumiText.WinUI/Controls/FloatWrapView.cs` | 角色降级为引擎回归 Demo；新宿主 `LumiDocumentView` 另建 |
 | 17 个假字体单测 | `LumiText.Core.Tests` | 全部保留，接口改造后等价迁移（§10.1） |
-| 截图验收管线 | `spikes/tools/screenshot.py` 等（S1 RESULTS §4 记录） | 视觉回归直接复用 |
+| 截图验收管线 | `spikes/tools/screenshot.py` 等（S1 RESULTS §4 记录） | M1 迁入 `src/LumiText/tools/` 后复用；`spikes/` 其余内容（S1.GlassText、Probe）保留至 Phase 1 验收通过后整体删除——修订 Phase 0「迁移后即删」口径，Phase 1 期间 S1/Probe 仍是回归参照 |
 
 已验证事实（直接引用验收记录，非推测）：
 
@@ -66,6 +70,9 @@ RichEditBox 做视觉回归。」
 
 ```text
 src/LumiText/
+├── LumiText.slnx                      ← 新（M1）：独立解决方案，拆仓前置（D5 要求工程自包含）
+├── README.md                          ← 新（M1）：占位，开源时补全
+├── tools/                             ← 新（M1）：自 spikes/tools 迁入的截图验收管线
 ├── LumiText.Core/                     ← 零依赖（仅 BCL）
 │   ├── Documents/
 │   │   ├── Document.cs                ← 新：一篇文档 = 块列表 + 浮动列表
@@ -157,7 +164,7 @@ public sealed record TextRun(string Text, InlineStyle? Style = null);
     { "type": "todo", "checked": false, "runs": [{ "t": "待办事项" }] },
     { "type": "divider" },
     { "type": "image", "imageId": "img-1", "width": 240, "height": 160,
-      "float": { "side": "right", "margin": 8, "anchor": { "block": 0, "char": 0 } } }
+      "float": { "side": "right", "margin": 8, "anchor": { "block": 0, "x": 0, "y": 0 } } }
   ],
   "images": [
     { "id": "img-1", "mime": "image/png", "data": "<base64>" }
@@ -206,11 +213,22 @@ Phase 1 的变更集中在三处：
 |---|---|
 | Paragraph/Heading | 一条文本流（runs 拼接，样式随行） |
 | Todo | 一条文本流 + 段落级 `LeftIndent`（复选框宽 + 间隙，建议 20+6=26 dip）；复选框不进文本流 |
-| Divider | 一个占位行盒（高度 = 正文行高，内容为空，渲染层画线） |
+| Divider | 一个占位行盒（高度 = `TextStyle.Default` 空行高度，与所在位置的样式无关的固定占位；内容为空，渲染层画线） |
 | Image | 不进文本流；转换为 `FloatObject` 交给既有浮动通道 |
 
-`PlacedLine` 扩展字段：`BlockIndex`（原 ParagraphIndex 改名）、`Kind`（Text/Divider/Image 占位）、
-`NativeLine`（见 §5.2 的批量行引用）。`LayoutResult` 语义不变，仍负责统一释放随行布局。
+`PlacedLine` 扩展字段（v2 补全渲染通路）：
+
+- `BlockIndex`（原 `ParagraphIndex` 改名）；
+- `Kind`：`Text / TodoText / Divider / ImagePlaceholder`——渲染层据此分派绘制路径，
+  Todo 文本行必须与普通段落区分（复选框定位依赖，见 §6.2）；
+- `IsBlockStart`：是否所属块的第一个行盒（Todo 复选框只画在首行）；
+- `Batch`（`ILineBatch` 引用，接替现 `NativeLayout` 的角色）+ `LineOffsetY`
+  （本行顶缘相对批布局顶缘的偏移，取自 `MeasuredLine.OffsetY`）——
+  渲染层「按批分组绘制」的定位依据（见 §7.3）。
+
+`LayoutResult` 增加 `Blocks`（源块列表只读透传）：渲染层画 Todo 复选框需要
+`TodoBlock.Checked`、画占位块需要块类型，排版产物自身不带块元数据会让渲染层无路可查。
+`LayoutResult.Dispose` 语义不变，改为按 `Batch` 去重释放（§5.2 所有权契约）。
 
 ---
 
@@ -290,13 +308,23 @@ public interface ITextMeasurer
 
 - 同一 Band 多段（图片两侧）共享基线的行为**不变**（现有 T4 用例直接回归）；
 - 窄段放弃、跨带交集重探的行为**不变**（T6、矮图片用例直接回归）；
-- 新批创建点 = 段宽变化点或文本消费完点，批数上界 = 段宽种数 + 1。
+- 批的复用判定以**段（X，宽）**为准而非仅宽度——段宽相同但 X 不同的两段不得共享一批
+  （否则渲染分组的原点定位失效，见 §7.3）；
+- 新批创建点 = 段（X，宽）变化点或文本消费完点；批数上界 = 不同段（X，宽）种数 + 弃批数。
+
+**交集重探的弃批成本（v2 评审补充）：**现有「行横跨多带 → 交集段宽变窄 → 弃探测重排一次」
+（`FlowLayoutEngine.LayoutRow`）在旧模式下弃掉的只是一行探测（0.33ms 量级），批量模式下
+弃掉的是**整批**（一次完整布局，最坏 7.7ms 量级）。发生条件 = 行跨带且交集段宽与当前批
+不同，次数上界 = 带边界数（每处至多一次弃批 + 一次重建），浮动密集场景的最坏额外成本
+≈ 带边界数 × 单批布局成本。这是 [A] 预算的主要不确定来源：S2 实测的 7.86ms 解药是
+**无浮动**场景，带浮动 + 行跨带场景从未实测——M3 必须补「10,000 字符 + 3 浮动」批量
+微基准（含建批数/弃批数计数，见 §10.3），数据出来之前不得进 M4。
 
 ### 5.5 性能目标（沿用 S2 预算，这次要达标）
 
 | 场景 | 预算 | 依据 |
 |---|---|---|
-| 全量排版 10,000 字符 + 3 浮动 | < 8ms（P95） | 实测候选 7.86ms + 引擎行盒开销，预计 8–15ms，超标则按 S2 条件 Go 条款接受并记录 |
+| 全量排版 10,000 字符 + 3 浮动 | 目标 < 8ms（P95）；接受上限 ≤ 15ms | 无浮动候选实测 7.86ms，交集重探弃批可能叠加（§5.4），带浮动数据 M3 补齐；超 8ms 未破 15ms 按 S2 条件 Go 条款书面记录，破 15ms 停下来先优化再进 M4 |
 | 全量排版 25×400 字段落 | < 8ms（P95） | 实测 7.86ms |
 | 3000 字符文档整篇重排 | < 4ms | 批量后理论上 ~2ms（0.29ms/400字 × 7.5 + 开销） |
 
@@ -320,7 +348,7 @@ public interface ITextMeasurer
 | 块 | 渲染 |
 |---|---|
 | Paragraph/Heading | 逐行 `DrawTextLayout`（同现状，层裁剪到行盒） |
-| Todo | 首行行盒左侧缩进区内画矢量复选框：`CanvasDrawingSession.DrawRoundedRectangle`（1.5px 描边、2px 圆角）+ 已勾选时 `DrawLine` 画对勾（两条线段）；复选框垂直居中于首行基线区，颜色随主题墨色 |
+| Todo | 在 `Kind=TodoText && IsBlockStart` 的行盒左侧缩进区内画矢量复选框：`CanvasDrawingSession.DrawRoundedRectangle`（1.5px 描边、2px 圆角）+ 已勾选时 `DrawLine` 画对勾（两条线段）；复选框垂直居中于**首行行盒**（行盒顶 + (行高 − 框高)/2），勾选态经 `LayoutResult.Blocks[BlockIndex]` 取 `TodoBlock.Checked`（通路见 §4），颜色随主题墨色 |
 | Divider | 占位行盒内画 1px 水平线（半透明墨色，居中） |
 | Image（浮动） | `CanvasBitmap` 按 `FloatObject.Rect` 画圆角矩形裁剪的位图（替换 S2 的紫色调试矩形） |
 
@@ -330,7 +358,9 @@ public interface ITextMeasurer
 正式文档需要「图片跟着锚点文字走」：
 
 ```csharp
-public sealed record FloatAnchor(int BlockIndex, int CharIndex, float OffsetX, float OffsetY);
+// O4 已定锚定到「块首」：字符级锚定不做，CharIndex 从契约删除（v2 简化），
+// 未来需要时升 schema 版本加回。
+public sealed record FloatAnchor(int BlockIndex, float OffsetX, float OffsetY);
 
 public sealed record FloatObject(...)
 {
@@ -339,8 +369,11 @@ public sealed record FloatObject(...)
 }
 ```
 
-- 推导规则：锚点字符所在行盒的顶缘 + `OffsetY` 为矩形顶缘；
-  `OffsetX` 相对内容区左/右缘（按 `Side`）。锚点块不存在（文档过短）→ 钳到最后一块。
+- 推导规则：锚点块**首行行盒**的顶缘 + `OffsetY` 为矩形顶缘；
+  `OffsetX` 相对内容区左/右缘（按 `Side`）。
+- 锚点块解析的异常路径（v2 补全，单测钉死）：锚到非文本块（Divider/Image，无行盒）→
+  顺延到其后第一个文本块；其后无文本块 → 钳到最后一个文本块；索引越界 → 钳到最后一块；
+  全文无文本块 → 该浮动退化为 Rect 直给路径（兼容 S2 现状行为）。
 - **先排版文本、后定浮动**会产生循环依赖（浮动位置影响行盒）。解法采用两遍排版：
   第一遍忽略浮动得到锚点行盒 Y → 推出浮动矩形 → 第二遍带浮动正式排版。
   两遍的成本 = 全量排版 ×2，以 §5.5 的预算看 3000 字符约 4ms×2，可接受；
@@ -380,6 +413,11 @@ public sealed record FloatObject(...)
 2. 用 `ExpressionAnimation` 引用 `ScrollManipulation.Translation.Y`，
    `SetReferenceParameter` 绑定，`StartAnimation("Offset.Y", ...)` 挂到承载 surface 的
    SpriteVisual 上——**合成器线程驱动偏移，滚动不掉帧**；
+   **钉视口模型（v2 明确）**：SpriteVisual 在 ScrollViewer 内容（Grid）内部，本身随内容
+   被合成器平移；表达式的职责是**抵消**这个平移，把 SpriteVisual 钉回视口原位，
+   方向为 `Offset.Y = -ScrollManipulation.Translation.Y`（符号与钳制以 U1 实测为准）。
+   虚拟 surface 只有 N 屏高，不钉视口就会随内容滚出屏幕。钉住之后，surface 内的内容
+   按滚动偏移重绘可见区（§7.3），滚动偏移由 `ViewChanged`（UI 线程）提供给重绘调度；
 3. 官方注意事项：PropertySet 必须存为字段防 GC（表达式动画不持有强引用）。
 
 结构：
@@ -395,22 +433,35 @@ ScrollViewer (VerticalScrollBarVisibility=Auto)
 
 ```
 VirtualizedTextSurface（CompositionTextSurface 的姊妹实现，不动旧类）
-├── 虚拟 surface 尺寸 = 内容宽 × min(文档总高, 窗口高×N屏) 物理像素
-├── 可见区变化（滚动/重排/尺寸变化）→ 计算需绘区域（可见区 ± 1 屏预取）
+├── 虚拟 surface 尺寸 = 内容宽 × min(文档总高, 窗口高 × 3 屏) 物理像素（当前屏 ±1 屏预取）
+├── 可见区变化（滚动/重排/尺寸变化）→ 计算需绘区域
 │    → CreateDrawingSession(surface, updateRect) 只画该区域的行盒
 ├── 区域滚出预取范围 → Trim(rects) 回收显存
 └── 退避策略：文档总高 ≤ 3 屏时直接用普通 CompositionDrawingSurface 整面绘
     （便签常态，虚拟化纯粹是为长文档兜底）
 ```
 
+**按批分组绘制（v2 新增，修复批量接口与渲染器的衔接）：**批量接口下同一段（X，宽）的
+多个行盒共享一个 `CanvasTextLayout`（`PlacedLine.Batch`）。若沿用现状「逐行盒调
+`DrawTextLayout` + 裁剪到行盒」，每个行盒都会把整批光栅化一遍，一段 N 行就是 N 次整批
+光栅化——渲染成本 O(行数²)，下文「< 1ms/屏」的估计必然落空。规则改为：
+
+- 渲染按 `(Batch, 段 X)` 分组；组内逐行校验「引擎放置与批内堆叠一致」
+  （前一行 Y + Height ≈ 本行 Y，容差沿用引擎 Epsilon）→ 一致并入当前组，不一致切新组。
+  跨段基线抬升会让引擎放置间距大于批内堆叠，此时宁可多画一组也要保证位置正确；
+- 每组一次 `DrawTextLayout`，原点 =（组首行 X, 组首行 Y − 组首行 `LineOffsetY`），
+  裁剪到组内行盒矩形并集（`CreateLayer` + 几何组）；
+- 常态（无跨段基线抬升）一批 = 一组，绘制调用数 = 批数；混合字号跨段行时退化为多组，
+  正确性优先。光栅化总量 ≈ 文档一次 + 基线抬升处的少量重复。
+
 - 首版**不做** `Scroll()`/`ScrollWithClip` 的像素搬移优化（滚动时整块重绘可见区）：
-  一屏文字的重绘成本 = 可见区行盒的 DrawTextLayout 调用，估计 < 1ms，
+  按上述分组口径，一屏重绘 = 可见区涉及的批组各画一次，估计 < 1ms，
   开工后用 §10.3 基准验证；若实测不达标再启用 Scroll 优化（API 已确认存在）。
 - DPI 处理沿用 `CompositionTextSurface` 既有方案（物理像素建 surface、
   `Stretch = Fill` 映射回 DIP）。
 - 渲染器改造：`FlowDocumentRenderer.Render` 增加视口参数
-  `Render(session, layout, Rect viewport, ...)`，只画与 viewport 相交的行盒
-  （行盒 Y 有序，二分定位起始行）。
+  `Render(session, layout, Rect viewport, ...)`，只画与 viewport 相交的批组
+  （行盒 Y 有序，二分定位起始行，分组在可见行范围内进行）。
 
 ---
 
@@ -421,6 +472,9 @@ VirtualizedTextSurface（CompositionTextSurface 的姊妹实现，不动旧类�
 `CanvasBitmap.LoadAsync(ICanvasResourceCreator, IRandomAccessStream)`——签名已查证。
 加载时机：文档载入时把 `Images` 表的 base64 解码为 `CanvasBitmap` 字典
 （`ImageId → CanvasBitmap`），由渲染器持有；文档释放时统一 Dispose。
+**排版不依赖解码结果**（显示尺寸在 `ImageBlock` 模型里），解码与排版**并行**：
+文档载入即排版上屏，位图就绪后 `Invalidate` 补画图片；解码失败的图片画占位框并记日志，
+不阻塞正文（v2 修订，原「解码 → 排版 → 渲染」串行描述作废）。
 解码放后台线程（`CanvasBitmap` 与设备关联，绘制回 UI/合成线程安全——
 Win2D 资源创建本就支持非 UI 线程，开工时以异常为信号验证）。
 
@@ -447,7 +501,7 @@ Win2D 资源创建本就支持非 UI 线程，开工时以异常为信号验证�
 ```csharp
 public sealed class LumiDocumentView : ScrollViewer
 {
-    public void SetDocument(Document document);   // 载入 → 解码图片 → 排版 → 渲染
+    public void SetDocument(Document document);   // 载入 → 排版上屏；图片后台解码，就绪后补画（§8.1）
     public event Action<double>? LayoutStatsChanged;  // 沿用 FloatWrapView 的耗时上报
     public bool DebugOverlay { get; set; }              // 行盒/带/段调试框线
 }
@@ -462,6 +516,13 @@ public sealed class LumiDocumentView : ScrollViewer
 主场：`LumiText.Demo` 新增「对照页」——左 `RichEditBox`（喂等价内容）、
 右 `LumiDocumentView`（喂同内容的新模型），窗口用同一 `AcrylicBackdrop` 配置。
 
+**前置确认（M7 开工前，v2 新增）：**
+
+- 正文字号对齐：`TextStyle.Default` = Segoe UI 15dip，须与现产品 RichEditBox 正文字号
+  实测一致（不一致则以现产品为准改默认样式）——否则「同字体字号同宽度」的对照前提不成立；
+- 对照侧 `RichEditBox` 的内容用手写 RTF 字符串喂入（粗/斜/删/下划/分点/伪待办各一例），
+  不引入 RTF 生成器。
+
 | 用例 | 对照点 |
 |---|---|
 | 纯文本长段落 | 断行位置逐行一致（同字体字号同宽度下 DirectWrite vs RichEdit 断行应基本一致；逐行截图比对，允许个别行尾差异并记录） |
@@ -469,9 +530,9 @@ public sealed class LumiDocumentView : ScrollViewer
 | 标题三段 | 字号梯度目测合理（O1） |
 | 待办五行（含换行长待办） | 矢量复选框视觉验收：描边/对勾清晰、垂直居中于首行、换行后文本与首行文本左缘对齐（悬挂缩进正确）；勾选/未勾选两态各截一张 |
 | 浮动图片 + 环绕 | 现产品无此能力，只验收新渲染器自身正确性 |
-| 滚动长文档（300 行） | 滚动流畅、无上屏残影、Trim 后回滚内容完整 |
+| 滚动长文档（300 行） | 滚动流畅、无上屏残影、Trim 后回滚内容完整；快速甩动滚动时允许短暂透出玻璃底，滚动停止后下一帧内容完整（§7.2 钉视口 + §7.3 重绘调度的验收口径） |
 
-截图证据沿用 S1 管线（`spikes/tools/screenshot.py` + crop/zoom），
+截图证据沿用 S1 管线（M1 迁入 `src/LumiText/tools/` 后使用），
 结果写入 `src/LumiText/LumiText.Demo/RESULTS-Phase1.md`。
 
 ---
@@ -483,12 +544,13 @@ public sealed class LumiDocumentView : ScrollViewer
 - **等价迁移**：现有 17 例全部保留语义，适配批量接口（假字体实现 `ILineBatch`）；
   T1–T10 环绕矩阵断言值**不得因接口改造而改变**（接口改造是纯性能变更）。
 - **批量新增断言**：
-  - T-B1 段宽不变时批数 = 1；段宽变化 k 次时批数 ≤ k+1；
+  - T-B1 段（X，宽）不变时批数 = 1；批总数 ≤ 不同段（X，宽）种数 + 弃批数（§5.4 不变式）；
   - T-B2 批量结果与逐行旧逻辑（保留为内部参照实现）逐行一致；
   - T-B3 行内大字撑高行高后跨带交集重探正确。
 - **块级**：T-C1 空段落/ Divider 占位高度；T-C2 Todo 悬挂缩进——所有行（含换行）
   X 原点 = 段 X + `LeftIndent`，且与浮动排除区叠加时缩进在段宽收窄之后生效；
-  T-C3 浮动锚定两遍排版的锚点解析（含锚点块缺失的钳制）。
+  段宽 < `LeftIndent` + 最小可排版宽度时按窄段放弃处理（不死循环）；
+  T-C3 浮动锚定两遍排版的锚点解析（索引越界钳制、锚到非文本块顺延、全文无文本块退化，§6.3）。
 - **序列化**（T-S 系列）：全块型往返相等；缺省字段降级；未知字段忽略；
   `schema` 高于当前跳过；base64 图片往返字节一致。
 
@@ -499,8 +561,10 @@ public sealed class LumiDocumentView : ScrollViewer
 
 ### 10.3 新增微基准（挂到现有「性能验收」）
 
+- **带浮动批量排版基准（M3 必出数据，v2 新增）**：10,000 字符 + 3 浮动，
+  记录耗时（P95）、建批数、弃批数——[A] 预算判定的唯一依据（§5.4/§5.5）；
 - 样式应用顺序开销（§5.3 第 2 点）；
-- 一屏可见区重绘耗时（§7.3 退避决策依据）；
+- 一屏可见区重绘耗时（§7.3 按批分组口径的退避决策依据）；
 - 图片解码耗时（100KB/1MB PNG 各一）。
 
 ### 10.4 Go / No-Go
@@ -540,10 +604,11 @@ public sealed class LumiDocumentView : ScrollViewer
 |---|---|---|---|
 | R1 | 两遍锚定排版在大文档上翻倍成本超标 | 中 | 预算内接受（§6.3）；超标则锚定降级为「文档加载时一次性解析，编辑期随块位移增量修正」 |
 | R2 | 图片 base64 内嵌导致便笺文件过大、加载慢 | 低 | 已按 O3 定稿：单图压缩后 ≤ 5MB 上限约束；真实数据证明仍有问题再拆媒体目录 |
-| R3 | 滚动表达式动画与 XAML 内部滚动视觉不同步（撕裂） | 低 | 官方样例模式即为解决此问题而生；若仍撕裂，退化为 ViewChanged 事件 UI 线程同步（可接受轻微延迟） |
+| R3 | 滚动视觉问题两类：表达式动画方向/钳制错误（内容错位或双倍位移）；快速滚动时 `ViewChanged` 重绘跟不上（短暂透出玻璃底） | 中 | 钉视口表达式的符号与钳制第一天 U1 实测（§7.2）；重绘跟不上的兜底是「±1 屏预取 + 退化为普通 surface 整面绘」，验收口径见 §9.2 滚动用例 |
 | R4 | 虚拟 surface 透明表现与普通 surface 不一致（黑底，S1 R2 同类） | 低 | U3 第一天验证；失败则全程用普通 surface + 文档高度上限保护 |
 | R5 | 批量接口改造破坏 T1–T10 既有行为 | 中 | 等价迁移纪律（§10.1）：断言值不许变；参照实现双跑比对 |
 | R6 | `LumiDocumentView` 在 20 窗口场景的显存占用（虚拟 surface 每窗一份） | 中 | Trim 策略 + S1 H5 搁置项在本期有条件时一并补测（BenchmarkWindow 改造） |
+| R7 | 设备丢失（GPU 重置/驱动更新）后 `CanvasTextFormat` 缓存、`CanvasBitmap` 字典、surface 全部失效 | 低 | **本期记录为已知未处理项**（便签场景罕见）；`Win2DTextMeasurer` / `VirtualizedTextSurface` / 图片字典三处在实现时留出统一的 `RecreateDeviceResources()` 重建入口，异常信号驱动的真实重建排入 Phase 2 |
 
 ---
 
@@ -551,9 +616,9 @@ public sealed class LumiDocumentView : ScrollViewer
 
 | 里程碑 | 内容 | 验收 |
 |---|---|---|
-| M1 | U1/U2/U3 三个未验证点的最小代码确认（在 Demo 工程内） | 三条结论写入 RESULTS-Phase1 |
+| M1 | U1/U2/U3 三个未验证点的最小代码确认（在 Demo 工程内）＋ 工程自包含补齐（`LumiText.slnx`、`README.md` 占位、截图工具迁入 `tools/`） | 三条结论写入 RESULTS-Phase1；slnx 独立构建通过 |
 | M2 | 文档模型 + 序列化器 + T-S 系列单测（§3） | Core 测试全绿；schema 冻结 |
-| M3 | 批量度量接口改造 + 引擎行循环 + 等价迁移单测（§5） | T1–T10 等价迁移全绿 + §5.5 性能达标 |
+| M3 | 批量度量接口改造 + 引擎行循环 + 等价迁移单测（§5） | T1–T10 等价迁移全绿 + 带浮动批量基准出数（§10.3）+ §5.5 达标或按条款记录 |
 | M4 | 样式 run + 块级渲染 + 浮动锚定（§6） | T-B/T-C 系列全绿 |
 | M5 | 图片解码与浮动绘制（§8.1/8.2） | Demo 浮动图片渲染正确 |
 | M6 | `VirtualizedTextSurface` + `LumiDocumentView` + 滚动（§7、§9.1） | 300 行滚动验收用例通过 |

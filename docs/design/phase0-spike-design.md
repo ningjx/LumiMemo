@@ -249,7 +249,7 @@ public record LayoutResult(IReadOnlyList<PlacedLine> Lines,
 - S1 的 `CompositionTextSurface` → 迁入 `LumiText.WinUI` 作为渲染层基座；`CompositionVirtualDrawingSurface` 替换以支持长便签滚动。
 - S2 的 `ITextMeasurer` / `ILayoutEngine` / `LayoutResult` → 迁入 `LumiText.Core`（零 UI 依赖）；Win2D 度量实现进 `LumiText.WinUI`。文档模型也放 `LumiText.Core`——按 D5 决策，**不进 LumiMemo.Core**，保证库可独立拆仓开源。
 - S3（TSF）在 Phase 2 开工前补做，其 spike 复用 S1 宿主 + S2 引擎。
-- 正式库工程自带独立的 `Directory.Packages.props` 与测试工程，不依赖宿主仓基础设施；spike 目录在产物迁移完毕后整体删除（git 历史保留）。
+- 正式库工程自带独立的 `Directory.Packages.props` 与测试工程，不依赖宿主仓基础设施；spike 目录保留至 Phase 1 验收通过后整体删除（git 历史保留），截图工具届时已迁入 `src/LumiText/tools/`（2026-10-02 Phase 1 评审修订：原口径「迁移后即删」与 Phase 1 继续引用截图管线冲突）。
 
 ## 5. 风险汇总与回退触发器
 
