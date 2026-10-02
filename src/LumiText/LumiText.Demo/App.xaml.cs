@@ -59,6 +59,7 @@ public partial class App : Application
             "u3" => new VirtualSurfaceWindow(),
             "m4" => new RichDocWindow(),
             "m6" => new ScrollDocWindow(),
+            "m7" => new CompareWindow(),
             "perf" => new DemoWindow(autoRunPerf: true),
             _ => new DemoWindow(autoRunU2: probe == "u2"),
         };

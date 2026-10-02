@@ -10,6 +10,10 @@ public sealed record TextStyle(
     [property: JsonPropertyName("font")] string FontFamily,
     [property: JsonPropertyName("size")] float FontSize)
 {
-    /// <summary>库内默认样式：跟随系统的正文字体与 15dip 字号。</summary>
-    public static TextStyle Default { get; } = new("Segoe UI", 15f);
+    /// <summary>
+    /// 库内默认样式：跟随系统的正文字体与 14dip 字号。
+    /// 字号经 M7 前置确认（Phase 1 设计 §9.2）：与现产品 RichEditBox 正文字号一致
+    /// （产品未显式设置，取 WinUI 框架默认 14dip；初稿的 15dip 以此为准修正）。
+    /// </summary>
+    public static TextStyle Default { get; } = new("Segoe UI", 14f);
 }
