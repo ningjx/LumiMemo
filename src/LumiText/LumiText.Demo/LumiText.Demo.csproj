@@ -23,6 +23,13 @@
     <ProjectReference Include="..\LumiText.WinUI\LumiText.WinUI.csproj" />
   </ItemGroup>
 
+  <!-- M5 解码/渲染验收的测试图片（由 tools/gen_test_images.py 生成）。 -->
+  <ItemGroup>
+    <Content Include="Assets\*.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" />
     <PackageReference Include="Microsoft.WindowsAppSDK" />

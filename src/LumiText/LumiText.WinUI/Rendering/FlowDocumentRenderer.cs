@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Numerics;
 using Microsoft.Graphics.Canvas;
+using Microsoft.Graphics.Canvas.Geometry;
 using Microsoft.Graphics.Canvas.Text;
 using LumiText.Core.Documents;
 using LumiText.Core.Layout;
@@ -40,6 +41,12 @@ public sealed class FlowDocumentRenderer
 
     /// <summary>当前生效的布局结果（可能为 <see langword="null"/>，尚未排版时）。</summary>
     public LayoutResult? Current { get; private set; }
+
+    /// <summary>
+    /// 文档图片缓存（§8.1/8.2）：设置后，渲染把浮动 ImageBlock 画为真实位图
+    /// （未就绪/解码失败时保留调试占位矩形，位图就绪由宿主 Invalidate 补画）。
+    /// </summary>
+    public DocumentImageStore? Images { get; set; }
 
     /// <summary>最近一次全量排版耗时。</summary>
     public TimeSpan LastLayoutDuration { get; private set; }
@@ -81,8 +88,23 @@ public sealed class FlowDocumentRenderer
         {
             var r = f.Rect;
             var rect = new Windows.Foundation.Rect(r.X, r.Y, r.Width, r.Height);
-            session.FillRoundedRectangle(rect, 6, 6, FloatFill);
-            session.DrawRoundedRectangle(rect, 6, 6, FloatStroke, 1.5f);
+            // §8.2：浮动 ImageBlock 且位图就绪 → 圆角层 + DrawImage；否则画调试占位矩形
+            // （未解码完成/解码失败/S2 调试浮动共用占位路径，位图就绪后由宿主 Invalidate 补画）。
+            if (TryGetFloatImage(layout, f, out var bitmap))
+            {
+                using (session.CreateLayer(1f,
+                    CanvasGeometry.CreateRoundedRectangle(session.Device, rect, 6f, 6f)))
+                {
+                    session.DrawImage(bitmap, rect,
+                        new Windows.Foundation.Rect(0, 0, bitmap.SizeInPixels.Width, bitmap.SizeInPixels.Height));
+                }
+                session.DrawRoundedRectangle(rect, 6, 6, FloatStroke, 1.5f);
+            }
+            else
+            {
+                session.FillRoundedRectangle(rect, 6, 6, FloatFill);
+                session.DrawRoundedRectangle(rect, 6, 6, FloatStroke, 1.5f);
+            }
         }
 
         var lines = layout.Lines;
@@ -145,6 +167,29 @@ public sealed class FlowDocumentRenderer
                     break;
             }
         }
+    }
+
+    /// <summary>
+    /// 浮动块对应的图片位图（§8.2）：FloatObject.Id = 源 ImageBlock 的块索引
+    /// （<see cref="Document.GetFloats"/> 派生约定），经 <see cref="Images"/> 查解码结果。
+    /// </summary>
+    private bool TryGetFloatImage(LayoutResult layout, FloatObject f, out CanvasBitmap bitmap)
+    {
+        bitmap = null!;
+        if (Images is null
+            || layout.Blocks is not { } blocks
+            || f.Id < 0 || f.Id >= blocks.Count
+            || blocks[f.Id] is not ImageBlock image)
+        {
+            return false;
+        }
+        var found = Images.TryGet(image.ImageId);
+        if (found is null)
+        {
+            return false;
+        }
+        bitmap = found;
+        return true;
     }
 
     /// <summary>

@@ -22,6 +22,7 @@ public sealed partial class RichDocWindow : Window
     private readonly DesktopAcrylicController? _backdrop;
     private readonly CompositionTextSurface _surface = new();
     private readonly FlowDocumentRenderer _renderer = new(new Win2DTextMeasurer());
+    private readonly DocumentImageStore _imageStore = new(CanvasDevice.GetSharedDevice());
     private readonly Document _document = BuildDocument();
     private bool _documentSet;
 
@@ -37,6 +38,7 @@ public sealed partial class RichDocWindow : Window
         Closed += (_, _) =>
         {
             _surface.Dispose();
+            _imageStore.Dispose();
             _backdrop?.Dispose();
         };
     }
@@ -45,7 +47,36 @@ public sealed partial class RichDocWindow : Window
     {
         Activated -= OnFirstActivated;
         _surface.Attach(SurfaceHost);
+        _renderer.Images = _imageStore;
         Relayout();
+        // §8.1：解码与排版并行——文档载入即排版上屏，位图就绪后补画。
+        _ = WarmupImagesAsync();
+    }
+
+    private async Task WarmupImagesAsync()
+    {
+        await _imageStore.WarmupAsync(
+            _document.Images,
+            () => DispatcherQueue.TryEnqueue(() => _surface.Invalidate()));
+
+        // M5 解码实测（§10.3）：首轮含 WIC/Win2D 管线初始化（冷），再跑一轮取稳态（热）。
+        using var warmStore = new DocumentImageStore(CanvasDevice.GetSharedDevice());
+        await warmStore.WarmupAsync(_document.Images);
+
+        var report = new System.Text.StringBuilder();
+        report.AppendLine("    首轮（冷，含管线初始化）:");
+        foreach (var (id, bytes, ms) in _imageStore.DecodeLog)
+        {
+            report.AppendLine($"    {id}　{bytes / 1024.0:F0} KB　{ms:F2} ms");
+        }
+        report.AppendLine("    二轮（热，稳态）:");
+        foreach (var (id, bytes, ms) in warmStore.DecodeLog)
+        {
+            report.AppendLine($"    {id}　{bytes / 1024.0:F0} KB　{ms:F2} ms");
+        }
+        PerfBenchmark.Append(
+            $"M5 图片解码实测（{DateTime.Now:yyyy-MM-dd HH:mm}，{Environment.OSVersion.VersionString}，Release）",
+            report.ToString(), "m5-perf.txt");
     }
 
     private void Relayout()
@@ -69,7 +100,7 @@ public sealed partial class RichDocWindow : Window
         _renderer.Render(session, _renderer.Current, InkColor, debugOverlay: false);
     }
 
-    /// <summary>验收文档：覆盖 §6.2 全部块级渲染路径 + §6.3 锚定浮动。</summary>
+    /// <summary>验收文档：覆盖 §6.2 全部块级渲染路径 + §6.3 锚定浮动 + §8 真实图片。</summary>
     private static Document BuildDocument()
     {
         var accent = new Color32(255, 180, 40, 60);
@@ -103,15 +134,29 @@ public sealed partial class RichDocWindow : Window
                     @checked: true),
                 new DividerBlock(),
                 new ParagraphBlock(
-                    "分割线之上是待办区。右侧的紫色块是「锚定到本文块首 + 偏移」的浮动图片占位" +
-                    "（§6.3 两遍排版解析）；左侧直给矩形的是另一张浮动图。文字应当在两者之间自然环绕流动，" +
-                    "验证锚定定位与矩形直给路径在同一份文档里共存。"),
+                    "分割线之上是待办区。右侧是「锚定到本文块首 + 偏移」的浮动图片（§6.3 两遍排版解析），" +
+                    "左侧直给矩形定位的是另一张浮动图（983KB PNG，解码并行预热）。文字应当在两者之间" +
+                    "自然环绕流动，验证真实位图渲染与两种浮动定位路径在同一份文档里共存。"),
                 // 锚定浮动：锚到本段（块 5）首行 + 顶部偏移 24，右侧缩 8（两遍排版解析）
                 new ImageBlock("img-anchored", 150, 100,
                     new FloatPlacement(FloatSide.Right, 8f, new FloatAnchor(5, 8f, 24f))),
                 // 直给浮动：矩形直给路径（S2 现状）
-                new ImageBlock("img-direct", 120, 90,
-                    new FloatPlacement(FloatSide.Left, 8f, Position: new FloatPosition(0, 220))),
-            });
+                new ImageBlock("img-direct", 150, 113,
+                    new FloatPlacement(FloatSide.Left, 8f, Position: new FloatPosition(0, 230))),
+            },
+            LoadImageResources());
+    }
+
+    /// <summary>从 Assets 读测试图片为 ImageResource（tools/gen_test_images.py 生成）。</summary>
+    private static ImageResource[] LoadImageResources()
+    {
+        string assets = Path.Combine(AppContext.BaseDirectory, "Assets");
+        return new[]
+        {
+            new ImageResource("img-anchored", "image/png",
+                File.ReadAllBytes(Path.Combine(assets, "test-img-gradient.png"))),
+            new ImageResource("img-direct", "image/png",
+                File.ReadAllBytes(Path.Combine(assets, "test-img-noise.png"))),
+        };
     }
 }
