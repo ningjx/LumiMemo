@@ -189,6 +189,8 @@ public sealed class LumiEditor : Grid
     {
         _document = _core!.Document;
         Relayout();
+        // 新增图片（如粘贴插图）后台解码，就绪后补画
+        _ = WarmupImagesAsync(_document);
         // 组字期抑制（§6.3）：组字期的文档变化是 IME 组字显示，不触发自动保存
         if (_tsf?.TextStore?.IsComposing != true)
         {

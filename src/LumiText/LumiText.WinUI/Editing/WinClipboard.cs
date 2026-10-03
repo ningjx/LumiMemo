@@ -47,9 +47,14 @@ public static class WinClipboard
         return true;
     }
 
+    /// <summary>插图长边上限（dip）——与现产品 MaxInsertImageEdge 对齐。</summary>
+    public const float MaxInsertImageEdge = 280f;
+
     /// <summary>
-    /// 粘贴：按现产品语义查询——RTF 优先（富内容），其次纯文本。
-    /// 「纯 Bitmap 不含文本」的插图拦截属 M6 内嵌图片，这里只处理文本两路。
+    /// 粘贴：按现产品 OnPaste 语义查询——
+    /// ① 纯 Bitmap（不含 Text/Rtf）→ 拦截插图（现产品的拦截分支，M6）；
+    /// ② RTF → 解析为模型命令序列；
+    /// ③ 纯文本。
     /// 返回是否消费了剪贴板内容。
     /// </summary>
     public static async Task<bool> PasteAsync(EditorCore core)
@@ -57,7 +62,24 @@ public static class WinClipboard
         ArgumentNullException.ThrowIfNull(core);
         var view = Clipboard.GetContent();
 
-        // 1. RTF → 解析为模型命令序列
+        // ① 纯图片拦截（现产品 RichEditorHost.OnPaste 语义平移）：
+        // 含 Bitmap 且不含 Text/Rtf → 自己走插图逻辑，统一 280px 上限
+        if (view.Contains(StandardDataFormats.Bitmap)
+            && !view.Contains(StandardDataFormats.Text)
+            && !view.Contains(StandardDataFormats.Rtf))
+        {
+            try
+            {
+                await PasteImageAsync(core, view);
+                return true;
+            }
+            catch
+            {
+                // 插图失败放行，继续尝试文本路径
+            }
+        }
+
+        // ② RTF → 解析为模型命令序列
         if (view.Contains(StandardDataFormats.Rtf))
         {
             try
@@ -73,7 +95,7 @@ public static class WinClipboard
             }
         }
 
-        // 2. 纯文本
+        // ③ 纯文本
         if (view.Contains(StandardDataFormats.Text))
         {
             string text = await view.GetTextAsync();
@@ -86,6 +108,47 @@ public static class WinClipboard
             }
         }
         return false;
+    }
+
+    /// <summary>从剪贴板读位图 → 解码量尺寸（280px 上限）→ InsertImageCommand。</summary>
+    private static async Task PasteImageAsync(EditorCore core, DataPackageView view)
+    {
+        var reference = await view.GetBitmapAsync();
+        using var stream = await reference.OpenReadAsync();
+
+        // 读原始字节（存进 ImageResource.Data 作为权威字节）
+        byte[] bytes;
+        using (var ms = new System.IO.MemoryStream())
+        {
+            await stream.AsStreamForRead().CopyToAsync(ms);
+            bytes = ms.ToArray();
+        }
+        if (bytes.Length == 0)
+        {
+            return;
+        }
+
+        // 解码拿原始尺寸（用 Windows.Graphics.Imaging，与现产品同路径）
+        stream.Seek(0);
+        var decoder = await Windows.Graphics.Imaging.BitmapDecoder.CreateAsync(stream);
+        double scale = Math.Min(1.0, MaxInsertImageEdge / Math.Max(decoder.PixelWidth, decoder.PixelHeight));
+        float width = Math.Max(1, (float)Math.Round(decoder.PixelWidth * scale));
+        float height = Math.Max(1, (float)Math.Round(decoder.PixelHeight * scale));
+
+        string imageId = $"img-{Guid.NewGuid():N}";
+        string mime = MimeFromCodec(decoder.DecoderInformation.CodecId);
+        core.ApplyCommand(new Core.Editing.Commands.InsertImageCommand(
+            imageId, bytes, mime, width, height));
+    }
+
+    private static string MimeFromCodec(Guid codecId)
+    {
+        if (codecId == Windows.Graphics.Imaging.BitmapDecoder.PngDecoderId) return "image/png";
+        if (codecId == Windows.Graphics.Imaging.BitmapDecoder.JpegDecoderId) return "image/jpeg";
+        if (codecId == Windows.Graphics.Imaging.BitmapDecoder.GifDecoderId) return "image/gif";
+        if (codecId == Windows.Graphics.Imaging.BitmapDecoder.BmpDecoderId) return "image/bmp";
+        if (codecId == Windows.Graphics.Imaging.BitmapDecoder.WebpDecoderId) return "image/webp";
+        return "image/png"; // 未知按 png（解码器仍能按内容识别）
     }
 
     /// <summary>把一篇文档片段插入编辑器（逐块插入，块间分块）。</summary>
