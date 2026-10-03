@@ -1,10 +1,12 @@
-using Microsoft.Graphics.Canvas;
+﻿using Microsoft.Graphics.Canvas;
 using Microsoft.UI;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Animation;
 using Microsoft.UI.Xaml.Shapes;
+using XamlPath = Microsoft.UI.Xaml.Shapes.Path;
 using LumiText.Core.Documents;
 using LumiText.Core.Editing;
 using LumiText.Core.Editing.Commands;
@@ -62,14 +64,37 @@ public sealed class LumiEditor : Grid
     private long _checkAnimStartTicks;
     private const int CheckAnimationMs = 160;
 
-    // ---- 图片交互（Phase 3 M4）----
-    // 覆盖层 = 滚动内容内、surface 之上的 Canvas：虚线框 + 八手柄 + 尺寸标签。
-    // Canvas 不设 Background（空白处不吃指针），只有手柄元素吃事件——覆盖层的一贯纪律。
+    // ---- 图片交互（Phase 3 M4；样式为打磨版）----
+    // 覆盖层 = 滚动内容内、surface 之上的 Canvas：四角 1/4 圆弧 + 四边中段线段 + 尺寸标签，
+    // 悬停/选中时淡入（无虚线框）。Canvas 不设 Background（空白处不吃指针），
+    // 只有 8 个透明命中区吃事件——覆盖层的一贯纪律。
     private readonly Canvas _imageOverlay = new();
-    private readonly Rectangle _imageOutline = new();
+
+    /// <summary>四角手柄：与图片圆角同弧度的 1/4 圆弧（弧线与图片圆角边缘重合，描边天然半内半外）。</summary>
+    private readonly Dictionary<ImageHandle, XamlPath> _cornerHandles = [];
+
+    /// <summary>四边手柄：边中点的一段线段（描边以图片边缘为中线，半内半外）。</summary>
+    private readonly Dictionary<ImageHandle, Line> _edgeHandles = [];
+
+    /// <summary>八个透明命中区（只管事件与光标；视觉由上面的圆弧/线段负责）。</summary>
     private readonly Dictionary<ImageHandle, Border> _imageHandles = [];
+
     private readonly Border _imageSizeLabel = new();
     private readonly TextBlock _imageSizeLabelText = new();
+
+    /// <summary>悬停淡入/淡出（Phase 3 打磨）：整个覆盖层一起淡，120ms 缓出。</summary>
+    private readonly Storyboard _handleFadeIn = new();
+    private readonly Storyboard _handleFadeOut = new();
+
+    /// <summary>覆盖层当前是否处于「显示」意图（悬停/选中）；淡入只在隐藏→显示那一下启动。</summary>
+    private bool _overlayShown;
+
+    /// <summary>
+    /// 覆盖层当前显示的是哪张图（-1 = 没显示）。手柄命中区有一半在图片外，指针落到那半个上时
+    /// surface 会先收到 PointerExited、悬停状态被清掉——这个"记着的块"用来把手柄上的悬停接回来，
+    /// 也让「悬停即拖」在没选中时找得到目标（<see cref="OnImageHandlePressed"/>）。
+    /// </summary>
+    private int _overlayImageBlock = -1;
 
     /// <summary>选中的图片块索引（-1 = 未选中）。</summary>
     private int _selectedImageBlock = -1;
@@ -114,10 +139,23 @@ public sealed class LumiEditor : Grid
     /// <summary>OS 拖放插图的落点指示（拖入悬停期间显示竖线）。</summary>
     private Core.Editing.TextPosition? _dropIndicator;
 
-    private const float HandleSize = 11f;
-    private static readonly Color OutlineColor = Color.FromArgb(0xCC, 0x7A, 0x6B, 0xB5);
-    private static readonly Color HandleFill = Color.FromArgb(0xF2, 0xFF, 0xFF, 0xFF);
-    private static readonly Color HandleBorderColor = Color.FromArgb(0xCC, 0x5B, 0x4F, 0xA8);
+    // ── ★ 手柄视觉参数（Phase 3 打磨）：随手感调 ──
+    /// <summary>手柄描边宽度（dip）：描边以图片边缘为中线，一半在图片内、一半在图片外。</summary>
+    private const float HandleStrokeWidth = 3f;
+
+    /// <summary>四边手柄的线段长度（dip，居中于边中点）。</summary>
+    private const float HandleLineLength = 16f;
+
+    /// <summary>命中区边长（dip）：比视觉大一圈，好抓。</summary>
+    private const float HandleHitSize = 22f;
+
+    /// <summary>淡入/淡出时长（毫秒）。</summary>
+    private const int HandleFadeMs = 500;
+
+    /// <summary>鼠标离开图片后等这么久再淡出（期间回到图片上就不淡了）。</summary>
+    private const int HandleFadeOutDelayMs = 1500;
+
+    private static readonly Color HandleStrokeColor = Color.FromArgb(0xB3, 0x9B, 0x8C, 0xE8);
     private static readonly Color SizeLabelBackground = Color.FromArgb(0xCC, 0x33, 0x30, 0x3B);
 
     public LumiEditor()
@@ -1348,34 +1386,72 @@ public sealed class LumiEditor : Grid
 
     private void BuildImageOverlay()
     {
-        _imageOutline.Stroke = new SolidColorBrush(OutlineColor);
-        _imageOutline.StrokeThickness = 1f;
-        _imageOutline.StrokeDashArray = new DoubleCollection { 4, 3 };
-        _imageOutline.IsHitTestVisible = false;
-        _imageOutline.Visibility = Visibility.Collapsed;
-        _imageOverlay.Children.Add(_imageOutline);
+        var handleBrush = new SolidColorBrush(HandleStrokeColor);
 
+        // 四角：与图片圆角同弧度的 1/4 圆弧（几何固定，随图片位置平移；描边半内半外）
+        foreach (ImageHandle handle in ImageResizeGeometry.AllHandles)
+        {
+            if (!ImageResizeGeometry.IsCorner(handle))
+            {
+                continue;
+            }
+            var arc = new XamlPath
+            {
+                Data = CornerArcGeometry(handle),
+                Stroke = handleBrush,
+                StrokeThickness = HandleStrokeWidth,
+                StrokeLineJoin = PenLineJoin.Round,
+                StrokeStartLineCap = PenLineCap.Round,
+                StrokeEndLineCap = PenLineCap.Round,
+                IsHitTestVisible = false,
+                Visibility = Visibility.Collapsed,
+            };
+            _cornerHandles[handle] = arc;
+            _imageOverlay.Children.Add(arc);
+        }
+
+        // 四边：边中点的一段线段（Stroke 以几何为中线 → 线宽天然一半在图片内、一半在外）
+        foreach (ImageHandle handle in ImageResizeGeometry.AllHandles)
+        {
+            if (ImageResizeGeometry.IsCorner(handle))
+            {
+                continue;
+            }
+            var line = new Line
+            {
+                Stroke = handleBrush,
+                StrokeThickness = HandleStrokeWidth,
+                StrokeStartLineCap = PenLineCap.Round,
+                StrokeEndLineCap = PenLineCap.Round,
+                IsHitTestVisible = false,
+                Visibility = Visibility.Collapsed,
+            };
+            _edgeHandles[handle] = line;
+            _imageOverlay.Children.Add(line);
+        }
+
+        // 八个透明命中区：只管事件与光标（视觉由上面的圆弧/线段画）
         foreach (ImageHandle handle in ImageResizeGeometry.AllHandles)
         {
             var box = new Border
             {
-                Width = HandleSize,
-                Height = HandleSize,
-                CornerRadius = new CornerRadius(3),
-                Background = new SolidColorBrush(HandleFill),
-                BorderBrush = new SolidColorBrush(HandleBorderColor),
-                BorderThickness = new Thickness(1),
+                Width = HandleHitSize,
+                Height = HandleHitSize,
+                Background = new SolidColorBrush(Colors.Transparent), // null 不吃指针
                 Visibility = Visibility.Collapsed,
                 Tag = handle,
             };
             box.PointerPressed += OnImageHandlePressed;
             box.PointerMoved += OnImageHandleMoved;
+            box.PointerMoved += (_, _) => KeepImageHover(); // 指针停到手柄上时别让悬停掉线
             box.PointerReleased += OnImageHandleReleased;
             box.PointerCaptureLost += OnImageHandleCaptureLost;
             CursorShapes.SetShape(box, CursorForHandle(handle));
             _imageHandles[handle] = box;
             _imageOverlay.Children.Add(box);
         }
+
+        BuildHandleFade();
 
         _imageSizeLabelText.FontSize = 11;
         _imageSizeLabelText.Foreground = new SolidColorBrush(Colors.White);
@@ -1431,49 +1507,220 @@ public sealed class LumiEditor : Grid
         int block = _dragImageBlock >= 0
             ? _dragImageBlock
             : _selectedImageBlock >= 0 ? _selectedImageBlock : _hoverImageBlock;
-        bool withHandles = _dragImageBlock < 0 && _selectedImageBlock >= 0;
         LayoutRect? rect = block >= 0 ? _resizePreview ?? FindFloatRect(block) : null;
 
+        // 拖动图片本体时手柄跟着走（拖动期间排版就是按直给矩形实时重排的，
+        // FindFloatRect 拿到的已是跟手位置）——只在真的没有目标时收起
         if (rect is not { } reserved)
         {
-            _imageOutline.Visibility = Visibility.Collapsed;
-            _imageSizeLabel.Visibility = Visibility.Collapsed;
-            foreach (Border box in _imageHandles.Values)
-            {
-                box.Visibility = Visibility.Collapsed;
-            }
+            HideImageOverlay();
             return;
         }
 
-        // 覆盖层贴「看得见的图片」：绘制与排版都用视觉矩形（FloatGeometry.VisualRect），
-        // 选中框/手柄/尺寸标签同用，免得虚线框浮在图片外
-        var r = FloatGeometry.VisualRect(reserved);
+        // 贴「看得见的图片」：绘制与排版都用视觉矩形（FloatGeometry.VisualRect）
+        var box = FloatGeometry.VisualRect(reserved);
+        UpdateHandleGeometry(box);
+        _overlayImageBlock = block;
 
-        Canvas.SetLeft(_imageOutline, r.X);
-        Canvas.SetTop(_imageOutline, r.Y);
-        _imageOutline.Width = Math.Max(0, r.Width);
-        _imageOutline.Height = Math.Max(0, r.Height);
-        _imageOutline.Visibility = Visibility.Visible;
-
-        foreach ((ImageHandle handle, Border box) in _imageHandles)
+        if (!_overlayShown)
         {
-            (float cx, float cy) = ImageResizeGeometry.HandleCenter(r, handle);
-            Canvas.SetLeft(box, cx - (HandleSize / 2f));
-            Canvas.SetTop(box, cy - (HandleSize / 2f));
-            box.Visibility = withHandles ? Visibility.Visible : Visibility.Collapsed;
+            // 隐藏 → 显示：淡入；淡出的延迟期里回来（WasFadingOut）→ 直接取消，保持显示态
+            _overlayShown = true;
+            bool wasFadingOut = _handleFadeOut.GetCurrentState() == ClockState.Active;
+            _handleFadeOut.Stop();
+            _imageOverlay.Visibility = Visibility.Visible;
+            if (!wasFadingOut)
+            {
+                _handleFadeIn.Begin();
+            }
+        }
+        foreach (XamlPath arc in _cornerHandles.Values)
+        {
+            arc.Visibility = Visibility.Visible;
+        }
+        foreach (Line line in _edgeHandles.Values)
+        {
+            line.Visibility = Visibility.Visible;
+        }
+        foreach (Border hit in _imageHandles.Values)
+        {
+            hit.Visibility = Visibility.Visible;
         }
 
         if (_resizePreview is { } preview && _resizeHandle != ImageHandle.None)
         {
             _imageSizeLabelText.Text = $"{preview.Width:0} × {preview.Height:0}";
-            Canvas.SetLeft(_imageSizeLabel, r.Right + 8);
-            Canvas.SetTop(_imageSizeLabel, r.Bottom + 6);
+            Canvas.SetLeft(_imageSizeLabel, box.Right + 8);
+            Canvas.SetTop(_imageSizeLabel, box.Bottom + 6);
             _imageSizeLabel.Visibility = Visibility.Visible;
         }
         else
         {
             _imageSizeLabel.Visibility = Visibility.Collapsed;
         }
+    }
+
+    /// <summary>收起覆盖层（先等 <see cref="HandleFadeOutDelayMs"/> 再淡出，淡完收可见性）。</summary>
+    private void HideImageOverlay()
+    {
+        _imageSizeLabel.Visibility = Visibility.Collapsed;
+        if (!_overlayShown)
+        {
+            return;
+        }
+        _overlayShown = false;
+        // 注意：不能 Stop 淡入动画——那会把不透明度退回基准值（= 0），画面会瞬间消失而不是淡出
+        _handleFadeOut.Begin();
+    }
+
+    /// <summary>
+    /// 指针落在手柄命中区上时保持悬停（Phase 3 打磨）：命中区有一半在图片外，从图片移过去的瞬间
+    /// surface 会收到 PointerExited、悬停状态被清掉、覆盖层开始淡出；这里按"记着的块"接回来
+    /// （若淡出已起步，<see cref="UpdateImageOverlay"/> 会把它直接叫停）。
+    /// </summary>
+    private void KeepImageHover()
+    {
+        if (_overlayImageBlock < 0 || _hoverImageBlock == _overlayImageBlock)
+        {
+            return;
+        }
+        _hoverImageBlock = _overlayImageBlock;
+        UpdateImageOverlay();
+    }
+
+    /// <summary>
+    /// 按图片的视觉矩形摆放八向手柄：四角是与图片圆角同弧度的 1/4 圆弧（弧线压在图片圆角上，
+    /// 描边半内半外），四边是边中点的一段线段（描边以图片边缘为中线）。
+    /// </summary>
+    private void UpdateHandleGeometry(LayoutRect box)
+    {
+        float radius = FloatGeometry.CornerRadius;
+        float half = HandleLineLength / 2f;
+        float centerX = (box.X + box.Right) / 2f;
+        float centerY = (box.Y + box.Bottom) / 2f;
+
+        foreach ((ImageHandle handle, XamlPath arc) in _cornerHandles)
+        {
+            (float ax, float ay) = handle switch
+            {
+                ImageHandle.TopLeft => (box.X, box.Y),
+                ImageHandle.TopRight => (box.Right - radius, box.Y),
+                ImageHandle.BottomRight => (box.Right - radius, box.Bottom - radius),
+                _ => (box.X, box.Bottom - radius), // BottomLeft
+            };
+            Canvas.SetLeft(arc, ax);
+            Canvas.SetTop(arc, ay);
+        }
+
+        foreach ((ImageHandle handle, Line line) in _edgeHandles)
+        {
+            (line.X1, line.Y1, line.X2, line.Y2) = handle switch
+            {
+                ImageHandle.Top => (centerX - half, box.Y, centerX + half, box.Y),
+                ImageHandle.Bottom => (centerX - half, box.Bottom, centerX + half, box.Bottom),
+                ImageHandle.Left => (box.X, centerY - half, box.X, centerY + half),
+                _ => (box.Right, centerY - half, box.Right, centerY + half), // Right
+            };
+        }
+
+        foreach ((ImageHandle handle, Border hit) in _imageHandles)
+        {
+            (float cx, float cy) = ImageResizeGeometry.HandleCenter(box, handle);
+            Canvas.SetLeft(hit, cx - (HandleHitSize / 2f));
+            Canvas.SetTop(hit, cy - (HandleHitSize / 2f));
+        }
+    }
+
+    /// <summary>
+    /// 角手柄的 1/4 圆弧几何（局部坐标：圆弧外接方框边长 = 图片圆角半径；
+    /// 由 <see cref="UpdateHandleGeometry"/> 平移到图片对应角）。
+    /// </summary>
+    private static PathGeometry CornerArcGeometry(ImageHandle handle)
+    {
+        float radius = FloatGeometry.CornerRadius;
+        var from = new Windows.Foundation.Point(0, 0);
+        var to = new Windows.Foundation.Point(0, 0);
+        var sweep = SweepDirection.Clockwise;
+        switch (handle)
+        {
+            case ImageHandle.TopLeft:
+                from = new Windows.Foundation.Point(0, radius);
+                to = new Windows.Foundation.Point(radius, 0);
+                break;
+            case ImageHandle.TopRight:
+                to = new Windows.Foundation.Point(radius, radius);
+                break;
+            case ImageHandle.BottomRight:
+                from = new Windows.Foundation.Point(radius, 0);
+                to = new Windows.Foundation.Point(0, radius);
+                break;
+            default: // BottomLeft：弧朝外下方，方向相反
+                to = new Windows.Foundation.Point(radius, radius);
+                sweep = SweepDirection.Counterclockwise;
+                break;
+        }
+
+        var figure = new PathFigure { StartPoint = from, IsClosed = false, IsFilled = false };
+        figure.Segments.Add(new ArcSegment
+        {
+            Point = to,
+            Size = new Windows.Foundation.Size(radius, radius),
+            IsLargeArc = false,
+            SweepDirection = sweep,
+        });
+        var geometry = new PathGeometry();
+        geometry.Figures.Add(figure);
+        return geometry;
+    }
+
+    /// <summary>
+    /// 悬停淡入 / 离开淡出（Phase 3 打磨）：淡入淡出各 500ms 缓动；
+    /// 离开后先等 <see cref="HandleFadeOutDelayMs"/> 再淡出（动画的 BeginTime 就是延迟），
+    /// 期间指针回到图片上会被 <see cref="UpdateImageOverlay"/> 直接叫停。淡完再收可见性。
+    /// </summary>
+    private void BuildHandleFade()
+    {
+        // 基准不透明度保持 1：淡出动画起步（延迟结束）时会替换掉淡入动画，属性退回基准值——
+        // 基准若是 0，画面会「啪」地消失而不是淡出（这就是上一版突然消失的根因）
+        _imageOverlay.Opacity = 1d;
+
+        var fadeIn = new DoubleAnimation
+        {
+            From = 0d, // 显式从 0 起：淡入只在隐藏态起步，不受基准值影响
+            To = 1d,
+            Duration = new Duration(TimeSpan.FromMilliseconds(HandleFadeMs)),
+            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
+        };
+        Storyboard.SetTarget(fadeIn, _imageOverlay);
+        Storyboard.SetTargetProperty(fadeIn, "Opacity");
+        _handleFadeIn.Children.Add(fadeIn);
+
+        var fadeOut = new DoubleAnimation
+        {
+            To = 0d, // 不带 From：从当前值（= 1）淡到 0
+            BeginTime = TimeSpan.FromMilliseconds(HandleFadeOutDelayMs),
+            Duration = new Duration(TimeSpan.FromMilliseconds(HandleFadeMs)),
+            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseIn },
+        };
+        Storyboard.SetTarget(fadeOut, _imageOverlay);
+        Storyboard.SetTargetProperty(fadeOut, "Opacity");
+        _handleFadeOut.Children.Add(fadeOut);
+        _handleFadeOut.Completed += (_, _) =>
+        {
+            _imageOverlay.Visibility = Visibility.Collapsed;
+            foreach (XamlPath arc in _cornerHandles.Values)
+            {
+                arc.Visibility = Visibility.Collapsed;
+            }
+            foreach (Line line in _edgeHandles.Values)
+            {
+                line.Visibility = Visibility.Collapsed;
+            }
+            foreach (Border hit in _imageHandles.Values)
+            {
+                hit.Visibility = Visibility.Collapsed;
+            }
+        };
     }
 
     private LayoutRect? FindFloatRect(int blockIndex)
@@ -1645,13 +1892,17 @@ public sealed class LumiEditor : Grid
 
     private void OnImageHandlePressed(object sender, PointerRoutedEventArgs e)
     {
+        // 悬停出现手柄 → 直接就能拖（不必先点一下图片选中）：没选中时用覆盖层当前显示的那张
+        int block = _selectedImageBlock >= 0 ? _selectedImageBlock : _overlayImageBlock;
         if (sender is not Border { Tag: ImageHandle handle } box
-            || FindFloatRect(_selectedImageBlock) is not { } rect)
+            || block < 0
+            || FindFloatRect(block) is not { } rect)
         {
             return;
         }
         e.Handled = true;
         box.CapturePointer(e.Pointer);
+        SelectImage(block); // 顺手选中：松手提交按选中块走
         _resizeHandle = handle;
         _resizeStartRect = rect;
         _resizePreview = null;

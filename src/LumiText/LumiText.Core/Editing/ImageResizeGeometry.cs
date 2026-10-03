@@ -38,6 +38,11 @@ public static class ImageResizeGeometry
         ImageHandle.Top, ImageHandle.Right, ImageHandle.Bottom, ImageHandle.Left,
     ];
 
+    /// <summary>是否四角手柄（相对四边手柄）。缩放手柄的视觉分派用（角=圆弧、边=线段）。</summary>
+    public static bool IsCorner(ImageHandle handle) =>
+        handle is ImageHandle.TopLeft or ImageHandle.TopRight
+            or ImageHandle.BottomRight or ImageHandle.BottomLeft;
+
     /// <summary>手柄中心的文档坐标。</summary>
     public static (float X, float Y) HandleCenter(LayoutRect image, ImageHandle handle) => handle switch
     {

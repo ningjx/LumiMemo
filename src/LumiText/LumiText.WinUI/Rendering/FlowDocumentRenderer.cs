@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Numerics;
 using Microsoft.Graphics.Canvas;
 using Microsoft.Graphics.Canvas.Geometry;
@@ -151,7 +151,8 @@ public sealed class FlowDocumentRenderer
                 var v = FloatGeometry.VisualRect(r);
                 var painted = new Windows.Foundation.Rect(v.X, v.Y, v.Width, v.Height);
                 using (session.CreateLayer(1f,
-                    CanvasGeometry.CreateRoundedRectangle(session.Device, painted, 6f, 6f)))
+                    CanvasGeometry.CreateRoundedRectangle(session.Device, painted,
+                        FloatGeometry.CornerRadius, FloatGeometry.CornerRadius)))
                 {
                     session.DrawImage(bitmap, painted,
                         new Windows.Foundation.Rect(0, 0, bitmap.SizeInPixels.Width, bitmap.SizeInPixels.Height));
@@ -160,8 +161,8 @@ public sealed class FlowDocumentRenderer
             }
             else
             {
-                session.FillRoundedRectangle(rect, 6, 6, FloatFill);
-                session.DrawRoundedRectangle(rect, 6, 6, FloatStroke, 1.5f);
+                session.FillRoundedRectangle(rect, FloatGeometry.CornerRadius, FloatGeometry.CornerRadius, FloatFill);
+                session.DrawRoundedRectangle(rect, FloatGeometry.CornerRadius, FloatGeometry.CornerRadius, FloatStroke, 1.5f);
             }
         }
 

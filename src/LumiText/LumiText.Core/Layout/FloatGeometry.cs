@@ -17,6 +17,9 @@ namespace LumiText.Core.Layout;
 /// </remarks>
 public static class FloatGeometry
 {
+    /// <summary>图片圆角半径（dip）：绘制裁剪、缩放手柄的圆弧都要与它一致——单一事实源。</summary>
+    public const float CornerRadius = 6f;
+
     /// <summary>★ 图片左右内缩（dip）：绘制位置的偏移量，同时也是文字可用的缓冲间距。</summary>
     public const float VisualInset = 4f;
 
