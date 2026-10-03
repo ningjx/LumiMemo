@@ -114,7 +114,10 @@ public sealed class CompositionTextSurface : IDisposable
         var brush = _compositor.CreateSurfaceBrush(_surface);
         brush.Stretch = CompositionStretch.Fill;
         _sprite.Brush = brush;
-        _sprite.Size = dips;
+        // sprite 逻辑尺寸 = 像素反推 DIP（pixel / scale），不是 host 的 DIP 尺寸：
+        // ceil 建纹理后像素数 ≥ dips × scale，若 sprite 仍用 dips，Fill 会把多出的
+        // 亚像素压回去——整面纹理重采样，文字发虚。反推后纹理→屏幕严格 1:1。
+        _sprite.Size = new Vector2(pixelW / _scale, pixelH / _scale);
 
         Render();
     }

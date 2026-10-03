@@ -91,7 +91,9 @@ public sealed partial class VirtualSurfaceWindow : Window
         var brush = _compositor!.CreateSurfaceBrush(_virtualSurface);
         brush.Stretch = CompositionStretch.Fill;
         _sprite.Brush = brush;
-        _sprite.Size = dips;
+        // sprite 逻辑尺寸 = 像素反推 DIP（与 CompositionTextSurface/VirtualizedTextSurface 同纪律：
+        // ceil 建纹理后 Fill 回原始 DIP 会亚像素重采样，文字发虚）
+        _sprite.Size = new System.Numerics.Vector2(pixelW / _scale, pixelH / _scale);
 
         // 虚拟 surface 必须按区域更新（V4：CreateDrawingSession(surface, updateRect)）。
         var updateRect = new Windows.Foundation.Rect(0, 0, pixelW, pixelH);

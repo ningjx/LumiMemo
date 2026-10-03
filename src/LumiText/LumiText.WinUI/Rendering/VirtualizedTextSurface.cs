@@ -42,12 +42,17 @@ public sealed class VirtualizedTextSurface : IDisposable
     private CompositionGraphicsDevice? _graphicsDevice;
     private CompositionVirtualDrawingSurface? _surface;
     private SpriteVisual? _sprite;
+    private FrameworkElement? _host;
 
     private float _widthDips;
     private float _viewportHeightDips;
     private float _documentHeightDips;
-    private float _surfaceWidthDips;   // 钳制后的实际 surface 逻辑宽（DIP）
-    private float _surfaceHeightDips;  // 钳制后的实际 surface 逻辑高（DIP）
+    private float _wantWidthDips;      // 最近一次请求的表面逻辑宽（钳制后，DIP）
+    private float _wantHeightDips;     // 最近一次请求的表面逻辑高（钳制后，DIP）
+    private int _surfacePixelW;        // 当前 surface 的纹理像素宽
+    private int _surfacePixelH;        // 当前 surface 的纹理像素高
+    private float _surfaceWidthDips;   // surface 逻辑宽 = 像素反推（pixel / scale）
+    private float _surfaceHeightDips;  // surface 逻辑高 = 像素反推（pixel / scale）
     private float _scale = 1f;
     private float _originY;
     private bool _pendingRedraw;
@@ -69,6 +74,7 @@ public sealed class VirtualizedTextSurface : IDisposable
     public void Attach(FrameworkElement host)
     {
         ArgumentNullException.ThrowIfNull(host);
+        _host = host;
         _compositor = ElementCompositionPreview.GetElementVisual(host).Compositor;
         _graphicsDevice = CanvasComposition.CreateCompositionGraphicsDevice(
             _compositor, CanvasDevice.GetSharedDevice());
@@ -80,7 +86,23 @@ public sealed class VirtualizedTextSurface : IDisposable
         if (host.XamlRoot is not null)
         {
             _scale = (float)host.XamlRoot.RasterizationScale;
+            // DPI 缩放运行时变化（跨屏拖动、Loaded 时读到的还是未稳定值）：surface 按旧
+            // _scale 建的物理像素被 Stretch=Fill 拉伸，就是发虚——与 CompositionTextSurface
+            // 同一纪律：监听 Changed，更新 _scale 并整面重建。
+            host.XamlRoot.Changed += OnXamlRootChanged;
         }
+    }
+
+    private void OnXamlRootChanged(XamlRoot sender, XamlRootChangedEventArgs args)
+    {
+        float newScale = (float)sender.RasterizationScale;
+        if (Math.Abs(newScale - _scale) < 0.001f)
+        {
+            return;
+        }
+        _scale = newScale;
+        // 用最近一次请求的度量整流程重跑（重算纹理上限钳制 + 重建 + 重绘）
+        SetMetrics(_widthDips, _viewportHeightDips, _documentHeightDips);
     }
 
     /// <summary>设定/更新度量（内容宽、视口高、文档总高，DIP）并整面重绘。</summary>
@@ -97,18 +119,18 @@ public sealed class VirtualizedTextSurface : IDisposable
             return;
         }
 
-        // 与 RebuildSurface 一致的钳制（避免「请求值 ≠ 钳制值」导致每次 SetMetrics 都重建）
+        // 期望纹理像素尺寸（DIP × 倍率上取整）。
+        // 重建判断比较「像素」而不是浮点 DIP：ceil 之后逻辑尺寸与请求值总有
+        // <1px/scale 的差，按浮点比较会每次都判「需要重建」。
         float maxDipW = MaxSurfacePixelEdge / _scale;
         float maxDipH = MaxSurfacePixelEdge / _scale;
-        float wantW = Math.Min(_widthDips, maxDipW);
-        float wantH = Math.Min(surfaceHeight, maxDipH);
+        _wantWidthDips = Math.Min(_widthDips, maxDipW);
+        _wantHeightDips = Math.Min(surfaceHeight, maxDipH);
+        int wantPixelW = Math.Max(1, (int)Math.Ceiling(_wantWidthDips * _scale));
+        int wantPixelH = Math.Max(1, (int)Math.Ceiling(_wantHeightDips * _scale));
 
-        bool needRebuild = _surface is null
-            || Math.Abs(wantH - _surfaceHeightDips) > 0.5f
-            || Math.Abs(wantW - _surfaceWidthDips) > 0.5f;
-        if (needRebuild)
+        if (_surface is null || wantPixelW != _surfacePixelW || wantPixelH != _surfacePixelH)
         {
-            _surfaceHeightDips = surfaceHeight; // 未钳制值，RebuildSurface 内再钳
             RebuildSurface();
         }
         Redraw(_originY);
@@ -142,6 +164,11 @@ public sealed class VirtualizedTextSurface : IDisposable
 
     public void Dispose()
     {
+        if (_host?.XamlRoot is not null)
+        {
+            _host.XamlRoot.Changed -= OnXamlRootChanged;
+        }
+        _host = null;
         _surface?.Dispose();
         _graphicsDevice?.Dispose();
         _sprite?.Dispose();
@@ -177,14 +204,9 @@ public sealed class VirtualizedTextSurface : IDisposable
     private void RebuildSurface()
     {
         _surface?.Dispose();
-        // 像素尺寸钳制：拉大到超纹理上限时，把 surface 逻辑尺寸等比缩小，
-        // 避免 CreateDrawingSession ArgumentException（视觉上网格拉伸 Fill 会等比缩放，可接受）。
-        float maxDipW = MaxSurfacePixelEdge / _scale;
-        float maxDipH = MaxSurfacePixelEdge / _scale;
-        float surfW = Math.Min(_widthDips, maxDipW);
-        float surfH = Math.Min(_surfaceHeightDips, maxDipH);
-        int pixelW = Math.Max(1, (int)Math.Ceiling(surfW * _scale));
-        int pixelH = Math.Max(1, (int)Math.Ceiling(surfH * _scale));
+        // 像素尺寸由 SetMetrics 算好的「期望值」上取整（含纹理上限钳制）。
+        int pixelW = Math.Max(1, (int)Math.Ceiling(_wantWidthDips * _scale));
+        int pixelH = Math.Max(1, (int)Math.Ceiling(_wantHeightDips * _scale));
         _surface = _graphicsDevice!.CreateVirtualDrawingSurface(
             new Windows.Graphics.SizeInt32(pixelW, pixelH),
             DirectXPixelFormat.B8G8R8A8UIntNormalized,
@@ -193,11 +215,16 @@ public sealed class VirtualizedTextSurface : IDisposable
         var brush = _compositor!.CreateSurfaceBrush(_surface);
         brush.Stretch = CompositionStretch.Fill;
         _sprite!.Brush = brush;
-        _sprite.Size = new Vector2(surfW, surfH);
+        // sprite 逻辑尺寸 = 像素反推 DIP（pixel / scale），不是请求的 DIP：
+        // ceil 建纹理后 pixel ≥ want × scale，若 sprite 仍用 want，Fill 会把
+        // pixelW 压回 want——整面纹理亚像素重采样，笔画发虚。反推后纹理→屏幕严格 1:1。
+        _sprite.Size = new Vector2(pixelW / _scale, pixelH / _scale);
         _sprite.Offset = new Vector3(0, _originY, 0);
-        // 记录钳制后的实际逻辑尺寸，Redraw 的 updateRect 用它（与 surface 像素严格对应）
-        _surfaceWidthDips = surfW;
-        _surfaceHeightDips = surfH;
+        // 记录实际像素与反推逻辑尺寸（Redraw 的 updateRect / 视口范围用，与纹理严格对应）
+        _surfacePixelW = pixelW;
+        _surfacePixelH = pixelH;
+        _surfaceWidthDips = pixelW / _scale;
+        _surfaceHeightDips = pixelH / _scale;
     }
 
     private void Redraw(float newOrigin)
@@ -213,10 +240,8 @@ public sealed class VirtualizedTextSurface : IDisposable
             _originY = newOrigin;
             _sprite!.Offset = new Vector3(0, _originY, 0);
 
-            // updateRect 与 RebuildSurface 的像素尺寸严格对应（用钳制后的逻辑尺寸换算）
-            int pixelW = Math.Max(1, (int)Math.Ceiling(_surfaceWidthDips * _scale));
-            int pixelH = Math.Max(1, (int)Math.Ceiling(_surfaceHeightDips * _scale));
-            var updateRect = new Rect(0, 0, pixelW, pixelH);
+            // updateRect 直接用当前纹理像素尺寸（RebuildSurface 记录，不复算避免浮点误差）
+            var updateRect = new Rect(0, 0, _surfacePixelW, _surfacePixelH);
             using (var session = CanvasComposition.CreateDrawingSession(_surface, updateRect))
             {
                 // 与全部渲染路径同一纪律：透明清屏 + 灰阶 AA（M1-U3 已验证虚拟 surface 等价）。
