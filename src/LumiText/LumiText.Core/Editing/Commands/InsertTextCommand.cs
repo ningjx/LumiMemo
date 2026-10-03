@@ -36,8 +36,11 @@ public sealed record InsertTextCommand(string Text) : IEditCommand, InsertTextMa
 
         var newBlock = BlockTextOps.ReplaceText(block, insertAt.CharIndex, 0, Text);
         var newBlocks = ReplaceBlock(document.Blocks, insertAt.BlockIndex, newBlock);
+        // 浮动锚点维护（Phase 3 M4）：插入点及其后的锚点随文字前移
+        var remapped = FloatAnchors.RemapAll(newBlocks, anchor =>
+            FloatAnchors.ShiftCharIndex(anchor, insertAt.BlockIndex, insertAt.CharIndex, Text.Length));
         var caret = new TextPosition(insertAt.BlockIndex, insertAt.CharIndex + Text.Length);
-        return new EditorState(document with { Blocks = newBlocks }, TextRange.Collapse(caret));
+        return new EditorState(document with { Blocks = remapped }, TextRange.Collapse(caret));
     }
 
     internal static IReadOnlyList<Block> ReplaceBlock(IReadOnlyList<Block> blocks, int index, Block replacement)

@@ -95,6 +95,19 @@ public sealed class FlowDocumentRenderer
     }
 
     /// <summary>
+    /// 按给定浮动集合排版一次、但不接管为当前结果，返回值由调用方释放
+    /// （Phase 3 M4：拖动改锚点时用「去掉该图片」的自然版面判定锚点——
+    /// 预览版面里文字已被图片挤开，直接命中会落到图片左侧多一个字）。
+    /// </summary>
+    public LayoutResult LayoutTransient(IReadOnlyList<Block> blocks,
+        IReadOnlyList<FloatObject> floats, float contentWidth)
+    {
+        ArgumentNullException.ThrowIfNull(blocks);
+        ArgumentNullException.ThrowIfNull(floats);
+        return _engine.Layout(blocks, floats, contentWidth);
+    }
+
+    /// <summary>
     /// 绘制布局结果（整文档口径，等价 viewport = 全文档）。
     /// 坐标系为 DIP；调用方负责缩放变换（物理像素 = DIP × 倍率）。
     /// </summary>

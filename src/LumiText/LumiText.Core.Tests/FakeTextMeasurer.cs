@@ -121,7 +121,11 @@ internal sealed class FakeTextMeasurer : ITextMeasurer
                 bool isLast = i == _lines.Count - 1;
                 if (clamped < lineEnd || (isLast && clamped <= lineEnd))
                 {
-                    float x = (clamped - line.CharStart) * CharWidth;
+                    // 与真实栈同语义：isTrailing 取「该字符右缘」而非左缘
+                    // （恒定左缘会让「插入位置 k」的几何偏左一个字，探针查过的那类坑）
+                    float x = isTrailing
+                        ? Math.Min((clamped + 1 - line.CharStart) * CharWidth, line.Width)
+                        : (clamped - line.CharStart) * CharWidth;
                     return (x, line.OffsetY, line.Ascent + line.Descent);
                 }
             }

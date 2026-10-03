@@ -32,6 +32,7 @@ public sealed record Document(IReadOnlyList<Block> Blocks, IReadOnlyList<ImageRe
             floats.Add(new FloatObject(i, rect, placement.Side, placement.Margin)
             {
                 Anchor = placement.Anchor,
+                AnchorToChar = placement.AnchorToChar,
             });
         }
         return floats;

@@ -29,8 +29,18 @@ public sealed record DeleteRangeCommand(TextRange Range) : IEditCommand
             int count = end.CharIndex - start.CharIndex;
             var newBlock = BlockTextOps.ReplaceText(block, start.CharIndex, count, string.Empty);
             var newBlocks = InsertTextCommand.ReplaceBlock(blocks, start.BlockIndex, newBlock);
+            // 浮动锚点维护（Phase 3 M4）：删除点之后的锚点前移；落在删除区间的锚点收到删除点
+            var remapped = FloatAnchors.RemapAll(newBlocks, anchor =>
+                anchor.BlockIndex == start.BlockIndex && anchor.CharIndex >= start.CharIndex
+                    ? anchor with
+                    {
+                        CharIndex = anchor.CharIndex >= end.CharIndex
+                            ? anchor.CharIndex - count
+                            : start.CharIndex,
+                    }
+                    : anchor);
             return new EditorState(
-                state.Document with { Blocks = newBlocks },
+                state.Document with { Blocks = remapped },
                 TextRange.Collapse(start));
         }
 
@@ -87,8 +97,38 @@ public sealed record DeleteRangeCommand(TextRange Range) : IEditCommand
             caret = new TextPosition(Math.Max(newIndex, 0), 0);
         }
 
+        // 浮动锚点维护（Phase 3 M4）：首块内的锚点收到合并点；中间整块与尾块的锚点并到合并点之后
+        // （尾块删除点之后的锚点按保留尾长前移）；尾块之后的锚点整块前移。
+        int removedBlocks = end.BlockIndex - start.BlockIndex;
+        int mergePoint = firstIsText ? start.CharIndex : 0;
+        var remappedBlocks = FloatAnchors.RemapAll(kept, anchor =>
+        {
+            if (anchor.BlockIndex < start.BlockIndex)
+            {
+                return anchor;
+            }
+            if (anchor.BlockIndex == start.BlockIndex)
+            {
+                return anchor.CharIndex <= start.CharIndex
+                    ? anchor
+                    : new FloatAnchor(start.BlockIndex, mergePoint);
+            }
+            if (anchor.BlockIndex < end.BlockIndex)
+            {
+                return new FloatAnchor(start.BlockIndex, mergePoint); // 中间整块被删
+            }
+            if (anchor.BlockIndex == end.BlockIndex)
+            {
+                int tailOffset = lastIsText
+                    ? Math.Max(0, anchor.CharIndex - end.CharIndex)
+                    : 0;
+                return new FloatAnchor(start.BlockIndex, mergePoint + tailOffset);
+            }
+            return anchor with { BlockIndex = anchor.BlockIndex - removedBlocks };
+        });
+
         return new EditorState(
-            state.Document with { Blocks = kept },
+            state.Document with { Blocks = remappedBlocks },
             TextRange.Collapse(caret));
     }
 

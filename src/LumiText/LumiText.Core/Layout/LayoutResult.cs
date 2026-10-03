@@ -73,6 +73,154 @@ public sealed class LayoutResult : IDisposable
     }
 
     /// <summary>
+    /// 浮动对象的锚定命中（Phase 3 M4，图片拖动落点规则）：在「图片矩形纵向覆盖到的第一条
+    /// 文本行」上，取图片左缘处的插入位置——即紧挨图片左侧的那个字之后。
+    /// 覆盖不到任何文本行（图片在所有文字之下）时取末行；左缘在文本左/右之外时取行首/行尾。
+    /// 传入的版面应是「不含该图片」的自然版面（预览版面里文字已被图片挤开，会差一格）。
+    /// </summary>
+    public HitTestResult HitTestFloatAnchor(LayoutRect imageRect)
+    {
+        if (Lines.Count == 0)
+        {
+            return default;
+        }
+
+        // 第一条纵向相交的文本行（行盒按 Y 有序）：跳过「底缘在图片顶缘之上」的行
+        PlacedLine? first = null;
+        foreach (var line in Lines)
+        {
+            if (line.Y + line.Height <= imageRect.Y)
+            {
+                continue;
+            }
+            first = line;
+            break;
+        }
+        first ??= Lines[^1]; // 图片在所有文字之下：取末行
+        var target = first;
+
+        // 行内取「图片左缘」处的插入位置
+        if (imageRect.X <= target.X)
+        {
+            return new HitTestResult(true, target.BlockIndex, target.CharStart, false);
+        }
+        if (imageRect.X >= target.X + target.Width)
+        {
+            return new HitTestResult(true, target.BlockIndex,
+                target.CharStart + target.CharCount, true);
+        }
+        if (target.Batch is not { } batch)
+        {
+            return new HitTestResult(true, target.BlockIndex, target.CharStart, false);
+        }
+        var hit = batch.HitTestChar(
+            imageRect.X - target.X, target.LineOffsetY + (target.Height / 2f));
+        if (hit is not { } h)
+        {
+            return new HitTestResult(true, target.BlockIndex, target.CharStart, false);
+        }
+        return new HitTestResult(true, target.BlockIndex,
+            h.CharacterIndex + (h.IsTrailingHit ? 1 : 0), h.IsTrailingHit);
+    }
+
+    /// <summary>
+    /// 锚点 → 浮动矩形左上角（Phase 3 M4 提取的单一事实源）：锚字符所在<b>行盒顶缘</b>（Y）+
+    /// 行内插入位置（X，<paramref name="anchorToChar"/>）或按 <paramref name="side"/> 贴内容区左/右缘。
+    /// 排版引擎的锚定解析与编辑器拖动/缩放的实时预览共用本方法，保证「预览即结果」。
+    /// </summary>
+    /// <param name="anchor">锚点；<see cref="FloatAnchor.CharIndex"/> 是块内<b>插入位置</b>
+    /// （与 <see cref="LumiText.Core.Editing.TextPosition"/> 同坐标系，同 <see cref="HitTestFloatAnchor"/> 的输出）。</param>
+    /// <param name="anchorToChar">true = 紧跟锚字符之后（X 随文字重排走）；false = 按侧贴缘。</param>
+    /// <param name="side">浮动侧（<paramref name="anchorToChar"/> 为 false 时生效）。</param>
+    /// <param name="floatWidth">浮动矩形宽度（横向钳制用）。</param>
+    /// <param name="contentWidth">内容区宽度（dip）。</param>
+    /// <returns>false = 全文无文本行盒（调用方回退到 Rect 直给路径）。</returns>
+    public bool TryResolveAnchorTopLeft(FloatAnchor anchor, bool anchorToChar, FloatSide side,
+        float floatWidth, float contentWidth, out float x, out float y)
+    {
+        x = 0f;
+        y = 0f;
+        if (Blocks is not { Count: > 0 } blocks)
+        {
+            return false;
+        }
+
+        // 文本行盒按块分组（只认 Text/TodoText；Divider 占位行盒不算文本块，与 M2 命中一致）
+        Dictionary<int, List<PlacedLine>>? linesByBlock = null;
+        foreach (var line in Lines)
+        {
+            if (line.Kind is not (PlacedLineKind.Text or PlacedLineKind.TodoText))
+            {
+                continue;
+            }
+            linesByBlock ??= [];
+            if (!linesByBlock.TryGetValue(line.BlockIndex, out var list))
+            {
+                linesByBlock[line.BlockIndex] = list = [];
+            }
+            list.Add(line);
+        }
+        if (linesByBlock is null)
+        {
+            return false;
+        }
+
+        // 锚点块解析的异常路径：越界钳到首/末块；锚到非文本块（或无行盒的空块）→
+        // 顺延到其后第一个有行盒的文本块；其后没有 → 钳到其前最后一个。
+        int start = Math.Clamp(anchor.BlockIndex, 0, blocks.Count - 1);
+        List<PlacedLine>? anchorLines = null;
+        for (int b = start; b < blocks.Count && anchorLines is null; b++)
+        {
+            linesByBlock.TryGetValue(b, out anchorLines);
+        }
+        for (int b = start - 1; b >= 0 && anchorLines is null; b--)
+        {
+            linesByBlock.TryGetValue(b, out anchorLines);
+        }
+        if (anchorLines is not { Count: > 0 })
+        {
+            return false;
+        }
+
+        // 按字符定位行盒：找第一个「行末字符偏移 > CharIndex」的行盒；
+        // CharIndex 越界（≥ 块总字符数）→ 钳到该块末行。
+        var anchorLine = anchorLines[^1];
+        foreach (var line in anchorLines)
+        {
+            if (line.CharStart + line.CharCount > anchor.CharIndex)
+            {
+                anchorLine = line;
+                break;
+            }
+        }
+
+        y = anchorLine.Y;
+        if (anchorToChar)
+        {
+            float inlineX = anchorLine.X;
+            if (anchorLine.Batch is { } batch)
+            {
+                int lineStart = anchorLine.CharStart;
+                int lineEnd = anchorLine.CharStart + anchorLine.CharCount;
+                int index = Math.Clamp(anchor.CharIndex, lineStart, lineEnd);
+                // 插入位置的几何：行内取「本字符左缘」（= 前一字符右缘，isTrailing=false）；
+                // 块尾（index == lineEnd，行内无处可取左缘）取末字符右缘（isTrailing=true）。
+                // 恒定 isTrailing=true 会让图片偏右一个字——A1 探针实测
+                // （索引 4 的左缘 56 / 右缘 70，锚定落到了 70）。
+                bool isTrailing = index >= lineEnd;
+                var caret = batch.GetCaretGeometry(index, isTrailing);
+                inlineX += caret.X;
+            }
+            x = Math.Clamp(inlineX, 0f, Math.Max(0f, contentWidth - floatWidth));
+        }
+        else
+        {
+            x = side == FloatSide.Left ? 0f : contentWidth - floatWidth;
+        }
+        return true;
+    }
+
+    /// <summary>
     /// Todo 复选框命中（Phase 3 M3）：返回命中的块索引，-1 = 未命中。
     /// 判定 = 该块<b>首行</b>行盒的纵向范围内、X 落在悬挂缩进区（复选框绘制区，与
     /// <see cref="LumiText.Core.Documents.TodoBlock.LeftIndent"/> 同宽）。

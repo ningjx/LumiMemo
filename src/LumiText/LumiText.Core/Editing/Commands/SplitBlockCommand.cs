@@ -65,8 +65,17 @@ public sealed record SplitBlockCommand(TextPosition Position) : IEditCommand
         }
 
         var caret = new TextPosition(Position.BlockIndex + 1, 0);
+        // 浮动锚点维护（Phase 3 M4）：被分割块之后的锚点整块后移；
+        // 锚在分割点之后的锚点跟到后半块（块内偏移相应前移）
+        var remapped = FloatAnchors.RemapAll(newBlocks, anchor =>
+            anchor.BlockIndex > Position.BlockIndex
+                ? anchor with { BlockIndex = anchor.BlockIndex + 1 }
+                : anchor.BlockIndex == Position.BlockIndex && anchor.CharIndex > Position.CharIndex
+                    ? new FloatAnchor(Position.BlockIndex + 1,
+                        anchor.CharIndex - Position.CharIndex)
+                    : anchor);
         return new EditorState(
-            state.Document with { Blocks = newBlocks },
+            state.Document with { Blocks = remapped },
             TextRange.Collapse(caret));
     }
 

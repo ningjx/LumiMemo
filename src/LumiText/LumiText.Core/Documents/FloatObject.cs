@@ -29,6 +29,13 @@ public sealed record FloatObject(int Id, LayoutRect Rect, FloatSide Side, float 
     /// <summary>锚点定位；<see langword="null"/> = 矩形直给路径。</summary>
     public FloatAnchor? Anchor { get; init; }
 
+    /// <summary>
+    /// 锚定后的横向落位是否「紧跟锚字符之后」（Phase 3 M4 拖放落点语义）：
+    /// true → X 由锚字符的行内位置决定（随文字重排一起走）；
+    /// false → 按 <see cref="Side"/> 贴左/右缘。
+    /// </summary>
+    public bool AnchorToChar { get; init; }
+
     /// <summary>返回矩形平移后的副本（拖动场景）。</summary>
     public FloatObject MovedTo(float x, float y) => this with { Rect = Rect with { X = x, Y = y } };
 }

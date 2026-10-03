@@ -58,7 +58,11 @@ public interface ILineBatch : IDisposable
     CharHit? HitTestChar(float x, float y);
 
     /// <summary>
-    /// 光标几何（M2）：characterIndex 字符前/后的插入符位置（批布局坐标）。
+    /// 插入符几何（M2）：<paramref name="characterIndex"/> 号<b>字符</b>的边缘位置（批布局坐标）。
+    /// <paramref name="isTrailing"/> = false 取该字符<b>左缘</b>，true 取<b>右缘</b>
+    /// （A1 探针实测：索引 4 左缘 56 / 右缘 70）。
+    /// 因此「插入位置 k（同 <see cref="LumiText.Core.Editing.TextPosition"/>）」的几何 = (k, false)；
+    /// k 落在行尾（本行放不下它）时只能取 (k-1, true) 才停在本行行尾——(k, false) 会跳到下一行行首。
     /// 返回 (x, yTop, height)：yTop 是光标顶缘 Y，height 是光标高度（随行高）。
     /// characterIndex 越界时钳到 [0, 文本长度]。
     /// </summary>

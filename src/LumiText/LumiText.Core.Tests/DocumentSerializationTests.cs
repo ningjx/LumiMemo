@@ -290,4 +290,29 @@ public sealed class DocumentSerializationTests
             """{"schema":1,"blocks":[{"type":"paragraph","runs":[{"t":"x"}],"style":{"font":"Segoe UI","size":14}}]}""");
         Assert.False(Assert.IsType<ParagraphBlock>(legacy!.Blocks[0]).Style!.Bold);
     }
+
+    // T-S11：浮动图片"紧跟锚字符"标记（Phase 3 M4）——anchorChar 写出/读回；缺省（false）不写出
+    [Fact]
+    public void RoundTrip_FloatAnchorToChar_PreservesFlag()
+    {
+        var doc = new Document(
+        [
+            new ParagraphBlock("文本"),
+            new ImageBlock("img", 120f, 80f,
+                new FloatPlacement(FloatSide.Right, 4f, new FloatAnchor(0, 0), null,
+                    AnchorToChar: true)),
+            new ImageBlock("img2", 120f, 80f,
+                new FloatPlacement(FloatSide.Right, 4f, new FloatAnchor(0, 0))),
+        ]);
+
+        string json = DocumentSerializer.Serialize(doc);
+        Assert.Contains("\"anchorChar\": true", json);
+        Assert.Equal(1, json.Split("\"anchorChar\"").Length - 1); // 未启用不写出
+
+        var doc2 = DocumentSerializer.Deserialize(json);
+        Assert.NotNull(doc2);
+        Assert.True(Assert.IsType<ImageBlock>(doc2.Blocks[1]).Float!.AnchorToChar);
+        Assert.False(Assert.IsType<ImageBlock>(doc2.Blocks[2]).Float!.AnchorToChar);
+        Assert.Equal(json, DocumentSerializer.Serialize(doc2));
+    }
 }

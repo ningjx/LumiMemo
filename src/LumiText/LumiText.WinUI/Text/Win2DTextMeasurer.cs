@@ -65,8 +65,14 @@ public sealed class Win2DTextMeasurer : ITextMeasurer
             {
                 var m = metrics[i];
                 int consumed = Math.Min(m.CharacterCount, fullText.Length - charStart);
-                // 行推进宽度：末字符之后的插入符 X（比逐字符区域并集便宜三个数量级）。
-                float width = layout.GetCaretPosition(charStart + consumed, false).X;
+                // 行推进宽度 = 本行末字符之后的插入符 X。
+                // 必须用「末字符 + isTrailingHit=true」：行尾索引配 isTrailingHit=false 会落到
+                // 下一行的行首（x=0），非末行宽度会全部算成 0——A1 探针实测
+                // （后果：行盒命中测试对非末行永远失败、图片落点锚定偏一行）。
+                int endIndex = charStart + consumed;
+                float width = endIndex > 0
+                    ? layout.GetCaretPosition(endIndex - 1, true).X
+                    : 0f;
                 lines[i] = new MeasuredLine(
                     charStart, consumed, width, m.Baseline, m.Height - m.Baseline, offsetY);
                 offsetY += m.Height;

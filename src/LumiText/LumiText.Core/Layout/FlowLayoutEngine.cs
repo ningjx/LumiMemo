@@ -91,6 +91,8 @@ public sealed class FlowLayoutEngine
     /// <summary>
     /// 浮动锚定解析（字符级锚定，两遍排版）：第一遍只用矩形直给的浮动排版，
     /// 得到锚字符所在行盒的位置，推出锚定浮动矩形；第二遍带全部浮动正式排版（由调用方继续）。
+    /// 锚点 → 矩形的换算由 <see cref="LayoutResult.TryResolveAnchorTopLeft"/> 统一实现
+    /// （编辑器拖动/缩放的实时预览共用同一套规则）。
     /// </summary>
     private IReadOnlyList<FloatObject> ResolveAnchoredFloats(
         IReadOnlyList<Block> blocks,
@@ -98,22 +100,6 @@ public sealed class FlowLayoutEngine
         float contentWidth)
     {
         using var probe = LayoutCore(blocks, floats.Where(f => f.Anchor is null).ToArray(), contentWidth);
-
-        // 按块分组收集文本行盒（只认 Text/TodoText；Divider 占位行盒不算文本块），
-        // 每块内部按文档顺序排列（行盒产生顺序即文档顺序）。
-        var linesByBlock = new Dictionary<int, List<PlacedLine>>();
-        foreach (var line in probe.Lines)
-        {
-            if (line.Kind is not (PlacedLineKind.Text or PlacedLineKind.TodoText))
-            {
-                continue;
-            }
-            if (!linesByBlock.TryGetValue(line.BlockIndex, out var list))
-            {
-                linesByBlock[line.BlockIndex] = list = [];
-            }
-            list.Add(line);
-        }
 
         var resolved = new FloatObject[floats.Count];
         for (int i = 0; i < floats.Count; i++)
@@ -125,43 +111,13 @@ public sealed class FlowLayoutEngine
                 continue;
             }
 
-            // 锚点块解析的异常路径：越界钳到首/末块；锚到非文本块（或无行盒的空块）→
-            // 顺延到其后第一个有行盒的文本块；其后没有 → 钳到其前最后一个；全文无文本行盒 →
-            // 该浮动退化为 Rect 直给路径（兼容 S2 现状行为）。
-            int start = Math.Clamp(anchor.BlockIndex, 0, Math.Max(0, blocks.Count - 1));
-            List<PlacedLine>? anchorLines = null;
-            for (int b = start; b < blocks.Count && anchorLines is null; b++)
+            // 全文无文本行盒（异常路径）：该浮动退化为 Rect 直给路径（兼容 S2 现状行为）。
+            if (!probe.TryResolveAnchorTopLeft(anchor, f.AnchorToChar, f.Side, f.Rect.Width, contentWidth,
+                    out float x, out float y))
             {
-                linesByBlock.TryGetValue(b, out anchorLines);
-            }
-            for (int b = start - 1; b >= 0 && anchorLines is null; b--)
-            {
-                linesByBlock.TryGetValue(b, out anchorLines);
-            }
-            if (anchorLines is null || anchorLines.Count == 0)
-            {
-                resolved[i] = f;   // 全文无文本行盒：Rect 直给（Anchor 保留，按直给矩形排版）
+                resolved[i] = f;
                 continue;
             }
-
-            // 按字符定位行盒：找第一个「行末字符偏移 > CharIndex」的行盒；
-            // CharIndex 越界（≥ 块总字符数）→ 钳到该块末行。
-            var anchorLine = anchorLines[^1];
-            foreach (var line in anchorLines)
-            {
-                if (line.CharStart + line.CharCount > anchor.CharIndex)
-                {
-                    anchorLine = line;
-                    break;
-                }
-            }
-
-            float y = anchorLine.Y;
-            // X 按 Side 贴内容区左/右缘（Center 按 Right 处理，与既有约定一致）；
-            // 与锚字符的行内偏移无关（Word「随文字移动 + 左右对齐」同构）。
-            float x = f.Side == FloatSide.Left
-                ? 0f
-                : contentWidth - f.Rect.Width;
             resolved[i] = f with { Rect = f.Rect with { X = x, Y = y } };
         }
         return resolved;

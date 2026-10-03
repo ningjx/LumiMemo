@@ -115,7 +115,23 @@ public static class WinClipboard
     {
         var reference = await view.GetBitmapAsync();
         using var stream = await reference.OpenReadAsync();
+        if (await DecodeImageAsync(stream) is not { } decoded)
+        {
+            return;
+        }
 
+        string imageId = $"img-{Guid.NewGuid():N}";
+        core.ApplyCommand(new Core.Editing.Commands.InsertImageCommand(
+            imageId, decoded.Bytes, decoded.Mime, decoded.Width, decoded.Height));
+    }
+
+    /// <summary>
+    /// 位图流 → 原始字节 + MIME + 显示尺寸（长边 280dip 上限）。
+    /// 剪贴板粘贴与 OS 拖放插图共用（Phase 3 M4 抽出）；空流返回 <see langword="null"/>。
+    /// </summary>
+    public static async Task<(byte[] Bytes, string Mime, float Width, float Height)?> DecodeImageAsync(
+        Windows.Storage.Streams.IRandomAccessStreamWithContentType stream)
+    {
         // 读原始字节（存进 ImageResource.Data 作为权威字节）
         byte[] bytes;
         using (var ms = new System.IO.MemoryStream())
@@ -125,7 +141,7 @@ public static class WinClipboard
         }
         if (bytes.Length == 0)
         {
-            return;
+            return null;
         }
 
         // 解码拿原始尺寸（用 Windows.Graphics.Imaging，与现产品同路径）
@@ -135,10 +151,7 @@ public static class WinClipboard
         float width = Math.Max(1, (float)Math.Round(decoder.PixelWidth * scale));
         float height = Math.Max(1, (float)Math.Round(decoder.PixelHeight * scale));
 
-        string imageId = $"img-{Guid.NewGuid():N}";
-        string mime = MimeFromCodec(decoder.DecoderInformation.CodecId);
-        core.ApplyCommand(new Core.Editing.Commands.InsertImageCommand(
-            imageId, bytes, mime, width, height));
+        return (bytes, MimeFromCodec(decoder.DecoderInformation.CodecId), width, height);
     }
 
     private static string MimeFromCodec(Guid codecId)

@@ -75,8 +75,14 @@ public sealed record InsertImageCommand(
         images.RemoveAll(r => r.Id == ImageId); // 幂等：同 id 覆盖
         images.Add(new ImageResource(ImageId, Mime, Data));
 
+        // 浮动锚点维护（Phase 3 M4）：图片块插在锚点块之后，其后所有锚点整块后移
+        var remapped = FloatAnchors.RemapAll(newBlocks, anchor =>
+            anchor.BlockIndex > anchorBlock
+                ? anchor with { BlockIndex = anchor.BlockIndex + 1 }
+                : anchor);
+
         return new EditorState(
-            document with { Blocks = newBlocks, Images = images },
+            document with { Blocks = remapped, Images = images },
             state.Selection);
     }
 

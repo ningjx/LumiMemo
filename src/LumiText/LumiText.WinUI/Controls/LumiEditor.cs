@@ -4,6 +4,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Shapes;
 using LumiText.Core.Documents;
 using LumiText.Core.Editing;
 using LumiText.Core.Editing.Commands;
@@ -11,6 +12,9 @@ using LumiText.Core.Layout;
 using LumiText.WinUI.Editing;
 using LumiText.WinUI.Rendering;
 using LumiText.WinUI.Text;
+using Windows.ApplicationModel.DataTransfer;
+using Windows.Storage;
+using Windows.Storage.Streams;
 using Windows.System;
 using Windows.UI;
 using Windows.UI.Core;
@@ -52,6 +56,64 @@ public sealed class LumiEditor : Grid
     private long _checkAnimStartTicks;
     private const int CheckAnimationMs = 160;
 
+    // ---- 图片交互（Phase 3 M4）----
+    // 覆盖层 = 滚动内容内、surface 之上的 Canvas：虚线框 + 八手柄 + 尺寸标签。
+    // Canvas 不设 Background（空白处不吃指针），只有手柄元素吃事件——旧 ImageAdorner 的纪律。
+    private readonly Canvas _imageOverlay = new();
+    private readonly Rectangle _imageOutline = new();
+    private readonly Dictionary<ImageHandle, Border> _imageHandles = [];
+    private readonly Border _imageSizeLabel = new();
+    private readonly TextBlock _imageSizeLabelText = new();
+
+    /// <summary>选中的图片块索引（-1 = 未选中）。</summary>
+    private int _selectedImageBlock = -1;
+
+    /// <summary>悬停的图片块索引（-1 = 无），仅显示细框提示。</summary>
+    private int _hoverImageBlock = -1;
+
+    /// <summary>拖动改锚点中的图片块索引（-1 = 未拖动）。</summary>
+    private int _dragImageBlock = -1;
+
+    /// <summary>拖动预览：自由矩形（Rect 直给路径；Relayout 时替换该浮动的定位方式）。</summary>
+    private LayoutRect? _dragFreeRect;
+
+    private FloatAnchor _pendingAnchor = new(0, 0);
+    private FloatSide _pendingSide = FloatSide.Right;
+    private float _pointerViewportY;
+    private float _pointerDocX;
+
+    // 拖动时抓取点相对图片左上角的偏移与图片尺寸（跟手移动用）
+    private float _dragGrabOffsetX;
+    private float _dragGrabOffsetY;
+    private float _dragSizeW;
+    private float _dragSizeH;
+
+    /// <summary>是否已越过拖动阈值（按下后移动 &gt; 4dip 才把图片提起来，单击只选中）。</summary>
+    private bool _dragImageActive;
+    private float _dragPressX;
+    private float _dragPressY;
+
+    // 拖动到视口边缘时的自动滚动（16ms 一帧、8dip/帧）
+    private readonly DispatcherTimer _imageScrollTimer;
+    private float _autoScrollDelta;
+
+    // 缩放手柄拖动（覆盖层只动预览几何，松手才提交 + 重排；左/上侧手柄松手按新左上角重锚）
+    private ImageHandle _resizeHandle = ImageHandle.None;
+    private LayoutRect _resizeStartRect;
+    private LayoutRect? _resizePreview;
+
+    /// <summary>重锚用的自然版面（「去掉这张图」，手势内复用，见 <see cref="NaturalLayoutForResize"/>）。</summary>
+    private LayoutResult? _resizeNaturalLayout;
+
+    /// <summary>OS 拖放插图的落点指示（拖入悬停期间显示竖线）。</summary>
+    private Core.Editing.TextPosition? _dropIndicator;
+
+    private const float HandleSize = 11f;
+    private static readonly Color OutlineColor = Color.FromArgb(0xCC, 0x7A, 0x6B, 0xB5);
+    private static readonly Color HandleFill = Color.FromArgb(0xF2, 0xFF, 0xFF, 0xFF);
+    private static readonly Color HandleBorderColor = Color.FromArgb(0xCC, 0x5B, 0x4F, 0xA8);
+    private static readonly Color SizeLabelBackground = Color.FromArgb(0xCC, 0x33, 0x30, 0x3B);
+
     public LumiEditor()
     {
         _scroller = new ScrollViewer
@@ -73,6 +135,7 @@ public sealed class LumiEditor : Grid
             Background = new SolidColorBrush(Colors.Transparent),
         };
         _contentGrid.Children.Add(_surfaceHost);
+        BuildImageOverlay();
         _scroller.Content = _contentGrid;
         Children.Add(_scroller);
 
@@ -97,6 +160,15 @@ public sealed class LumiEditor : Grid
         _checkAnimTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16) };
         _checkAnimTimer.Tick += OnCheckAnimTick;
 
+        _imageScrollTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16) };
+        _imageScrollTimer.Tick += OnImageAutoScrollTick;
+
+        // OS 拖放插图（Phase 3 M4）：文件/位图拖入 → 落点锚定插图
+        AllowDrop = true;
+        DragOver += OnDragOverHandler;
+        DragLeave += OnDragLeaveHandler;
+        Drop += OnDropHandler;
+
         Loaded += OnLoaded;
         SizeChanged += OnSizeChanged;
         _scroller.ViewChanged += OnViewChanged;
@@ -111,13 +183,14 @@ public sealed class LumiEditor : Grid
         _surfaceHost.PointerPressed += OnPointerPressed;
         _surfaceHost.PointerMoved += OnPointerMoved;
         _surfaceHost.PointerReleased += OnPointerReleased;
-        // 指针移出编辑器：清悬停态（手型光标/高亮环复位）
-        _surfaceHost.PointerExited += (_, _) => UpdateTodoHover(-1f, -1f);
+        // 指针移出编辑器：清悬停态（手型光标/高亮复位）
+        _surfaceHost.PointerExited += (_, _) => UpdateHover(-1f, -1f);
         Tapped += OnTappedHandler;
         Unloaded += (_, _) =>
         {
             _caretBlink.Stop();
             _checkAnimTimer.Stop();
+            _imageScrollTimer.Stop();
             _tsf?.Dispose();
             _surface.Dispose();
             _imageStore.Dispose();
@@ -338,6 +411,7 @@ public sealed class LumiEditor : Grid
     {
         _caretBlink.Stop();
         _checkAnimTimer.Stop();
+        _imageScrollTimer.Stop();
         _tsf?.Dispose();
         _tsf = null;
         _surface.Dispose();
@@ -396,6 +470,14 @@ public sealed class LumiEditor : Grid
         // TSF 接入（M4）：组字期抑制 UserEdited，候选窗定位经屏幕坐标回调
         AttachTsf();
 
+        // 换文档：清掉全部图片交互态（选中/悬停/拖动/缩放预览）
+        _selectedImageBlock = -1;
+        _hoverImageBlock = -1;
+        _dragImageBlock = -1;
+        _dragFreeRect = null;
+        _resizePreview = null;
+        _resizeHandle = ImageHandle.None;
+
         Relayout();
         _ = WarmupImagesAsync(document);
         _caretBlink.Start();
@@ -431,10 +513,22 @@ public sealed class LumiEditor : Grid
         {
             return;
         }
-        var result = _renderer.UpdateLayout(_document, (float)ActualWidth);
+        // 拖动改锚点期间：该图片以「自由矩形」参与排版（Rect 直给路径，跟手移动）；
+        // 松手时按其左上角命中的字符写回锚点 + 横向自由偏移，之后重排跟着锚点走。
+        var floats = _document.GetFloats();
+        if (_dragFreeRect is { } dragRect && _dragImageBlock >= 0)
+        {
+            // 预览与落点一致：拖动中的图片按"紧跟锚字符"的语义排（无外边距），
+            // 否则松手瞬间文字还会再挪 4dip（排除区外扩）
+            floats = [.. floats.Select(f => f.Id == _dragImageBlock
+                ? f with { Anchor = null, AnchorToChar = false, Rect = dragRect, Margin = 0f }
+                : f)];
+        }
+        var result = _renderer.UpdateLayout(_document.Blocks, floats, (float)ActualWidth);
         _contentGrid.Height = Math.Max(result.TotalHeight, ActualHeight);
         _surfaceHost.Height = ActualHeight;
         _surface.SetMetrics((float)ActualWidth, (float)ActualHeight, result.TotalHeight);
+        UpdateImageOverlay();
         LayoutStatsChanged?.Invoke(_renderer.LastLayoutDuration.TotalMilliseconds);
     }
 
@@ -827,6 +921,21 @@ public sealed class LumiEditor : Grid
             return;
         }
 
+        // 浮动图片：命中 → 选中并进入拖动改锚点（Phase 3 M4）；命中的是图片就不再落光标
+        if (currentPoint.Properties.IsLeftButtonPressed && HitTestImage(docX, docY) is var imageBlock
+            && imageBlock >= 0)
+        {
+            e.Handled = true;
+            _surfaceHost.CapturePointer(e.Pointer);
+            SelectImage(imageBlock);
+            BeginImageDrag(imageBlock, docX, docY);
+            return;
+        }
+        if (_selectedImageBlock >= 0)
+        {
+            SelectImage(-1); // 点到别处：取消图片选中
+        }
+
         var hit = _renderer.Current.HitTest(docX, docY);
         if (!hit.Found)
         {
@@ -886,11 +995,22 @@ public sealed class LumiEditor : Grid
         var point = e.GetCurrentPoint(_surfaceHost).Position;
         float docX = (float)point.X;
         float docY = (float)(point.Y + _scroller.VerticalOffset);
+        _pointerDocX = docX;
+        _pointerViewportY = (float)point.Y;
+
+        // 拖动改锚点（Phase 3 M4）：更新预览（跨行/换侧才重排）+ 视口边缘自动滚动
+        if (_dragImageBlock >= 0)
+        {
+            UpdateImageDrag(docX, docY);
+            UpdateImageAutoScroll((float)point.Y);
+            e.Handled = true;
+            return;
+        }
 
         if (!_isDraggingSelection)
         {
-            // 非拖动：只有悬停态检测（待办复选框 → 手型光标 + 高亮环，Phase 3 M3）
-            UpdateTodoHover(docX, docY);
+            // 非拖动：悬停态检测（todo 复选框 / 浮动图片 → 手型光标 + 高亮，Phase 3 M3/M4）
+            UpdateHover(docX, docY);
             return;
         }
 
@@ -928,6 +1048,13 @@ public sealed class LumiEditor : Grid
 
     private void OnPointerReleased(object sender, PointerRoutedEventArgs e)
     {
+        if (_dragImageBlock >= 0)
+        {
+            EndImageDrag();
+            _surfaceHost.ReleasePointerCapture(e.Pointer);
+            e.Handled = true;
+            return;
+        }
         if (_isDraggingSelection)
         {
             _isDraggingSelection = false;
@@ -978,18 +1105,23 @@ public sealed class LumiEditor : Grid
         return true;
     }
 
-    /// <summary>悬停态：命中待办复选框 → 手型光标 + 悬停高亮环；移出恢复 I 形（Phase 3 M3）。</summary>
-    private void UpdateTodoHover(float docX, float docY)
+    /// <summary>
+    /// 悬停态（Phase 3 M3/M4）：命中待办复选框或浮动图片 → 手型光标 + 对应高亮；
+    /// 移出恢复 I 形。todo 命中优先于图片（复选框区域在图片外，互斥即可）。
+    /// </summary>
+    private void UpdateHover(float docX, float docY)
     {
-        int hit = _renderer.Current?.HitTestTodoCheckbox(docX, docY) ?? -1;
-        if (hit == _hoverTodoBlock)
+        int todo = _renderer.Current?.HitTestTodoCheckbox(docX, docY) ?? -1;
+        int image = todo < 0 ? HitTestImage(docX, docY) : -1;
+        if (todo != _hoverTodoBlock || image != _hoverImageBlock)
         {
-            return;
+            _hoverTodoBlock = todo;
+            _hoverImageBlock = image;
+            _renderer.HoverTodoBlockIndex = todo;
+            UpdateImageOverlay();
+            _surface.Invalidate();
         }
-        _hoverTodoBlock = hit;
-        _renderer.HoverTodoBlockIndex = hit;
-        ProtectedCursor = hit >= 0 ? _handCursor : _ibeamCursor;
-        _surface.Invalidate();
+        ProtectedCursor = todo >= 0 || image >= 0 ? _handCursor : _ibeamCursor;
     }
 
     /// <summary>启动勾选动画（再次点击打断重放；160ms 内每 16ms 重绘一帧，播完自停）。</summary>
@@ -1023,6 +1155,496 @@ public sealed class LumiEditor : Grid
         _surface.Invalidate();
     }
 
+    // ------------------------------------------------------------------
+    // 图片交互（Phase 3 M4）：选中/悬停覆盖层、拖动改锚点、八手柄缩放、OS 拖放插图
+    // ------------------------------------------------------------------
+
+    private void BuildImageOverlay()
+    {
+        _imageOutline.Stroke = new SolidColorBrush(OutlineColor);
+        _imageOutline.StrokeThickness = 1f;
+        _imageOutline.StrokeDashArray = new DoubleCollection { 4, 3 };
+        _imageOutline.IsHitTestVisible = false;
+        _imageOutline.Visibility = Visibility.Collapsed;
+        _imageOverlay.Children.Add(_imageOutline);
+
+        foreach (ImageHandle handle in ImageResizeGeometry.AllHandles)
+        {
+            var box = new Border
+            {
+                Width = HandleSize,
+                Height = HandleSize,
+                CornerRadius = new CornerRadius(3),
+                Background = new SolidColorBrush(HandleFill),
+                BorderBrush = new SolidColorBrush(HandleBorderColor),
+                BorderThickness = new Thickness(1),
+                Visibility = Visibility.Collapsed,
+                Tag = handle,
+            };
+            box.PointerPressed += OnImageHandlePressed;
+            box.PointerMoved += OnImageHandleMoved;
+            box.PointerReleased += OnImageHandleReleased;
+            box.PointerCaptureLost += OnImageHandleCaptureLost;
+            CursorShapes.SetShape(box, CursorForHandle(handle));
+            _imageHandles[handle] = box;
+            _imageOverlay.Children.Add(box);
+        }
+
+        _imageSizeLabelText.FontSize = 11;
+        _imageSizeLabelText.Foreground = new SolidColorBrush(Colors.White);
+        _imageSizeLabel.Background = new SolidColorBrush(SizeLabelBackground);
+        _imageSizeLabel.CornerRadius = new CornerRadius(4);
+        _imageSizeLabel.Padding = new Thickness(6, 2, 6, 2);
+        _imageSizeLabel.IsHitTestVisible = false;
+        _imageSizeLabel.Visibility = Visibility.Collapsed;
+        _imageSizeLabel.Child = _imageSizeLabelText;
+        _imageOverlay.Children.Add(_imageSizeLabel);
+
+        // 覆盖层加在 surface 之后（z 序在上）；Canvas 无背景 → 空白处不吃指针
+        _contentGrid.Children.Add(_imageOverlay);
+    }
+
+    private static Microsoft.UI.Input.InputSystemCursorShape CursorForHandle(ImageHandle handle) => handle switch
+    {
+        ImageHandle.TopLeft or ImageHandle.BottomRight =>
+            Microsoft.UI.Input.InputSystemCursorShape.SizeNorthwestSoutheast,
+        ImageHandle.TopRight or ImageHandle.BottomLeft =>
+            Microsoft.UI.Input.InputSystemCursorShape.SizeNortheastSouthwest,
+        ImageHandle.Left or ImageHandle.Right =>
+            Microsoft.UI.Input.InputSystemCursorShape.SizeWestEast,
+        _ => Microsoft.UI.Input.InputSystemCursorShape.SizeNorthSouth,
+    };
+
+    /// <summary>命中浮动图片（返回块索引，-1 = 未命中）。</summary>
+    private int HitTestImage(float docX, float docY)
+    {
+        var layout = _renderer.Current;
+        var hit = layout?.FloatAt(docX, docY);
+        if (hit is null || layout!.Blocks is not { } blocks)
+        {
+            return -1;
+        }
+        return hit.Id >= 0 && hit.Id < blocks.Count && blocks[hit.Id] is ImageBlock ? hit.Id : -1;
+    }
+
+    /// <summary>选中/取消选中图片（-1 = 取消）：选中的图片显示虚线框 + 八手柄。</summary>
+    private void SelectImage(int blockIndex)
+    {
+        if (_selectedImageBlock == blockIndex)
+        {
+            return;
+        }
+        _selectedImageBlock = blockIndex;
+        UpdateImageOverlay();
+    }
+
+    /// <summary>按当前状态刷新覆盖层几何：拖动/选中 → 框（+手柄）；仅悬停 → 细框。</summary>
+    private void UpdateImageOverlay()
+    {
+        int block = _dragImageBlock >= 0
+            ? _dragImageBlock
+            : _selectedImageBlock >= 0 ? _selectedImageBlock : _hoverImageBlock;
+        bool withHandles = _dragImageBlock < 0 && _selectedImageBlock >= 0;
+        LayoutRect? rect = block >= 0 ? _resizePreview ?? FindFloatRect(block) : null;
+
+        if (rect is not { } r)
+        {
+            _imageOutline.Visibility = Visibility.Collapsed;
+            _imageSizeLabel.Visibility = Visibility.Collapsed;
+            foreach (Border box in _imageHandles.Values)
+            {
+                box.Visibility = Visibility.Collapsed;
+            }
+            return;
+        }
+
+        Canvas.SetLeft(_imageOutline, r.X);
+        Canvas.SetTop(_imageOutline, r.Y);
+        _imageOutline.Width = Math.Max(0, r.Width);
+        _imageOutline.Height = Math.Max(0, r.Height);
+        _imageOutline.Visibility = Visibility.Visible;
+
+        foreach ((ImageHandle handle, Border box) in _imageHandles)
+        {
+            (float cx, float cy) = ImageResizeGeometry.HandleCenter(r, handle);
+            Canvas.SetLeft(box, cx - (HandleSize / 2f));
+            Canvas.SetTop(box, cy - (HandleSize / 2f));
+            box.Visibility = withHandles ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        if (_resizePreview is { } preview && _resizeHandle != ImageHandle.None)
+        {
+            _imageSizeLabelText.Text = $"{preview.Width:0} × {preview.Height:0}";
+            Canvas.SetLeft(_imageSizeLabel, preview.X + preview.Width + 8);
+            Canvas.SetTop(_imageSizeLabel, preview.Y + preview.Height + 6);
+            _imageSizeLabel.Visibility = Visibility.Visible;
+        }
+        else
+        {
+            _imageSizeLabel.Visibility = Visibility.Collapsed;
+        }
+    }
+
+    private LayoutRect? FindFloatRect(int blockIndex)
+    {
+        var floats = _renderer.Current?.Floats;
+        if (floats is null)
+        {
+            return null;
+        }
+        foreach (var f in floats)
+        {
+            if (f.Id == blockIndex)
+            {
+                return f.Rect;
+            }
+        }
+        return null;
+    }
+
+    // ---- 拖动改锚点（预览经锚点直给引擎，与提交后的结果逐像素一致）----
+
+    private void BeginImageDrag(int blockIndex, float docX, float docY)
+    {
+        _dragImageBlock = blockIndex;
+        _dragImageActive = false; // 先按兵不动：指针真移动了才把图片"提起来"（避免按下瞬间跳位）
+        _dragPressX = docX;
+        _dragPressY = docY;
+        var rect = FindFloatRect(blockIndex) ?? new LayoutRect(docX, docY, 1f, 1f);
+        _dragGrabOffsetX = docX - rect.X;   // 抓取点相对图片左上角的偏移：拖动跟手
+        _dragGrabOffsetY = docY - rect.Y;
+        _dragSizeW = rect.Width;
+        _dragSizeH = rect.Height;
+        _pendingAnchor = CurrentAnchorOf(blockIndex);
+        _pendingSide = CurrentSideOf(blockIndex);
+    }
+
+    private FloatAnchor CurrentAnchorOf(int blockIndex)
+    {
+        if (_core?.Document.Blocks is { } blocks
+            && blockIndex >= 0 && blockIndex < blocks.Count
+            && blocks[blockIndex] is ImageBlock { Float.Anchor: { } anchor })
+        {
+            return anchor;
+        }
+        var caret = _core?.Selection.Active ?? new Core.Editing.TextPosition(0, 0);
+        return new FloatAnchor(caret.BlockIndex, caret.CharIndex);
+    }
+
+    private FloatSide CurrentSideOf(int blockIndex) =>
+        _core?.Document.Blocks is { } blocks
+        && blockIndex >= 0 && blockIndex < blocks.Count
+        && blocks[blockIndex] is ImageBlock { Float: { } placement }
+            ? placement.Side
+            : FloatSide.Right;
+
+    /// <summary>
+    /// 拖动预览（Phase 3 M4）：图片跟手移动——预览走 Rect 直给路径实时重排。
+    /// 落点 → 锚点的换算在松手时做（见 <see cref="EndImageDrag"/>）。
+    /// </summary>
+    private void UpdateImageDrag(float docX, float docY)
+    {
+        if (_renderer.Current is null || _dragImageBlock < 0)
+        {
+            return;
+        }
+        if (!_dragImageActive)
+        {
+            // 拖动阈值：按下后移动超过 4dip 才算拖动（否则视为单击选中）
+            float dx = docX - _dragPressX;
+            float dy = docY - _dragPressY;
+            if ((dx * dx) + (dy * dy) < 16f)
+            {
+                return;
+            }
+            _dragImageActive = true;
+        }
+
+        var rect = new LayoutRect(docX - _dragGrabOffsetX, docY - _dragGrabOffsetY,
+            _dragSizeW, _dragSizeH);
+        if (_dragFreeRect is { } old
+            && Math.Abs(old.X - rect.X) < 0.5f && Math.Abs(old.Y - rect.Y) < 0.5f)
+        {
+            return; // 亚像素抖动不重排
+        }
+        _dragFreeRect = rect;
+        Relayout();
+    }
+
+    /// <summary>
+    /// 松手：按图片左上角在文字里的位置写回锚点（命中测试自带「向左向上找最近文字」的兜底：
+    /// 预览版面上紧挨图片左侧的字，或最近的文字行），横向偏移取落点 X。
+    /// 之后纵向随锚点所在行、横向保持落点位置——重排跟着这个位置走。
+    /// </summary>
+    private void EndImageDrag()
+    {
+        int block = _dragImageBlock;
+        bool moved = _dragImageActive;
+        var dropped = _dragFreeRect;
+        _dragImageBlock = -1;
+        _dragImageActive = false;
+        _dragFreeRect = null;
+        StopImageAutoScroll();
+
+        if (moved && block >= 0 && _core is not null && dropped is { } rect)
+        {
+            // 锚点按定稿规则取（Core 的 HitTestFloatAnchor）：图片矩形纵向覆盖到的第一条文本行、
+            // 图片左缘处的插入位置——"在那一行紧挨图片左侧插一个占位符"。
+            // 用「去掉这张图」的自然版面：预览版面里文字已被图片挤开一截，会差一个字。
+            var natural = _core.Document.GetFloats().Where(f => f.Id != block).ToArray();
+            LayoutResult anchorLayout = _renderer.LayoutTransient(
+                _core.Document.Blocks, natural, (float)ActualWidth);
+            HitTestResult hit;
+            using (anchorLayout)
+            {
+                hit = anchorLayout.HitTestFloatAnchor(rect);
+            }
+            if (hit.Found)
+            {
+                _pendingAnchor = new FloatAnchor(hit.BlockIndex, hit.CharIndex);
+            }
+            _pendingSide = rect.X + (rect.Width / 2f) < ActualWidth / 2.0
+                ? FloatSide.Left
+                : FloatSide.Right;
+            // AnchorToChar：图片紧跟锚字符之后——横纵位置都由锚字符决定，随文字重排一起走
+            _core.ApplyCommand(new MoveImageAnchorCommand(
+                block, _pendingAnchor, _pendingSide, AnchorToChar: true));
+            Relayout();
+        }
+    }
+
+    // ---- 视口边缘自动滚动（指针贴近上下边缘时 8dip/帧）----
+
+    private void UpdateImageAutoScroll(float viewportY)
+    {
+        const float edge = 20f;
+        float height = (float)_scroller.ViewportHeight;
+        if (viewportY < edge)
+        {
+            _autoScrollDelta = -8f;
+            _imageScrollTimer.Start();
+        }
+        else if (viewportY > height - edge)
+        {
+            _autoScrollDelta = 8f;
+            _imageScrollTimer.Start();
+        }
+        else
+        {
+            StopImageAutoScroll();
+        }
+    }
+
+    private void StopImageAutoScroll() => _imageScrollTimer.Stop();
+
+    private void OnImageAutoScrollTick(object? sender, object e)
+    {
+        if (_dragImageBlock < 0)
+        {
+            _imageScrollTimer.Stop();
+            return;
+        }
+        _scroller.ChangeView(null, _scroller.VerticalOffset + _autoScrollDelta, null,
+            disableAnimation: true);
+        // 滚动改变了指针处的文档坐标：按新偏移重算预览
+        UpdateImageDrag(_pointerDocX, _pointerViewportY + (float)_scroller.VerticalOffset);
+    }
+
+    // ---- 八手柄缩放（覆盖层只动预览几何，松手提交后一次重排）----
+
+    private void OnImageHandlePressed(object sender, PointerRoutedEventArgs e)
+    {
+        if (sender is not Border { Tag: ImageHandle handle } box
+            || FindFloatRect(_selectedImageBlock) is not { } rect)
+        {
+            return;
+        }
+        e.Handled = true;
+        box.CapturePointer(e.Pointer);
+        _resizeHandle = handle;
+        _resizeStartRect = rect;
+        _resizePreview = null;
+        ClearResizeNaturalLayout();
+    }
+
+    private void OnImageHandleMoved(object sender, PointerRoutedEventArgs e)
+    {
+        if (_resizeHandle == ImageHandle.None)
+        {
+            return;
+        }
+        e.Handled = true;
+        var point = e.GetCurrentPoint(_imageOverlay).Position;
+        float maxWidth = Math.Max(ImageResizeGeometry.MinEdge, (float)ActualWidth);
+        // 自由矩形：对边/对角固定——左/上侧手柄动左/上边缘（右下边缘不动），预览逐像素跟手。
+        // 左/上侧手柄松手时还要按新左上角重锚，落位会吸到字符/行上（见 OnImageHandleReleased）。
+        _resizePreview = ImageResizeGeometry.Resize(
+            _resizeStartRect, _resizeHandle, (float)point.X, (float)point.Y, maxWidth);
+        UpdateImageOverlay();
+    }
+
+    private void OnImageHandleReleased(object sender, PointerRoutedEventArgs e)
+    {
+        if (_resizeHandle == ImageHandle.None)
+        {
+            return;
+        }
+        e.Handled = true;
+        var handle = _resizeHandle;
+        _resizeHandle = ImageHandle.None;
+        if (sender is Border box)
+        {
+            box.ReleasePointerCapture(e.Pointer);
+        }
+        if (_resizePreview is { } preview && _selectedImageBlock >= 0 && _core is not null)
+        {
+            // 左/上侧手柄把左上角挪走了 → 按新左上角重算锚点（与拖动落点同一规则），
+            // 并把右下边缘钉回自由矩形的位置：图片落位由锚点决定，重锚后尺寸跟着让。
+            FloatAnchor? anchor = null;
+            LayoutRect committed = preview;
+            if (HandleMovesTopLeft(handle)
+                && NaturalLayoutForResize() is { } natural
+                && ImageResizeGeometry.ResolveAnchoredResize(natural, preview, (float)ActualWidth)
+                    is { } landed)
+            {
+                anchor = landed.Anchor;
+                committed = landed.Rect;
+            }
+            _core.ApplyCommand(new ResizeImageCommand(_selectedImageBlock,
+                MathF.Round(committed.Width), MathF.Round(committed.Height), anchor));
+        }
+        _resizePreview = null;
+        ClearResizeNaturalLayout();
+        Relayout();
+    }
+
+    private void OnImageHandleCaptureLost(object sender, PointerRoutedEventArgs e)
+    {
+        if (_resizeHandle == ImageHandle.None)
+        {
+            return;
+        }
+        _resizeHandle = ImageHandle.None;
+        _resizePreview = null;
+        ClearResizeNaturalLayout();
+        UpdateImageOverlay();
+    }
+
+    /// <summary>左/上侧手柄：图片左上角会移动，落位需按新左上角重算锚点。</summary>
+    private static bool HandleMovesTopLeft(ImageHandle handle) =>
+        handle is ImageHandle.TopLeft or ImageHandle.Top or ImageHandle.TopRight
+            or ImageHandle.Left or ImageHandle.BottomLeft;
+
+    /// <summary>
+    /// 重锚用的自然版面：去掉这张图（其余浮动照常参与）。用自然版面而非预览版面，
+    /// 与拖动落点同一参照——预览版面里文字已被图片挤开一截，锚点会差一个字。手势内复用。
+    /// </summary>
+    private LayoutResult? NaturalLayoutForResize()
+    {
+        if (_resizeNaturalLayout is not null || _core is null || _selectedImageBlock < 0)
+        {
+            return _resizeNaturalLayout;
+        }
+        var floats = _core.Document.GetFloats()
+            .Where(f => f.Id != _selectedImageBlock)
+            .ToArray();
+        _resizeNaturalLayout = _renderer.LayoutTransient(
+            _core.Document.Blocks, floats, (float)ActualWidth);
+        return _resizeNaturalLayout;
+    }
+
+    private void ClearResizeNaturalLayout()
+    {
+        _resizeNaturalLayout?.Dispose();
+        _resizeNaturalLayout = null;
+    }
+
+    // ---- OS 拖放插图（文件/位图拖入 → 落点锚定）----
+
+    private static readonly string[] ImageExtensions =
+        [".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"];
+
+    private void OnDragOverHandler(object sender, DragEventArgs e)
+    {
+        bool accepted = e.DataView.Contains(StandardDataFormats.Bitmap)
+            || e.DataView.Contains(StandardDataFormats.StorageItems);
+        e.AcceptedOperation = accepted ? DataPackageOperation.Copy : DataPackageOperation.None;
+        if (!accepted || _renderer.Current is null)
+        {
+            return;
+        }
+
+        var point = e.GetPosition(_surfaceHost);
+        var hit = _renderer.Current.HitTest(
+            (float)point.X, (float)(point.Y + _scroller.VerticalOffset));
+        _dropIndicator = hit.Found ? hit.CaretPosition : null;
+        _surface.Invalidate();
+    }
+
+    private void OnDragLeaveHandler(object sender, DragEventArgs e)
+    {
+        _dropIndicator = null;
+        _surface.Invalidate();
+    }
+
+    private async void OnDropHandler(object sender, DragEventArgs e)
+    {
+        _dropIndicator = null;
+        try
+        {
+            // 落点 → 光标位置：InsertImageCommand 按当前选区字符锚定图片
+            var point = e.GetPosition(_surfaceHost);
+            var hit = _renderer.Current?.HitTest(
+                (float)point.X, (float)(point.Y + _scroller.VerticalOffset));
+            if (hit is { Found: true } found && _core is not null)
+            {
+                _core.SetSelection(Core.Editing.TextRange.Collapse(found.CaretPosition));
+            }
+
+            if (e.DataView.Contains(StandardDataFormats.Bitmap))
+            {
+                var reference = await e.DataView.GetBitmapAsync();
+                using var stream = await reference.OpenReadAsync();
+                await InsertImageFromStreamAsync(stream);
+                return;
+            }
+            if (e.DataView.Contains(StandardDataFormats.StorageItems))
+            {
+                var items = await e.DataView.GetStorageItemsAsync();
+                foreach (var item in items)
+                {
+                    if (item is StorageFile file && IsImageFile(file))
+                    {
+                        using var stream = await file.OpenReadAsync();
+                        await InsertImageFromStreamAsync(stream);
+                        break; // 一次拖放插一张（多文件时取第一张图片）
+                    }
+                }
+            }
+        }
+        catch
+        {
+            // 拖放内容解码失败：静默忽略（与剪贴板粘贴路径同样宽松）
+        }
+        finally
+        {
+            _surface.Invalidate();
+        }
+    }
+
+    private static bool IsImageFile(StorageFile file) =>
+        ImageExtensions.Contains(System.IO.Path.GetExtension(file.Name), StringComparer.OrdinalIgnoreCase);
+
+    private async Task InsertImageFromStreamAsync(IRandomAccessStreamWithContentType stream)
+    {
+        if (_core is null || await WinClipboard.DecodeImageAsync(stream) is not { } decoded)
+        {
+            return;
+        }
+        _core.ApplyCommand(new InsertImageCommand(
+            $"img-{Guid.NewGuid():N}", decoded.Bytes, decoded.Mime, decoded.Width, decoded.Height));
+    }
+
     private void OnRenderViewport(CanvasDrawingSession session, Windows.Foundation.Rect viewport, float scale)
     {
         if (_renderer.Current is null)
@@ -1045,6 +1667,16 @@ public sealed class LumiEditor : Grid
 
         _renderer.Render(session, _renderer.Current, viewport, InkColor, DebugOverlay,
             includeBlockBackgrounds: false);
+
+        // OS 拖放落点指示线（Phase 3 M4）：拖入悬停期间画在落点字符处
+        if (_dropIndicator is { } drop)
+        {
+            var dropCaret = CaretGeometryCalculator.GetCaret(_renderer.Current, drop);
+            if (dropCaret is { } dc)
+            {
+                session.DrawLine(dc.X, dc.Y, dc.X, dc.Y + dc.Height, InkColor, 2f);
+            }
+        }
 
         // 光标（最上层）
         if (_core is not null && _caretVisible)

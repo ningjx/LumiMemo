@@ -36,7 +36,7 @@ public sealed record MergeBlockCommand(int BlockIndex) : IEditCommand
                 }
             }
             return new EditorState(
-                state.Document with { Blocks = kept },
+                state.Document with { Blocks = RemapDelete(kept, BlockIndex - 1) },
                 TextRange.Collapse(new TextPosition(BlockIndex - 1, 0)));
         }
 
@@ -62,7 +62,7 @@ public sealed record MergeBlockCommand(int BlockIndex) : IEditCommand
             }
             var prevCaret = new TextPosition(BlockIndex - 1, BlockTextOps.GetTextLength(previous));
             return new EditorState(
-                state.Document with { Blocks = kept2 },
+                state.Document with { Blocks = RemapDelete(kept2, BlockIndex) },
                 TextRange.Collapse(prevCaret));
         }
 
@@ -86,8 +86,25 @@ public sealed record MergeBlockCommand(int BlockIndex) : IEditCommand
         }
 
         var caret = new TextPosition(BlockIndex - 1, BlockTextOps.GetTextLength(previous));
+        // 浮动锚点维护（Phase 3 M4）：被合并块上的锚点并到前块末尾之后；其后锚点整块前移
+        int prevLength = BlockTextOps.GetTextLength(previous);
+        var remapped = FloatAnchors.RemapAll(newBlocks, anchor =>
+            anchor.BlockIndex == BlockIndex
+                ? new FloatAnchor(BlockIndex - 1, prevLength + anchor.CharIndex)
+                : anchor.BlockIndex > BlockIndex
+                    ? anchor with { BlockIndex = anchor.BlockIndex - 1 }
+                    : anchor);
         return new EditorState(
-            state.Document with { Blocks = newBlocks },
+            state.Document with { Blocks = remapped },
             TextRange.Collapse(caret));
     }
+
+    /// <summary>删除单个块（divider 或非文本块）后的锚点维护：该块上的锚点并到其前一块首，其后整块前移。</summary>
+    private static IReadOnlyList<Block> RemapDelete(IReadOnlyList<Block> blocks, int deletedIndex) =>
+        FloatAnchors.RemapAll(blocks, anchor =>
+            anchor.BlockIndex == deletedIndex
+                ? new FloatAnchor(Math.Max(0, deletedIndex - 1), 0)
+                : anchor.BlockIndex > deletedIndex
+                    ? anchor with { BlockIndex = anchor.BlockIndex - 1 }
+                    : anchor);
 }
