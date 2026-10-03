@@ -1,0 +1,46 @@
+// CsWin32 输入清单（S3 TSF 覆盖实测）：一行一个接口/类型/常量。
+// 结果（2026-10-03 实测）：接口全部投影成功；下列常量/typedef 不在 metadata，
+// 需手写（见 Program.cs 顶部注释）。
+
+// ---- 初始化链 ----
+ITfThreadMgr
+ITfDocumentMgr
+ITfContext
+ITfContextComposition
+ITfContextOwnerCompositionSink
+
+// ---- 应用侧 TextStore ----
+ITextStoreACP2
+ITextStoreACP
+ITextStoreACPSink
+ITextStoreACPServices
+
+// ---- 常用类型（结构体） ----
+TS_TEXTCHANGE
+TS_SELECTION_ACP
+TS_STATUS
+TS_ATTRVAL
+
+// ---- 枚举常量（枚举本身投影，用枚举名而非裸常量名） ----
+TEXT_STORE_LOCK_FLAGS
+TEXT_STORE_TEXT_CHANGE_FLAGS
+TF_E_NOLOCK
+TF_E_SYNCHRONOUS
+TF_E_NOLAYOUT
+
+// ---- GUID（CLSID 有；IID 走接口 typeof(...).GUID） ----
+CLSID_TF_ThreadMgr
+
+// ============================================================
+// 下列条目实测不在 metadata（PInvoke001/004 警告），手写：
+//   TfClientId          → typedef uint32，手写 uint
+//   TfEditCookie        → typedef uint32，手写 uint
+//   TsViewCookie        → typedef uint32，手写 uint
+//   TS_ATTRID           → typedef GUID，手写 Guid
+//   TS_LF_READ          → TEXT_STORE_LOCK_FLAGS.TS_LF_READ
+//   TS_AS_ALL_SINKS     → TEXT_STORE_SINK_FLAGS 不投影，手写位组合
+//   TEXT_STORE_SINK_FLAGS → 不投影，手写位常量
+//   TF_STATUS           → 不投影，手写位常量（TS_SD_* / TS_SS_*）
+//   IID_ITfThreadMgr    → typeof(ITfThreadMgr).GUID
+//   IID_ITextStoreACPSink → typeof(ITextStoreACPSink).GUID
+// ============================================================

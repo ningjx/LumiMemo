@@ -1,8 +1,9 @@
 # Phase 2 详细设计：编辑层（光标/选区/命令/撤销/IME/剪贴板/自动保存）
 
-- 状态：**O1–O4 已拍板（2026-10-03），浮动锚定字符级化前置补丁已落地**——
-  详见 [float-anchor-charlevel-patch.md](float-anchor-charlevel-patch.md)；
-  待 M0（S3 TSF 探针）开工
+- 状态：**M0 已完成（2026-10-03），M1 待开工**——
+  O1–O4 已拍板；CsWin32 TSF 覆盖实测通过（RESULTS-Phase2 §1，R-TSF-1 解除）；
+  浮动锚定字符级化已落地（f9f9937）；§15 实施纪律已沉淀（M0 探针教训）。
+  详见 [float-anchor-charlevel-patch.md](float-anchor-charlevel-patch.md)
 - 前置：
   [custom-renderer-framework.md](custom-renderer-framework.md)（框架稿，已确认）、
   [phase0-spike-design.md](phase0-spike-design.md)（S1/S2 已验收，S3 延后至本期 M0）、
@@ -356,36 +357,32 @@ public interface IEditCommand
 
 ## 6. IME / TSF
 
-### 6.1 S3 spike（M0，开工第一天）
+### 6.1 前置验证（已完成，2026-10-03）
 
-框架稿已把 S3 从 Phase 0 延后到「Phase 2 开工前」——本期 M0 兑现：
-
-**Go 标准**（沿用框架稿 §4）：中文 IME 组字、候选窗跟随光标、组合期不触发自动保存。
-
-**最小闭环**（在 `LumiText.Demo` 里起一个独立探针窗口，不动主代码）：
-
-1. `CoCreateInstance(CLSID_TF_ThreadMgr, ..., IID_ITfThreadMgr)`；
-2. `threadMgr.Activate(out clientId)`；
-3. `threadMgr.CreateDocumentMgr(out docMgr)`；
-4. `docMgr.CreateContext(clientId, 0, textStore /* ITextStoreACP2 */, out context, out editCookie)`；
-5. `docMgr.Push(context)`；窗口焦点切换时 `threadMgr.SetFocus(docMgr)`；
-6. `textStore.AdviseSink(IID_ITextStoreACPSink, sink, TS_AS_ALL_SINKS)`。
-
-探针实现 `ITextStoreACP2` 的最小方法集（其余返回 `E_NOTIMPL`）：
-`AdviseSink / UnadviseSink / RequestLock / GetStatus / GetText / SetText /
-GetSelection / SetSelection / InsertTextAtSelection / GetTextExt / GetScreenExt /
-GetACPFromPoint / GetEndACP / GetActiveView / GetWnd`。
-
-**CsWin32 覆盖验证**（M0 第一个任务，半天）：
-查 `Microsoft.Windows.SDK.Win32Metadata` 是否投影 `msctf.h` / `textstor.h` 的
-`ITextStoreACP2 / ITfThreadMgr / ITfDocumentMgr / ITfContext / ITfContextComposition / ITextStoreACPSink`。
-若覆盖不全，回退手写 `LibraryImport` + COM vtable 布局（项目已有 CsWin32 + unsafe 先例，
-工作量约一天）。**未验证项，记入 §12 风险 R-TSF-1**。
+**CsWin32 覆盖实测**（原 M0 第一个任务，独立完成，不依赖探针）：
+`spikes/S3.TsfProbe/` 验证 `Microsoft.Windows.SDK.Win32Metadata` 投影
+`msctf.h` / `textstor.h` 的 TSF 接口——**全部覆盖**，`ITextStoreACP2` 为
+`[ComImport]` 经典 COM 互操作风格（CLR 自动生成 CCW，无需 ComWrappers）。
+详见 `src/LumiText/LumiText.Demo/RESULTS-Phase2.md` §1。**R-TSF-1 已解除**。
 
 **参考实现**：WPF 的 `System.Windows.Documents.TextStore`（.NET Framework 源码公开，
-`TextStore.cs`）就是一个完整的 `ITextStoreACP` C# 实现，结构可直接借鉴。
+`TextStore.cs`）就是一个完整的 `ITextStoreACP` C# 实现，M4 产品化时结构可直接借鉴。
 
-### 6.2 组字期行为（与现产品对齐）
+### 6.2 产品化接入（M4，与 `LumiEditor` 同期）
+
+**决策（2026-10-03 调整）**：不设独立 TSF 探针里程碑。理由：
+- 探针的两大验证点（候选窗定位、组字期事件）与 `LumiEditor` 的光标/选区/渲染
+  深度耦合——探针里简化掉的「光标几何」「组字装饰」在产品化时仍要重写，
+  探针等于白写一遍；
+- CsWin32 覆盖实测已单独完成（最大的雷已排）；
+- 剩余风险（WinUI 3 线程模型与 TSF STA 的兼容性）在 M4 实施时自然暴露，
+  届时若不通再启动最小探针定位，比现在预防性写探针更省。
+
+M4 验收口径（与现产品对齐）：中文 IME 组字、候选窗跟随光标、
+组字期不触发自动保存（`EditorCore` 组字期不发 `DocumentChanged`）。
+若 M4 实施卡壳，再回退启动最小探针（单文件、internal、能跑就行——见 §15 实施纪律）。
+
+### 6.3 组字期行为（与现产品对齐）
 
 | 事件 | 行为 |
 |---|---|
@@ -591,8 +588,8 @@ public sealed class LumiEditor : Grid
 
 | # | 风险 | 概率 | 应对 |
 |---|---|---|---|
-| R-TSF-1 | CsWin32 不覆盖 TSF 接口，需手写 COM vtable，工作量与出错率上升 | 中 | M0 第一天实测（V-T8）；不覆盖则 `LibraryImport` + 显式 vtable 布局（项目已有 unsafe 先例），预算 1 天；再不通转方案 B |
-| R-TSF-2 | WinUI 3 线程模型与 TSF STA 假设冲突，候选窗不跟随或组字丢字符 | 中 | M0 探针优先验证中文 IME 组字 + 候选窗定位两条件；WPF `TextStore` 为参照实现 |
+| R-TSF-1 | CsWin32 不覆盖 TSF 接口，需手写 COM vtable | ~~中~~ **已解除（2026-10-03）** | `spikes/S3.TsfProbe` 实测全部覆盖；`ITextStoreACP2` 为 `[ComImport]` 经典 COM 互操作，CLR 自动生成 CCW |
+| R-TSF-2 | WinUI 3 线程模型与 TSF STA 假设冲突，候选窗不跟随或组字丢字符 | 中 | M4 产品化时自然暴露（§6.2 决策：不设独立探针）；若不通再启动最小探针定位（§15 纪律） |
 | R-TSF-3 | ACP 扁平化缓存与块结构不同步（编辑后忘了重建 `_blockStartAcp`） | 中 | 缓存重建收进 `ApplyCommand` 的不变量；Core 单测覆盖 §10.1 |
 | R-E1 | 增量重排边界算错（某次编辑后后续块 Y 没更新） | 中 | 首版保守策略：除单块键入外一律整篇重排（§3.3）；视觉回归兜底 |
 | R-E2 | 撤销栈命令合并把「用户认为的两步」并成一步 | 低 | 合并规则严格（同 Kind + 光标连续 + 无选区跳变）；Enter/粘贴/IME 提交强制断合并 |
@@ -617,19 +614,57 @@ public sealed class LumiEditor : Grid
 
 | 里程碑 | 内容 | 验收 |
 |---|---|---|
-| **M0** | **S3 TSF 探针**（§6.1）+ CsWin32 覆盖实测（V-T8） | 中文 IME 组字、候选窗跟随光标、组字期不触发自动保存，三截图入 `RESULTS-Phase2.md` |
+| **M0** | **设计评审 + 前置验证**（已完成，2026-10-03）：O1–O4 拍板 + CsWin32 覆盖实测 + 浮动锚定字符级化 | 本设计稿 + RESULTS-Phase2 §1 + 锚定补丁（f9f9937） |
 | **M1** | 文档模型增量结构（§3）+ 命令系统 + 撤销栈（§5）+ Core 单测 | `LumiText.Core.Tests` 编辑系列全绿 |
 | **M2** | 字符级命中测试（§4.2）+ 光标几何（§4.3）+ 选区几何（§4.4） | 假字体单测 + Demo 可视化命中调试层 |
 | **M3** | `LumiEditor` 骨架（§9）+ 键入/删除/选区/光标渲染（§4.5） | Demo 里可打字、可拉选区、光标闪烁 |
-| **M4** | TSF 产品化接入（§6.2/6.3/6.4） | Demo 里中文 IME 全流程 |
+| **M4** | TSF 产品化接入（§6.2/6.3/6.4，含 `TsfTextStore` + `TsfManager` 落地 `LumiText.WinUI/Editing/`） | Demo 里中文 IME 全流程：组字、候选窗跟随、组字期不触发自动保存 |
 | **M5** | 剪贴板互通（§7）+ RTF 投影 | 与记事本/Word 互粘对照 |
 | **M6** | 内嵌图片（§0.2.6 / R-E3） | 粘贴位图落为行内图片 |
 | **M7** | `.lumi v2` 存储层落地（§8.1）+ `IRichTextDocument` 演化（§8.2）+ 自动保存接通（§8.3） | 主程序跑通：新内核便签可编辑、可保存、可重开 |
 | **M8** | 视觉回归对照 + `RESULTS-Phase2.md` + Go/No-Go 判定 | §10.3 口径 |
 
-依赖：M0 阻塞一切（TSF 是最大风险点，必须先排雷）；M1 不依赖 M0，可并行；
-M2 依赖 M1；M3 依赖 M2；M4 依赖 M0+M3；M5/M6 依赖 M3；M7 依赖 M3+M5；M8 收尾。
+依赖：M0 已完成；M1 无外部依赖，可立即开工；M2 依赖 M1；M3 依赖 M2；
+M4 依赖 M3；M5/M6 依赖 M3；M7 依赖 M3+M5；M8 收尾。
+
+**节奏建议**：一个里程碑一个工作 session，半成品不留过夜（半成品 = 下次重建上下文
+= 重复烧 token）。M1/M2/M3 是纯 Core + WinUI 控件，无外部 API 不确定性，建议连续推进；
+M4 是 TSF 硬骨头，单独留一个完整 session。
 
 ---
 
-> 下一步：开放决策 O1–O4 拍板后，按 M0 开工（此时才会开始写代码）。
+## 15. 实施纪律（2026-10-03 教训沉淀）
+
+本次 M0 探针实施中暴露的流程问题，写成规则避免重演：
+
+### 15.1 探针/spike 纪律
+
+- **探针 = 脏代码**：单文件、`internal`、不抽辅助类、不写防御性代码、不追求产品化结构。
+  探针的唯一目的是「验证某个假设是否成立」，不是「写出能进产品的雏形」。
+  Phase 0 纪律原文：「spike 代码允许'脏'：不写防御性代码、不做 DI、不写产品级日志；
+  但性能与渲染结论必须可复现」。
+- **先反射拿签名，再写实现**：CsWin32/源生成器生成的代码**不落盘**，
+  凭空想象其签名必然反复试错（本次教训：可见性/枚举名/指针风格/AsSpan 重载连踩四坑）。
+  正确姿势：写一个 5 行的 `Program.cs` 用反射打印接口全部方法签名，照着写实现。
+- **探针不追求一次写对**：先跑起来再修，不要在写的时候追求编译零警告。
+
+### 15.2 设计文档瘦身原则
+
+- **只写「不改就错」的决策**：开放决策、里程碑划分、红线、风险。
+- **细节留给实施**：具体 API 签名（实施时反射拿）、文件路径、代码骨架——
+  写进设计文档反而成了幻觉来源（本次教训：设计稿里写的 `ITextStoreACP2` 方法集
+  与 CsWin32 实际生成的签名对不上）。
+- **查证记录克制**：只查「不做就错」的事实（CsWin32 覆盖、API 存在性）；
+  不查「知道也不改变做法」的事实（WPF 有现成实现 ≠ 我可以直接用）。
+
+### 15.3 节奏控制
+
+- **一个里程碑一个 session**：半成品不过夜。M0 探针写了一半被叫停，
+  下次接续要重建全部上下文，等于重复烧 token。
+- **状态不好直接叫停**：本次 20 分钟就叫停是对的；下次更早。
+- **不在一个 session 里混做「设计调整 + 代码实施」**：先调完方案文档（本次），
+  再单独开 session 写代码。混在一起容易改着改着方案又回去改代码。
+
+---
+
+> 下一步：按 M1 开工（此时才会开始写代码）。
