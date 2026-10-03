@@ -5,7 +5,7 @@ using Xunit;
 namespace LumiText.Core.Tests;
 
 /// <summary>
-/// T-C3 系列：浮动锚定两遍排版的锚点解析（Phase 1 设计 §6.3/§10.1）。
+/// T-C3 系列：浮动锚定两遍排版的锚点解析（字符级锚定，2026-10-03 补丁）。
 /// 假字体约定：字宽 10、行高 20；内容宽 100 → 全宽行 10 字符。
 /// </summary>
 public sealed class FloatAnchorTests
@@ -15,19 +15,19 @@ public sealed class FloatAnchorTests
     private static FlowLayoutEngine NewEngine() => new(new FakeTextMeasurer());
 
     private static FloatObject AnchoredFloat(
-        int id, float w, float h, FloatSide side, int anchorBlock, float offsetX, float offsetY) =>
+        int id, float w, float h, FloatSide side, int anchorBlock, int anchorChar) =>
         new(id, new LayoutRect(0, 0, w, h), side, Margin: 0f)
         {
-            Anchor = new FloatAnchor(anchorBlock, offsetX, offsetY),
+            Anchor = new FloatAnchor(anchorBlock, anchorChar),
         };
 
-    // T-C3a：锚定块首 + 零偏移 → 浮动落在该块首行顶缘；文字环绕解析后的位置
+    // T-C3a：锚定块首字符（CharIndex=0）→ 浮动落在该块首行顶缘；文字环绕解析后的位置
     [Fact]
-    public void TC3a_AnchorToBlockStart_FloatLandsOnFirstLineTop()
+    public void TC3a_AnchorToFirstChar_FloatLandsOnFirstLineTop()
     {
         var engine = NewEngine();
         Block[] blocks = { ParagraphBlock.FromText(FakeTextMeasurer.Text(10)) };
-        var floats = new[] { AnchoredFloat(1, 30, 20, FloatSide.Left, anchorBlock: 0, 0, 0) };
+        var floats = new[] { AnchoredFloat(1, 30, 20, FloatSide.Left, anchorBlock: 0, anchorChar: 0) };
 
         using var result = engine.Layout(blocks, floats, W);
 
@@ -39,29 +39,38 @@ public sealed class FloatAnchorTests
         Assert.Equal(0f, result.Lines[1].X);
     }
 
-    // T-C3b：锚到第二块 + OffsetY → 顶缘 = 第二块首行 Y + 偏移；右浮 OffsetX 相对右缘
+    // T-C3b：锚到第二行的首字符（CharIndex=10）→ 浮动顶缘 = 第二行行盒 Y；右浮贴右缘
     [Fact]
-    public void TC3b_AnchorToSecondBlockWithOffsets()
+    public void TC3b_AnchorToSecondLineChar_FloatLandsOnThatLine()
     {
         var engine = NewEngine();
-        Block[] blocks =
-        {
-            new ParagraphBlock(FakeTextMeasurer.Text(10), spaceAfter: 10f),
-            ParagraphBlock.FromText(FakeTextMeasurer.Text(10)),
-        };
-        var floats = new[] { AnchoredFloat(1, 30, 20, FloatSide.Right, anchorBlock: 1, 8, 4) };
+        Block[] blocks = { ParagraphBlock.FromText(FakeTextMeasurer.Text(25)) };   // 3 行（10+10+5）
+        var floats = new[] { AnchoredFloat(1, 30, 20, FloatSide.Right, anchorBlock: 0, anchorChar: 10) };
 
         using var result = engine.Layout(blocks, floats, W);
 
-        // 第一遍：块 1 首行 Y = 20（块 0 一行）+ 10（段后距）= 30 → 浮动顶缘 34
-        Assert.Equal(34f, result.Floats[0].Rect.Y);
-        // 右浮：X = 100 − 30 − 8 = 62
-        Assert.Equal(62f, result.Floats[0].Rect.X);
+        // 第二行 Y = 20；右浮 X = 100 − 30 = 70
+        Assert.Equal(20f, result.Floats[0].Rect.Y);
+        Assert.Equal(70f, result.Floats[0].Rect.X);
     }
 
-    // T-C3c：锚到非文本块（Divider）→ 顺延到其后第一个文本块
+    // T-C3c：CharIndex 越界（≥ 块总字符数）→ 钳到该块末行
     [Fact]
-    public void TC3c_AnchorToDivider_FallsThroughToNextTextBlock()
+    public void TC3c_AnchorCharOutOfRange_ClampsToLastLine()
+    {
+        var engine = NewEngine();
+        Block[] blocks = { ParagraphBlock.FromText(FakeTextMeasurer.Text(25)) };   // 3 行（10+10+5）
+        var floats = new[] { AnchoredFloat(1, 30, 20, FloatSide.Left, anchorBlock: 0, anchorChar: 999) };
+
+        using var result = engine.Layout(blocks, floats, W);
+
+        // 末行 Y = 40
+        Assert.Equal(40f, result.Floats[0].Rect.Y);
+    }
+
+    // T-C3d：锚到非文本块（Divider）→ 顺延到其后第一个文本块（首字符）
+    [Fact]
+    public void TC3d_AnchorToDivider_FallsThroughToNextTextBlock()
     {
         var engine = NewEngine();
         Block[] blocks =
@@ -70,7 +79,7 @@ public sealed class FloatAnchorTests
             new DividerBlock(),
             ParagraphBlock.FromText(FakeTextMeasurer.Text(10)),
         };
-        var floats = new[] { AnchoredFloat(1, 30, 20, FloatSide.Left, anchorBlock: 1, 0, 0) };
+        var floats = new[] { AnchoredFloat(1, 30, 20, FloatSide.Left, anchorBlock: 1, anchorChar: 0) };
 
         using var result = engine.Layout(blocks, floats, W);
 
@@ -78,9 +87,9 @@ public sealed class FloatAnchorTests
         Assert.Equal(40f, result.Floats[0].Rect.Y);
     }
 
-    // T-C3d：锚点索引越界 → 钳到最后一块
+    // T-C3e：锚点块索引越界 → 钳到最后一块（首字符）
     [Fact]
-    public void TC3d_AnchorIndexOutOfRange_ClampsToLastBlock()
+    public void TC3e_AnchorBlockIndexOutOfRange_ClampsToLastBlock()
     {
         var engine = NewEngine();
         Block[] blocks =
@@ -88,7 +97,7 @@ public sealed class FloatAnchorTests
             ParagraphBlock.FromText(FakeTextMeasurer.Text(10)),
             ParagraphBlock.FromText(FakeTextMeasurer.Text(10)),
         };
-        var floats = new[] { AnchoredFloat(1, 30, 20, FloatSide.Left, anchorBlock: 99, 0, 0) };
+        var floats = new[] { AnchoredFloat(1, 30, 20, FloatSide.Left, anchorBlock: 99, anchorChar: 0) };
 
         using var result = engine.Layout(blocks, floats, W);
 
@@ -96,13 +105,13 @@ public sealed class FloatAnchorTests
         Assert.Equal(20f, result.Floats[0].Rect.Y);
     }
 
-    // T-C3e：全文无文本行盒 → 浮动退化为 Rect 直给路径
+    // T-C3f：全文无文本行盒 → 浮动退化为 Rect 直给路径
     [Fact]
-    public void TC3e_NoTextBlocks_FallsBackToRectPath()
+    public void TC3f_NoTextBlocks_FallsBackToRectPath()
     {
         var engine = NewEngine();
         Block[] blocks = { new DividerBlock() };
-        var anchored = AnchoredFloat(1, 30, 20, FloatSide.Left, anchorBlock: 0, 0, 0);
+        var anchored = AnchoredFloat(1, 30, 20, FloatSide.Left, anchorBlock: 0, anchorChar: 0);
         var direct = anchored with { Rect = new LayoutRect(24, 48, 30, 20) };
 
         using var result = engine.Layout(blocks, new[] { direct }, W);

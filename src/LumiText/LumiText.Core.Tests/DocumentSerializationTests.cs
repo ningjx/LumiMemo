@@ -24,7 +24,7 @@ public sealed class DocumentSerializationTests
                 new TodoBlock([new TextRun("待办事项")], @checked: true),
                 new DividerBlock(),
                 new ImageBlock("img-1", 240, 160,
-                    new FloatPlacement(FloatSide.Right, 8f, new FloatAnchor(0, 0, 0))),
+                    new FloatPlacement(FloatSide.Right, 8f, new FloatAnchor(0, 0))),
                 new ImageBlock("img-2", 100, 80,
                     new FloatPlacement(FloatSide.Left, 4f, Position: new FloatPosition(24, 48))),
                 new ParagraphBlock(
@@ -165,7 +165,7 @@ public sealed class DocumentSerializationTests
             [
                 new ParagraphBlock("文本"),
                 new ImageBlock("a", 240, 160,
-                    new FloatPlacement(FloatSide.Right, 8f, new FloatAnchor(0, 4, 12))),
+                    new FloatPlacement(FloatSide.Right, 8f, new FloatAnchor(0, 4))),
                 new ImageBlock("b", 100, 80,
                     new FloatPlacement(FloatSide.Left, 4f, Position: new FloatPosition(24, 48))),
                 new ImageBlock("c", 50, 50),
@@ -175,7 +175,7 @@ public sealed class DocumentSerializationTests
         Assert.Equal(2, floats.Count);
 
         Assert.Equal(1, floats[0].Id);   // 块索引
-        Assert.Equal(new FloatAnchor(0, 4, 12), floats[0].Anchor);
+        Assert.Equal(new FloatAnchor(0, 4), floats[0].Anchor);
         Assert.Equal(240f, floats[0].Rect.Width);   // 锚定占位：原点 + 显示尺寸
         Assert.Equal(8f, floats[0].Margin);
 
@@ -183,5 +183,28 @@ public sealed class DocumentSerializationTests
         Assert.Null(floats[1].Anchor);
         Assert.Equal(24f, floats[1].Rect.X);
         Assert.Equal(80f, floats[1].Rect.Height);
+    }
+
+    // T-S7：schema 1 旧锚点格式（block/x/y）降级读取——x/y 被未知字段忽略吞掉，
+    // char 缺省降级为 0，等价于「块首字符」；schema 高于当前版本 → null（高版本跳过）
+    [Fact]
+    public void Deserialize_LegacyAnchorFormat_DegradesToCharZero()
+    {
+        const string json = """
+            {"schema":1,"blocks":[
+              {"type":"paragraph","runs":[{"t":"文本"}]},
+              {"type":"image","imageId":"a","width":240,"height":160,
+               "float":{"side":"right","margin":8,"anchor":{"block":0,"x":4.0,"y":12.0}}}
+            ]}
+            """;
+
+        var doc = DocumentSerializer.Deserialize(json);
+        Assert.NotNull(doc);
+
+        var image = Assert.IsType<ImageBlock>(doc.Blocks[1]);
+        Assert.Equal(new FloatAnchor(0, 0), image.Float!.Anchor);
+
+        // 高版本 schema → null
+        Assert.Null(DocumentSerializer.Deserialize("""{"schema":99,"blocks":[]}"""));
     }
 }

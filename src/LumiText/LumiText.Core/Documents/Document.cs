@@ -13,8 +13,8 @@ public sealed record Document(IReadOnlyList<Block> Blocks, IReadOnlyList<ImageRe
 
     /// <summary>
     /// 从 <see cref="ImageBlock"/> 派生排版引擎的浮动输入（§3.1：Floats 是派生量，不存储）。
-    /// 锚定浮动的 Rect 为占位（原点 + 显示尺寸），终位置由排版期两遍解析（§6.3）；
-    /// 派生 <see cref="FloatObject.Id"/> = 所属块在 <see cref="Blocks"/> 中的索引。
+    /// 锚定浮动的 Rect 为占位（原点 + 显示尺寸），终位置由排版期两遍解析（字符级锚定，
+    /// FloatAnchor 注释）；派生 <see cref="FloatObject.Id"/> = 所属块在 <see cref="Blocks"/> 中的索引。
     /// </summary>
     public IReadOnlyList<FloatObject> GetFloats()
     {

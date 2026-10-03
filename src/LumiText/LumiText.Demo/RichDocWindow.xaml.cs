@@ -137,9 +137,9 @@ public sealed partial class RichDocWindow : Window
                     "分割线之上是待办区。右侧是「锚定到本文块首 + 偏移」的浮动图片（§6.3 两遍排版解析），" +
                     "左侧直给矩形定位的是另一张浮动图（983KB PNG，解码并行预热）。文字应当在两者之间" +
                     "自然环绕流动，验证真实位图渲染与两种浮动定位路径在同一份文档里共存。"),
-                // 锚定浮动：锚到本段（块 5）首行 + 顶部偏移 24，右侧缩 8（两遍排版解析）
+                // 锚定浮动：锚到本段（块 5）首字符（字符级锚定，两遍排版解析）
                 new ImageBlock("img-anchored", 150, 100,
-                    new FloatPlacement(FloatSide.Right, 8f, new FloatAnchor(5, 8f, 24f))),
+                    new FloatPlacement(FloatSide.Right, 8f, new FloatAnchor(5, 0))),
                 // 直给浮动：矩形直给路径（S2 现状）
                 new ImageBlock("img-direct", 150, 113,
                     new FloatPlacement(FloatSide.Left, 8f, Position: new FloatPosition(0, 230))),

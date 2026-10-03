@@ -167,7 +167,7 @@ public sealed partial class CompareWindow : Window
                 new DividerBlock(),
                 new ParagraphBlock(ending),
                 new ImageBlock("img-compare", 150, 100,
-                    new FloatPlacement(FloatSide.Right, 8f, new FloatAnchor(10, 8f, 12f))),
+                    new FloatPlacement(FloatSide.Right, 8f, new FloatAnchor(10, 0))),
             },
             LoadImages());
     }

@@ -403,6 +403,12 @@ public interface ITextMeasurer
 
 ### 6.3 浮动锚定（`FloatObject` 预留注释的兑现）
 
+> **v4 修订（2026-10-03）**：本节描述的块级锚定 `FloatAnchor(BlockIndex, OffsetX, OffsetY)`
+> 已被**字符级锚定** `FloatAnchor(BlockIndex, CharIndex)` 取代（去掉 Offset，X 按 Side 贴边，
+> Y = 锚字符所在行盒顶缘）。schema 1 → 2（旧 `block/x/y` 由 STJ 未知字段忽略 + 缺省降级
+> 天然读为 `char:0`，无迁移代码）。详见 [float-anchor-charlevel-patch.md](float-anchor-charlevel-patch.md)。
+> 下文保留为历史记录。
+
 现状：浮动矩形由调用方直接给文档坐标（Demo 里拖动产生）。
 正式文档需要「图片跟着锚点文字走」：
 

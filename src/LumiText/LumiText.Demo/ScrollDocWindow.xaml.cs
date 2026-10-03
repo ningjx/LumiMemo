@@ -96,7 +96,7 @@ public sealed partial class ScrollDocWindow : Window
             new ParagraphBlock("本文档约 350 行：滚动应流畅无残影；origin 回滚后内容完整；" +
                 "快速甩动允许短暂透出玻璃底，停止后下一帧内容完整。", spaceAfter: 12f),
             new ImageBlock("img-anchored", 150, 100,
-                new FloatPlacement(FloatSide.Right, 8f, new FloatAnchor(1, 8f, 24f))),
+                new FloatPlacement(FloatSide.Right, 8f, new FloatAnchor(1, 0))),
         };
         for (int s = 1; s <= 26; s++)
         {
