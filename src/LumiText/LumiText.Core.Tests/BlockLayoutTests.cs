@@ -158,4 +158,21 @@ public sealed class BlockLayoutTests
         Assert.Equal(PlacedLineKind.Text, result.Lines[0].Kind);
         Assert.Equal(PlacedLineKind.TodoText, result.Lines[1].Kind);
     }
+
+    // Phase 3 M2：标题段前距（H1 = 12dip）把标题行盒下推，前一块不受影响
+    [Fact]
+    public void M2_HeadingSpaceBefore_PushesLineDown()
+    {
+        var engine = NewEngine();
+        Block[] blocks =
+        {
+            ParagraphBlock.FromText(FakeTextMeasurer.Text(10)), // 1 行：Y 0–20
+            new HeadingBlock("标题", 1),                        // 段前距 12 → 首行 Y = 32
+        };
+        using var result = engine.Layout(blocks, Array.Empty<FloatObject>(), W);
+
+        Assert.Equal(0f, result.Lines[0].Y);
+        Assert.Equal(32f, result.Lines[1].Y);
+        Assert.Equal(52f, result.TotalHeight);
+    }
 }

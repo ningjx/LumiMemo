@@ -273,8 +273,36 @@ public sealed class LumiEditor : Grid
             case "todo":
                 _core.ApplyCommand(new ToggleTodoCommand(_core.Selection));
                 break;
+            case "h1":
+                _core.ApplyCommand(new SetHeadingLevelCommand(_core.Selection, 1));
+                break;
+            case "h2":
+                _core.ApplyCommand(new SetHeadingLevelCommand(_core.Selection, 2));
+                break;
+            case "h3":
+                _core.ApplyCommand(new SetHeadingLevelCommand(_core.Selection, 3));
+                break;
         }
     }
+
+    /// <summary>
+    /// 光标所在块的标题级别（0 = 非标题），供工具栏按钮态联动（Phase 3 M2 §6.1）。
+    /// </summary>
+    public int CaretHeadingLevel
+    {
+        get
+        {
+            if (_core is null || _core.Document.Blocks.Count == 0)
+            {
+                return 0;
+            }
+            int index = Math.Clamp(_core.Selection.Active.BlockIndex, 0, _core.Document.Blocks.Count - 1);
+            return _core.Document.Blocks[index] is HeadingBlock h ? h.Level : 0;
+        }
+    }
+
+    /// <summary>光标所在块变化（选区或文档变化）——工具栏按此刷新按钮态。</summary>
+    public event EventHandler? CaretBlockChanged;
 
     /// <summary>
     /// 块级背景（Phase 3 M1）：对当前选区覆盖的文本块设置底色（null = 清除）。
@@ -350,6 +378,8 @@ public sealed class LumiEditor : Grid
         Relayout();
         _ = WarmupImagesAsync(document);
         _caretBlink.Start();
+        // 载入即刷新工具栏按钮态（光标落在标题块时按钮应立即可见为按下）
+        CaretBlockChanged?.Invoke(this, EventArgs.Empty);
     }
 
     private void OnLoaded(object sender, RoutedEventArgs e)
@@ -393,6 +423,7 @@ public sealed class LumiEditor : Grid
         Relayout();
         // 新增图片（如粘贴插图）后台解码，就绪后补画
         _ = WarmupImagesAsync(_document);
+        CaretBlockChanged?.Invoke(this, EventArgs.Empty);
         // 组字期抑制（§6.3）：组字期的文档变化是 IME 组字显示，不触发自动保存
         if (_tsf?.TextStore?.IsComposing != true)
         {
@@ -497,6 +528,7 @@ public sealed class LumiEditor : Grid
         _caretBlink.Stop();
         _caretBlink.Start();
         _surface.Invalidate();
+        CaretBlockChanged?.Invoke(this, EventArgs.Empty);
         ScrollCaretIntoView();
     }
 
@@ -631,6 +663,11 @@ public sealed class LumiEditor : Grid
             else if (pos.BlockIndex > 0)
             {
                 _core.ApplyCommand(new MergeBlockCommand(pos.BlockIndex));
+            }
+            else if (_core.Document.Blocks[0] is HeadingBlock)
+            {
+                // 首块标题行首退格 → 降级为正文段（Phase 3 §6.1）
+                _core.ApplyCommand(new SetHeadingLevelCommand(TextRange.Collapse(pos), 0));
             }
         }
         else

@@ -264,4 +264,30 @@ public sealed class DocumentSerializationTests
         Assert.NotNull(legacy);
         Assert.Null(legacy.Blocks[0].Background);
     }
+
+    // T-S10：段落级粗体（Phase 3 M2）——ParagraphBlock.Style 带 bold 往返；bold=false 不写出；
+    // 老 JSON 无该字段读为 false
+    [Fact]
+    public void RoundTrip_TextStyleBold_PreservesFlag()
+    {
+        var doc = new Document(
+        [
+            new ParagraphBlock("粗体段", style: new TextStyle("Segoe UI", 14f, Bold: true)),
+            new ParagraphBlock("普通段", style: new TextStyle("Segoe UI", 14f)),
+        ]);
+
+        string json = DocumentSerializer.Serialize(doc);
+        Assert.Contains("\"bold\": true", json);
+        Assert.Equal(1, json.Split("\"bold\"").Length - 1); // false 不写出
+
+        var doc2 = DocumentSerializer.Deserialize(json);
+        Assert.NotNull(doc2);
+        Assert.True(Assert.IsType<ParagraphBlock>(doc2.Blocks[0]).Style!.Bold);
+        Assert.False(Assert.IsType<ParagraphBlock>(doc2.Blocks[1]).Style!.Bold);
+        Assert.Equal(json, DocumentSerializer.Serialize(doc2));
+
+        var legacy = DocumentSerializer.Deserialize(
+            """{"schema":1,"blocks":[{"type":"paragraph","runs":[{"t":"x"}],"style":{"font":"Segoe UI","size":14}}]}""");
+        Assert.False(Assert.IsType<ParagraphBlock>(legacy!.Blocks[0]).Style!.Bold);
+    }
 }

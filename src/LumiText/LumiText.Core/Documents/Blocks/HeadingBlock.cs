@@ -41,12 +41,25 @@ public sealed record HeadingBlock : Block
     [JsonIgnore]
     public string PlainText { get; }
 
-    /// <summary>字号预设（O1，2026-10-02 确认）：H1/H2/H3 = 22/18/16 dip，字体继承默认。</summary>
+    /// <summary>字号预设（O1，2026-10-02 确认）：H1/H2/H3 = 22/18/16 dip，字体继承默认；
+    /// 加粗（Phase 3 M2 §3.2）：三档标题均为段落级加粗。</summary>
     [JsonIgnore]
     public TextStyle EffectiveStyle => new(TextStyle.Default.FontFamily, Level switch
     {
         1 => 22f,
         2 => 18f,
         _ => 16f,
-    });
+    }, Bold: true);
+
+    /// <summary>
+    /// 段前距（dip，Phase 3 M2 §3.3）：H1/H2/H3 = 12/10/8。
+    /// 纯排版参数（与字号预设同性质），不进 JSON——数值走界面检查微调。
+    /// </summary>
+    [JsonIgnore]
+    public float SpaceBefore => Level switch
+    {
+        1 => 12f,
+        2 => 10f,
+        _ => 8f,
+    };
 }

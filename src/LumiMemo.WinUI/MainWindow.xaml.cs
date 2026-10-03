@@ -55,6 +55,7 @@ public sealed partial class MainWindow : Window
         _actions = actions;
 
         _editor = new LumiEditor { HostWindow = this };
+        _editor.CaretBlockChanged += OnCaretBlockChanged;
         EditorHost.Children.Add(_editor);
         _viewModel.AttachDocument(new LumiEditorDocument(_editor));
         _viewModel.TopMostChanged += OnTopMostChanged;
@@ -260,6 +261,21 @@ public sealed partial class MainWindow : Window
     private void OnBulletClick(object sender, RoutedEventArgs e) => _editor.ExecuteCommand("bullet");
 
     private void OnTodoClick(object sender, RoutedEventArgs e) => _editor.ExecuteCommand("todo");
+
+    private void OnHeading1Click(object sender, RoutedEventArgs e) => _editor.ExecuteCommand("h1");
+
+    private void OnHeading2Click(object sender, RoutedEventArgs e) => _editor.ExecuteCommand("h2");
+
+    private void OnHeading3Click(object sender, RoutedEventArgs e) => _editor.ExecuteCommand("h3");
+
+    /// <summary>标题按钮态随光标所在块刷新（Phase 3 M2 §6.1）：已在该级别显示为按下。</summary>
+    private void OnCaretBlockChanged(object? sender, EventArgs e)
+    {
+        int level = _editor.CaretHeadingLevel;
+        Heading1Button.IsChecked = level == 1;
+        Heading2Button.IsChecked = level == 2;
+        Heading3Button.IsChecked = level == 3;
+    }
 
     /// <summary>块背景色的 Alpha：保住毛玻璃透出的观感约束（Phase 3 §9 R4，上限 0x40）。</summary>
     private const byte BlockBackgroundAlpha = 0x40;

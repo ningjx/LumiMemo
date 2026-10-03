@@ -35,10 +35,8 @@ public sealed record SplitBlockCommand(TextPosition Position) : IEditCommand
         var firstHalf = BlockTextOps.WithRuns(block, headRuns);
         Block secondHalf = block switch
         {
-            // 标题行尾 Enter → 新段为正文（沿用 RichEdit/Word 语义）；中段 Enter → 两段同型
-            HeadingBlock h when Position.CharIndex == length =>
-                new ParagraphBlock(tailRuns, null, h.SpaceAfter) { Background = h.Background },
-            HeadingBlock h => new HeadingBlock(tailRuns, h.Level, h.SpaceAfter)
+            // 标题内回车（含末尾）→ 新块为正文段，原块保持标题（Phase 3 §6.1）
+            HeadingBlock h => new ParagraphBlock(tailRuns, null, h.SpaceAfter)
             {
                 Background = h.Background,
             },

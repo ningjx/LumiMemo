@@ -4,11 +4,14 @@ namespace LumiText.Core.Documents;
 
 /// <summary>
 /// 段落级文本样式。v2 演进（Phase 1 设计 §3.2）：行内样式由 <see cref="InlineStyle"/> 承载
-/// （粗/斜/删/下划/色/行内字号比），段落级仍是字体族 + 字号。
+/// （粗/斜/删/下划/色/行内字号比），段落级是字体族 + 字号 + 粗体预设
+/// （<see cref="Bold"/> 是 Phase 3 M2 追加：标题的段落级加粗；行内 <see cref="InlineStyle.Bold"/>
+/// 仍可对段落内字符强制加粗）。
 /// </summary>
 public sealed record TextStyle(
     [property: JsonPropertyName("font")] string FontFamily,
-    [property: JsonPropertyName("size")] float FontSize)
+    [property: JsonPropertyName("size")] float FontSize,
+    [property: JsonPropertyName("bold")] bool Bold = false)
 {
     /// <summary>
     /// 库内默认样式：跟随系统的正文字体与 14dip 字号。

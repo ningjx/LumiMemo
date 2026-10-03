@@ -187,7 +187,9 @@ public sealed class FlowLayoutEngine
             {
                 case ParagraphBlock or HeadingBlock or TodoBlock:
                 {
-                    var (runs, text, style, spaceAfter, leftIndent, kind) = ExpandTextBlock(blocks[bi]);
+                    var (runs, text, style, spaceAfter, leftIndent, kind, spaceBefore) = ExpandTextBlock(blocks[bi]);
+                    // 段前距（Phase 3 M2 §3.3）：标题的层级预设间距，块排版前推进游标
+                    yCursor += spaceBefore;
                     if (text.Length == 0)
                     {
                         // 空文本块占一个空行高度（样式随行：空标题占标题行高）。
@@ -331,13 +333,15 @@ public sealed class FlowLayoutEngine
 
     /// <summary>文本块的统一展开视图（§4：Paragraph/Heading/Todo 在排版层都是带预设样式的段落）。</summary>
     private static (IReadOnlyList<TextRun> Runs, string Text, TextStyle Style, float SpaceAfter,
-        float LeftIndent, PlacedLineKind Kind) ExpandTextBlock(Block block) =>
+        float LeftIndent, PlacedLineKind Kind, float SpaceBefore) ExpandTextBlock(Block block) =>
         block switch
         {
             ParagraphBlock p => (p.Runs, p.PlainText, p.EffectiveStyle, p.SpaceAfter, p.LeftIndent,
-                p.IsBullet ? PlacedLineKind.BulletText : PlacedLineKind.Text),
-            HeadingBlock h => (h.Runs, h.PlainText, h.EffectiveStyle, h.SpaceAfter, 0f, PlacedLineKind.Text),
-            TodoBlock t => (t.Runs, t.PlainText, t.EffectiveStyle, t.SpaceAfter, t.LeftIndent, PlacedLineKind.TodoText),
+                p.IsBullet ? PlacedLineKind.BulletText : PlacedLineKind.Text, 0f),
+            HeadingBlock h => (h.Runs, h.PlainText, h.EffectiveStyle, h.SpaceAfter, 0f,
+                PlacedLineKind.Text, h.SpaceBefore),
+            TodoBlock t => (t.Runs, t.PlainText, t.EffectiveStyle, t.SpaceAfter, t.LeftIndent,
+                PlacedLineKind.TodoText, 0f),
             _ => throw new ArgumentException($"非文本块：{block.GetType().Name}", nameof(block)),
         };
 

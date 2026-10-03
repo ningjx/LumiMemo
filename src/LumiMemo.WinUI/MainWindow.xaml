@@ -168,6 +168,16 @@
                     <Button Style="{StaticResource GlassButtonStyle}" Width="30" Height="30" Click="OnBackgroundClick" ToolTipService.ToolTip="段落底色">
                         <Border Width="17" Height="13" CornerRadius="3" Background="#59FDF3C4" BorderBrush="#8075697C" BorderThickness="1" />
                     </Button>
+                    <Rectangle Width="1" Height="18" Margin="3,0" Fill="#5075697C" />
+                    <ToggleButton x:Name="Heading1Button" Style="{StaticResource GlassToggleButtonStyle}" Width="30" Height="30" Click="OnHeading1Click" ToolTipService.ToolTip="标题 1">
+                        <TextBlock Text="H1" FontSize="12" FontWeight="SemiBold" />
+                    </ToggleButton>
+                    <ToggleButton x:Name="Heading2Button" Style="{StaticResource GlassToggleButtonStyle}" Width="30" Height="30" Click="OnHeading2Click" ToolTipService.ToolTip="标题 2">
+                        <TextBlock Text="H2" FontSize="12" FontWeight="SemiBold" />
+                    </ToggleButton>
+                    <ToggleButton x:Name="Heading3Button" Style="{StaticResource GlassToggleButtonStyle}" Width="30" Height="30" Click="OnHeading3Click" ToolTipService.ToolTip="标题 3">
+                        <TextBlock Text="H3" FontSize="12" FontWeight="SemiBold" />
+                    </ToggleButton>
                 </StackPanel>
                 <TextBlock x:Name="StatusText"
                            Grid.Column="1"

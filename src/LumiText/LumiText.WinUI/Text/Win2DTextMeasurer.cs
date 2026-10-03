@@ -138,6 +138,10 @@ public sealed class Win2DTextMeasurer : ITextMeasurer
             {
                 FontFamily = style.FontFamily,
                 FontSize = style.FontSize,
+                // 段落级粗体（Phase 3 M2）：标题预设；行内 InlineStyle.Bold 仍可覆盖
+                FontWeight = style.Bold
+                    ? Microsoft.UI.Text.FontWeights.Bold
+                    : Microsoft.UI.Text.FontWeights.Normal,
                 WordWrapping = CanvasWordWrapping.Wrap,
             };
             _formats[style] = format;
