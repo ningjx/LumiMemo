@@ -100,7 +100,7 @@ public sealed class FlowLayoutEngineTests
 
         Assert.Single(result.Lines);
         Assert.Equal(0f, result.Lines[0].X);
-        Assert.Equal(21.32f, result.Lines[0].Y, 2);  // 推到排除区底缘（宽 91 的段也放不下字）之下
+        Assert.Equal(23.63f, result.Lines[0].Y, 2);  // 推到排除区之下（绘制底缘 19.63 + 保底间距 4）
         Assert.Equal(10, result.Lines[0].CharCount);
     }
 
@@ -114,7 +114,8 @@ public sealed class FlowLayoutEngineTests
             new ParagraphBlock(FakeTextMeasurer.Text(10), spaceAfter: 5f),
             new ParagraphBlock(FakeTextMeasurer.Text(10)),
         };
-        using var result = engine.Layout(paragraphs, new[] { Left(1, 0, 0, 30, 60) }, W);
+        // 高度给足：排除区底缘（绘制底缘 + 保底间距）要压过段落 2 的首行（y=45）
+        using var result = engine.Layout(paragraphs, new[] { Left(1, 0, 0, 30, 80) }, W);
 
         Assert.Equal(4, result.Lines.Count);
         // 段落 1（10 字符）：y=0 与 y=20 都与浮动相交（< 60）→ 缩进 7 + 3
@@ -270,7 +271,7 @@ public sealed class FlowLayoutEngineTests
 
         Assert.Equal(0f, result.Floats[0].Rect.X);
         Assert.Equal(150f, result.Floats[0].Rect.Right);
-        Assert.Equal(21.93f, result.Lines[0].Y, 2);  // 推到排除区之下（宽图视觉底缘 21.93）
+        Assert.Equal(24.87f, result.Lines[0].Y, 2);  // 推到排除区之下（宽图绘制底缘 20.87 + 保底间距 4）
     }
 
     // 左/上溢出：钳到原点

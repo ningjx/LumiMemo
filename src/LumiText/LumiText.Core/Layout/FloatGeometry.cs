@@ -23,6 +23,16 @@ public static class FloatGeometry
     /// <summary>★ 图片左右内缩（dip）：绘制位置的偏移量，同时也是文字可用的缓冲间距。</summary>
     public const float VisualInset = 4f;
 
+    /// <summary>
+    /// ★ 文字与图片的保底视觉间距（dip）：绘制在「排版排除区」基础上再收这么多。
+    /// 排除区只保证文字能贴到图片边上（缓冲可用），但贴上去就没留白了——右侧那列从边界起步，
+    /// 于是左有留白、右贴死，看着不对称。再收这一圈，两侧最小留白就一样了。
+    /// </summary>
+    public const float TextWrapGap = 4f;
+
+    /// <summary>保底间距上限：每侧不超过图宽的 6%（小图按比例收敛）。</summary>
+    private const float TextWrapGapMaxRatio = 0.06f;
+
     /// <summary>★ 图片上边界下移（dip）：与本行文字顶缘对齐（14dip 中文墨迹顶缘约低 3dip）。</summary>
     public const float VisualTopOffset = 3f;
 
@@ -34,6 +44,8 @@ public static class FloatGeometry
 
     /// <summary>
     /// 浮动包络矩形 → 视觉矩形（<b>绘制</b>用，两侧等比内缩；不变形、不裁切）。
+    /// 内缩量 = 排版排除区的内缩 + 保底间距（<see cref="TextWrapGap"/>）：
+    /// 于是文字到图片两侧的最小留白都等于保底间距，左右看着对称。
     /// 宽高非正时原样返回。
     /// </summary>
     public static LayoutRect VisualRect(LayoutRect reserved)
@@ -42,7 +54,8 @@ public static class FloatGeometry
         {
             return reserved;
         }
-        float inset = Math.Min(VisualInset, reserved.Width * VisualInsetMaxRatio);
+        float gap = WrapGap(reserved);
+        float inset = Math.Min(VisualInset, reserved.Width * VisualInsetMaxRatio) + gap;
         return Inset(reserved, inset);
     }
 
@@ -52,9 +65,10 @@ public static class FloatGeometry
     /// 只会让引擎为它白排一次版（Phase 3 打磨实测：贴墙图片每行都多一次批创建）。
     /// </summary>
     /// <remarks>
-    /// 排除区恒 ⊇ 视觉矩形：文字永远碰不到图片本体。纵向上取包络本身的 Y 区间
-    /// （顶缘不跟着下移——否则首行会先在「图上方 3dip 的空带」里排一次版再重探，白建一批），
-    /// 底缘取包络与视觉矩形的较大者（宽图等比内缩后视觉底缘可能略微更低）。
+    /// 排除区恒 ⊇ 绘制矩形：文字永远碰不到图片本体。纵向上底缘取「绘制底缘 + 保底间距」——
+    /// 等比内缩后绘制底缘比包络底缘高，排除区若仍钉在包络底缘，图片下方那一小条空带里的行
+    /// 还会被切开（用户实测：图片下边那行离得老远还是两段）。顶缘不跟着下移（否则首行会先在
+    /// 「图上方 3dip 的空带」里排一次版再重探，白建一批）。
     /// </remarks>
     public static LayoutRect ExclusionRect(LayoutRect reserved, float contentWidth)
     {
@@ -63,7 +77,7 @@ public static class FloatGeometry
             return reserved;
         }
         float inset = Math.Min(VisualInset, reserved.Width * VisualInsetMaxRatio);
-        float bottom = Math.Max(reserved.Bottom, VisualRect(reserved).Bottom);
+        float bottom = VisualRect(reserved).Bottom + WrapGap(reserved);
 
         float leftRoom = reserved.X;
         float rightRoom = contentWidth - reserved.Right;
@@ -71,6 +85,10 @@ public static class FloatGeometry
         float right = rightRoom > inset ? reserved.Right - inset : reserved.Right;
         return new LayoutRect(left, reserved.Y, Math.Max(0f, right - left), bottom - reserved.Y);
     }
+
+    /// <summary>本图的保底间距（小图按比例收敛）。</summary>
+    private static float WrapGap(LayoutRect reserved) =>
+        Math.Min(TextWrapGap, reserved.Width * TextWrapGapMaxRatio);
 
     private static LayoutRect Inset(LayoutRect reserved, float inset)
     {

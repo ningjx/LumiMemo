@@ -132,7 +132,7 @@ public sealed class BlockLayoutTests
         // 带 [0,20)：段 [66,100] 宽 34 → 缩进 26 后宽 8 < 字宽 10 → 放弃，文本推到浮动之下
         // （缩进后宽 74 → 7 字符/行，10 字符分两行；断言要点是 y ≥ 20 且 X = 26、无死循环）
         Assert.Equal(2, result.Lines.Count);
-        Assert.Equal(20.71f, result.Lines[0].Y, 2);
+        Assert.Equal(22.43f, result.Lines[0].Y, 2);
         Assert.Equal(26f, result.Lines[0].X);
         Assert.Equal(7, result.Lines[0].CharCount);
         Assert.Equal(10, result.Lines.Sum(l => l.CharCount));
