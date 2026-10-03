@@ -213,4 +213,106 @@ public sealed class HitTestCharLevelTests
         Assert.NotNull(caret);
         Assert.Equal(16f, caret.Value.X); // 光标在缩进之后（bullet 圆点左侧区域留给标记）
     }
+
+    // ---- 空白区兜底（Phase 3 修复：行尾空白可点、拖选经过空白不断）----
+
+    [Fact]
+    public void HitTest_RightOfShortLine_CaretAtLineEnd()
+    {
+        // 5 字符行（宽 50）：点行尾右侧空白 → 行尾
+        using var result = Layout(new ParagraphBlock(FakeTextMeasurer.Text(5)));
+        var hit = result.HitTest(150, 5);
+        Assert.True(hit.Found);
+        Assert.Equal(0, hit.BlockIndex);
+        Assert.Equal(5, hit.CharIndex);
+        Assert.True(hit.IsTrailingHit);
+    }
+
+    [Fact]
+    public void HitTest_SecondLineRightBlank_CaretAtBlockEnd()
+    {
+        // 25 字符两行（20/5）：点第 2 行右侧空白 → 块内 25（第 2 行行尾）
+        using var result = Layout(new ParagraphBlock(FakeTextMeasurer.Text(25)));
+        var hit = result.HitTest(180, 25);
+        Assert.True(hit.Found);
+        Assert.Equal(25, hit.CharIndex);
+    }
+
+    [Fact]
+    public void HitTest_LeftOfIndentedLine_CaretAtLineStart()
+    {
+        // Todo 悬挂缩进 26、文本宽 20：点缩进区左侧 → 行首
+        // （复选框区的点击语义由编辑器层在命中测试之前截获，布局层只管光标落点）
+        using var result = Layout(new TodoBlock("ab"));
+        var hit = result.HitTest(8, 5);
+        Assert.True(hit.Found);
+        Assert.Equal(0, hit.BlockIndex);
+        Assert.Equal(0, hit.CharIndex);
+        Assert.False(hit.IsTrailingHit);
+    }
+
+    [Fact]
+    public void HitTest_InFloatArea_FallsBackToNearestSegment()
+    {
+        // 左浮动占 [0,60]：行段 X=60；点浮动区 x=10 → 最近段行首
+        var engine = new FlowLayoutEngine(new FakeTextMeasurer());
+        var floats = new[] { new FloatObject(0, new LayoutRect(0, 0, 60, 20), FloatSide.Left) };
+        using var result = engine.Layout(
+            [new ParagraphBlock(FakeTextMeasurer.Text(3))], floats, W);
+
+        var hit = result.HitTest(10, 5);
+        Assert.True(hit.Found);
+        Assert.Equal(0, hit.BlockIndex);
+        Assert.Equal(0, hit.CharIndex);
+    }
+
+    [Fact]
+    public void HitTest_AboveFirstLine_CaretFollowsX()
+    {
+        // 首行之上但 x 落在行文本推进宽度内 → 落到最近行、按 x 定列（y 钳进行内）
+        using var result = Layout(new ParagraphBlock(FakeTextMeasurer.Text(10)));
+        var hit = result.HitTest(40, -30);
+        Assert.True(hit.Found);
+        Assert.Equal(0, hit.BlockIndex);
+        Assert.Equal(4, hit.CharIndex);
+    }
+
+    [Fact]
+    public void HitTest_BelowLastLine_CaretOnNearestLineAtX()
+    {
+        using var result = Layout(
+            new ParagraphBlock(FakeTextMeasurer.Text(10)),
+            new ParagraphBlock(FakeTextMeasurer.Text(10)));
+        var hit = result.HitTest(30, 200);
+        Assert.True(hit.Found);
+        Assert.Equal(1, hit.BlockIndex);
+        Assert.Equal(3, hit.CharIndex);
+    }
+
+    [Fact]
+    public void HitTest_BelowLastLine_RightOfText_CaretAtLineEnd()
+    {
+        using var result = Layout(
+            new ParagraphBlock(FakeTextMeasurer.Text(10)),
+            new ParagraphBlock(FakeTextMeasurer.Text(10)));
+        var hit = result.HitTest(500, 200);
+        Assert.True(hit.Found);
+        Assert.Equal(1, hit.BlockIndex);
+        Assert.Equal(10, hit.CharIndex);
+        Assert.True(hit.IsTrailingHit);
+    }
+
+    [Fact]
+    public void HitTest_InGapBetweenBlocks_NearestLineWins()
+    {
+        // 块 0 有 spaceAfter 30 → 间距带 [20,50)；y=35 距上/下各 15（并列）→ 文档序在前者（上一块末行），
+        // x=60 落在其文本推进宽度内 → 按 x 定列
+        using var result = Layout(
+            new ParagraphBlock(FakeTextMeasurer.Text(10), spaceAfter: 30f),
+            new ParagraphBlock(FakeTextMeasurer.Text(10)));
+        var hit = result.HitTest(60, 35);
+        Assert.True(hit.Found);
+        Assert.Equal(0, hit.BlockIndex);
+        Assert.Equal(6, hit.CharIndex);
+    }
 }

@@ -234,4 +234,34 @@ public sealed class DocumentSerializationTests
         // 高版本 schema → null
         Assert.Null(DocumentSerializer.Deserialize("""{"schema":99,"blocks":[]}"""));
     }
+
+    // T-S9：块级底色往返（Phase 3 M1）——bg 写出/读回；无底色块不写出该字段；
+    // 老 JSON 无该字段读为 null（纯增量字段，不动 schema 版本）
+    [Fact]
+    public void RoundTrip_BlockBackground_PreservesColor()
+    {
+        var doc = new Document(
+        [
+            new ParagraphBlock("带底色") { Background = new Color32(0x40, 0xFF, 0xD9, 0x66) },
+            new HeadingBlock("标题", 2) { Background = new Color32(255, 0, 0, 0) },
+            new ParagraphBlock("普通段"),
+        ]);
+
+        string json = DocumentSerializer.Serialize(doc);
+        Assert.Contains("\"bg\": \"#40FFD966\"", json);
+        // 只有两个块带底色 → "bg" 恰好出现 2 次（无底色块不写出字段）
+        Assert.Equal(2, json.Split("\"bg\"").Length - 1);
+
+        var doc2 = DocumentSerializer.Deserialize(json);
+        Assert.NotNull(doc2);
+        Assert.Equal(new Color32(0x40, 0xFF, 0xD9, 0x66), doc2.Blocks[0].Background);
+        Assert.Equal(new Color32(255, 0, 0, 0), doc2.Blocks[1].Background);
+        Assert.Null(doc2.Blocks[2].Background);
+        Assert.Equal(json, DocumentSerializer.Serialize(doc2));
+
+        var legacy = DocumentSerializer.Deserialize(
+            """{"schema":1,"blocks":[{"type":"paragraph","runs":[{"t":"x"}]}]}""");
+        Assert.NotNull(legacy);
+        Assert.Null(legacy.Blocks[0].Background);
+    }
 }

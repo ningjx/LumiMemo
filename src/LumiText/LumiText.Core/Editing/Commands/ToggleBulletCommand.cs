@@ -34,7 +34,10 @@ public sealed record ToggleBulletCommand(TextRange Range) : IEditCommand
             newBlocks[i] = blocks[i];
             if (i >= start.BlockIndex && i <= end.BlockIndex && blocks[i] is ParagraphBlock p)
             {
-                newBlocks[i] = new ParagraphBlock(p.Runs, p.Style, p.SpaceAfter, anyPlain);
+                newBlocks[i] = new ParagraphBlock(p.Runs, p.Style, p.SpaceAfter, anyPlain)
+                {
+                    Background = p.Background,
+                };
                 changed = true;
             }
         }

@@ -64,6 +64,12 @@ public sealed class LumiEditor : Grid
         _scroller.Content = _contentGrid;
         Children.Add(_scroller);
 
+        // 文本区光标：I 形（WinUI 3 经 ProtectedCursor 设置，Phase 2 §11 V-CU1 已查证）。
+        // ScrollViewer 的滚动条模板件自带光标、自会覆盖；悬停待办框/图片手柄的
+        // Hand / resize 光标归 Phase 3 M3/M4。
+        ProtectedCursor = Microsoft.UI.Input.InputSystemCursor.Create(
+            Microsoft.UI.Input.InputSystemCursorShape.IBeam);
+
         _surface.RenderViewport = OnRenderViewport;
         _renderer.Images = _imageStore;
 
@@ -77,6 +83,9 @@ public sealed class LumiEditor : Grid
         Loaded += OnLoaded;
         SizeChanged += OnSizeChanged;
         _scroller.ViewChanged += OnViewChanged;
+        // 编辑器得焦时也重设 TSF 焦点：点击进入文本、XAML 焦点恢复都会走这里，
+        // 与窗口 Activated 的重设形成多层兜底（Phase 3 修复：重开窗口后 IME 绕开本店）。
+        _scroller.GotFocus += (_, _) => RefocusTsf();
         // 键盘：PreviewKeyDown 隧道截方向键/快捷键（先于 ScrollViewer 滚动处理）；
         // CharacterReceived 挂 _scroller（Control 可聚焦，冒泡事件必须由焦点元素触发）。
         PreviewKeyDown += OnPreviewKeyDownHandler;
@@ -127,12 +136,109 @@ public sealed class LumiEditor : Grid
     }
     private Window? _hostWindow;
 
+    /// <summary>诊断日志前缀：宿主窗口句柄（区分多窗口日志，Phase 3 排查用）。</summary>
+    private string LogTag
+    {
+        get
+        {
+            try
+            {
+                return HostWindow is null
+                    ? "?"
+                    : WinRT.Interop.WindowNative.GetWindowHandle(HostWindow).ToString("X4");
+            }
+            catch
+            {
+                return "?";
+            }
+        }
+    }
+
     private void OnHostWindowActivated(object sender, Microsoft.UI.Xaml.WindowActivatedEventArgs args)
     {
-        // 窗口得焦时重设 TSF 文档焦点（与 AssociateFocus 互补，切窗后 IME 不掉回英文）。
-        if (args.WindowActivationState != WindowActivationState.Deactivated && _tsf is not null)
+        if (args.WindowActivationState == WindowActivationState.Deactivated)
         {
-            _tsf.Refocus();
+            return;
+        }
+        RefocusTsf();
+    }
+
+    /// <summary>
+    /// 重设 TSF 文档焦点：立即一次 + 下一个派发周期补一次，并启动短延时自愈（见
+    /// <see cref="RebuildTsfStack"/>）。SetFocus 同文档幂等，成本可忽略。
+    /// </summary>
+    private void RefocusTsf()
+    {
+        if (_tsf is null)
+        {
+            return;
+        }
+        _tsf.Refocus();
+        DispatcherQueue.TryEnqueue(() => _tsf?.Refocus());
+        _tsfRefocusTimer ??= CreateTsfRefocusTimer();
+        _tsfRefocusTimer.Start();
+    }
+
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer CreateTsfRefocusTimer()
+    {
+        var timer = DispatcherQueue.CreateTimer();
+        timer.Interval = TimeSpan.FromMilliseconds(150);
+        timer.IsRepeating = false;
+        // 激活风暴平息后重建 TSF 栈（自愈）：实测「关闭便签重开」能恢复中文输入，
+        // 说明坏掉的是这个窗口实例里的 TSF 输入通路；在编辑器内等价重建，不必重开窗口。
+        timer.Tick += (_, _) => RebuildTsfStack();
+        return timer;
+    }
+
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _tsfRefocusTimer;
+
+    /// <summary>
+    /// 重建本编辑器的 TSF 栈（Phase 3 自愈）：便签窗口在「同进程另一窗口在前台时被重新激活」
+    /// 之后，IME 会停止处理该窗口的按键（打拼音出英文、Shift/切语言都无效），而窗口前台、
+    /// 键盘焦点、TSF 文档焦点、键盘布局、IME 模式/开关等全部状态读取均正常。
+    /// 实测两条：①「关闭便签重开」可恢复；② 在编辑器内重建 TSF 栈同样恢复（本方法）。
+    /// 故按「该窗口实例的 TSF 输入通路失效」处理：丢弃旧文档/上下文重建一套，代价约 1ms。
+    /// 组字进行中跳过（那是通路正常的表现，重建反而会打断组字；反之通路失效时不会有组字）。
+    /// </summary>
+    private void RebuildTsfStack()
+    {
+        if (_tsf is null || _core is null || _tsf.TextStore?.IsComposing == true)
+        {
+            return;
+        }
+        AttachTsf();
+    }
+
+    /// <summary>
+    /// 建/重建 TSF 栈：丢弃旧 ThreadMgr 文档与上下文，新建一套并接线
+    /// （组字期事件、候选窗定位回调、窗口焦点关联）。SetDocument 与自愈重建共用。
+    /// </summary>
+    private void AttachTsf()
+    {
+        if (_core is null)
+        {
+            return;
+        }
+        _tsf?.Dispose();
+        _tsf = new TsfManager { Tag = LogTag };
+        bool tsfReady = _tsf.Initialize(_core);
+        if (!tsfReady)
+        {
+            // 指示灯：TSF 初始化失败（无 IME 环境不致命，编辑器仍可键盘输入）
+            System.Diagnostics.Debug.WriteLine($"[TSF {LogTag}] TSF 初始化失败");
+            return;
+        }
+        _tsf.CompositionStarted += OnCompositionStarted;
+        _tsf.CompositionEnded += OnCompositionEnded;
+        if (_tsf.TextStore is { } store)
+        {
+            store.CaretScreenRectProvider = GetCaretScreenRect;
+            store.ScreenRectProvider = GetEditorScreenRect;
+        }
+        // 关联窗口焦点：窗口失焦再切回时 TSF 自动 SetFocus，IME 不掉回英文（M7 实测修复）
+        if (HostWindow is not null)
+        {
+            _tsf.AssociateWindowFocus(WinRT.Interop.WindowNative.GetWindowHandle(HostWindow));
         }
     }
 
@@ -168,6 +274,15 @@ public sealed class LumiEditor : Grid
                 _core.ApplyCommand(new ToggleTodoCommand(_core.Selection));
                 break;
         }
+    }
+
+    /// <summary>
+    /// 块级背景（Phase 3 M1）：对当前选区覆盖的文本块设置底色（null = 清除）。
+    /// 工具栏色板入口；选区坍缩时作用于光标所在块。
+    /// </summary>
+    public void SetBlockBackground(Color32? color)
+    {
+        _core?.ApplyCommand(new SetBlockBackgroundCommand(_core.Selection, color));
     }
 
     /// <summary>释放 TSF / surface / 图片资源（窗口关闭协议调用；与 Unloaded 清理互补）。</summary>
@@ -230,23 +345,7 @@ public sealed class LumiEditor : Grid
         _core.SelectionChanged += OnCoreSelectionChanged;
 
         // TSF 接入（M4）：组字期抑制 UserEdited，候选窗定位经屏幕坐标回调
-        _tsf?.Dispose();
-        _tsf = new TsfManager();
-        if (_tsf.Initialize(_core))
-        {
-            _tsf.CompositionStarted += OnCompositionStarted;
-            _tsf.CompositionEnded += OnCompositionEnded;
-            if (_tsf.TextStore is { } store)
-            {
-                store.CaretScreenRectProvider = GetCaretScreenRect;
-                store.ScreenRectProvider = GetEditorScreenRect;
-            }
-            // 关联窗口焦点：窗口失焦再切回时 TSF 自动 SetFocus，IME 不掉回英文（M7 实测修复）
-            if (HostWindow is not null)
-            {
-                _tsf.AssociateWindowFocus(WinRT.Interop.WindowNative.GetWindowHandle(HostWindow));
-            }
-        }
+        AttachTsf();
 
         Relayout();
         _ = WarmupImagesAsync(document);
@@ -497,6 +596,23 @@ public sealed class LumiEditor : Grid
         if (_core is null || e.Handled || char.IsControl(e.Character) || e.Character == '\r' || e.Character == '\n')
         {
             return;
+        }
+        // 指示灯（Phase 3 修复配套）：字符绕过 TSF 直接进来时留一行日志——
+        // 非 ASCII 直入或 TSF 焦点不在本店，都是「输入通路异常」的信号；
+        // 正常按键（ASCII、焦点在本店）不打印，日常日志保持干净。
+        if (_tsf is { } tsf)
+        {
+            bool focusOurs = tsf.HasFocus;
+            if (!focusOurs || !char.IsAscii(e.Character))
+            {
+                System.Diagnostics.Debug.WriteLine(
+                    $"[TSF {LogTag}] 字符 '{e.Character}' 直入：TSF 焦点是否在本店={focusOurs}，" +
+                    $"组字计数={tsf.CompositionStartCount}");
+            }
+            if (!focusOurs)
+            {
+                tsf.Refocus();
+            }
         }
         _core.ApplyCommand(new InsertTextCommand(e.Character.ToString()));
         e.Handled = true;
@@ -815,6 +931,9 @@ public sealed class LumiEditor : Grid
             return;
         }
 
+        // 块背景最先（在选区高亮与文字之下）；渲染主通道随后画浮动与文字（跳过背景避免重画）
+        _renderer.RenderBlockBackgrounds(session, _renderer.Current, viewport);
+
         // 选区高亮（文字下层，§4.5）
         if (_core is not null && !_core.Selection.IsCollapsed)
         {
@@ -825,7 +944,8 @@ public sealed class LumiEditor : Grid
             }
         }
 
-        _renderer.Render(session, _renderer.Current, viewport, InkColor, DebugOverlay);
+        _renderer.Render(session, _renderer.Current, viewport, InkColor, DebugOverlay,
+            includeBlockBackgrounds: false);
 
         // 光标（最上层）
         if (_core is not null && _caretVisible)

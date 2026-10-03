@@ -37,10 +37,17 @@ public sealed record SplitBlockCommand(TextPosition Position) : IEditCommand
         {
             // 标题行尾 Enter → 新段为正文（沿用 RichEdit/Word 语义）；中段 Enter → 两段同型
             HeadingBlock h when Position.CharIndex == length =>
-                new ParagraphBlock(tailRuns, null, h.SpaceAfter),
-            HeadingBlock h => new HeadingBlock(tailRuns, h.Level, h.SpaceAfter),
-            TodoBlock t => new TodoBlock(tailRuns, false, t.SpaceAfter), // 新行默认未勾选
-            ParagraphBlock p => new ParagraphBlock(tailRuns, p.Style, p.SpaceAfter, p.IsBullet),
+                new ParagraphBlock(tailRuns, null, h.SpaceAfter) { Background = h.Background },
+            HeadingBlock h => new HeadingBlock(tailRuns, h.Level, h.SpaceAfter)
+            {
+                Background = h.Background,
+            },
+            // 新行默认未勾选；底色随内容保留（分块两侧都保留，与段落格式传播语义一致）
+            TodoBlock t => new TodoBlock(tailRuns, false, t.SpaceAfter) { Background = t.Background },
+            ParagraphBlock p => new ParagraphBlock(tailRuns, p.Style, p.SpaceAfter, p.IsBullet)
+            {
+                Background = p.Background,
+            },
             _ => throw new InvalidOperationException("不支持的块型。"),
         };
 
@@ -67,9 +74,12 @@ public sealed record SplitBlockCommand(TextPosition Position) : IEditCommand
 
     private static Block ResetSpaceAfter(Block block) => block switch
     {
-        ParagraphBlock p => new ParagraphBlock(p.Runs, p.Style, 0f, p.IsBullet),
-        HeadingBlock h => new HeadingBlock(h.Runs, h.Level, 0f),
-        TodoBlock t => new TodoBlock(t.Runs, t.Checked, 0f),
+        ParagraphBlock p => new ParagraphBlock(p.Runs, p.Style, 0f, p.IsBullet)
+        {
+            Background = p.Background,
+        },
+        HeadingBlock h => new HeadingBlock(h.Runs, h.Level, 0f) { Background = h.Background },
+        TodoBlock t => new TodoBlock(t.Runs, t.Checked, 0f) { Background = t.Background },
         _ => block,
     };
 }

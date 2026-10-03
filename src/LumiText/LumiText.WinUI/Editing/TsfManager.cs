@@ -20,6 +20,9 @@ internal sealed class TsfManager : IDisposable
     private TsfTextStore? _textStore;
     private bool _activated;
 
+    /// <summary>诊断日志前缀（窗口标识，区分多窗口日志）。</summary>
+    public string Tag { get; set; } = "?";
+
     /// <summary>组字期边界事件（转发自 <see cref="TsfTextStore"/>）。</summary>
     public event EventHandler? CompositionStarted;
     public event EventHandler? CompositionEnded;
@@ -36,7 +39,11 @@ internal sealed class TsfManager : IDisposable
         try
         {
             _textStore = new TsfTextStore(core);
-            _textStore.CompositionStarted += (_, _) => CompositionStarted?.Invoke(this, EventArgs.Empty);
+            _textStore.CompositionStarted += (_, _) =>
+            {
+                CompositionStartCount++;
+                CompositionStarted?.Invoke(this, EventArgs.Empty);
+            };
             _textStore.CompositionEnded += (_, _) => CompositionEnded?.Invoke(this, EventArgs.Empty);
 
             // CoCreateInstance(CLSID_TF_ThreadMgr) 只服务 STA apartment 线程；
@@ -86,6 +93,11 @@ internal sealed class TsfManager : IDisposable
         }
         try
         {
+            // GetWnd 的返回值：文档显示在屏幕上，就应报出宿主窗口（Phase 3 修复）
+            if (_textStore is not null)
+            {
+                _textStore.OwnerWindow = hwnd;
+            }
             _threadMgr.AssociateFocus(new Windows.Win32.Foundation.HWND(hwnd), _documentMgr, out _);
         }
         catch
@@ -95,7 +107,7 @@ internal sealed class TsfManager : IDisposable
     }
 
     /// <summary>
-    /// 手动重设文档焦点（宿主窗口 Activated 时调用）。
+    /// 手动重设文档焦点（宿主窗口 Activated / 编辑器得焦时调用）。
     /// 与 <see cref="AssociateWindowFocus"/> 互补：声明式关联 + 命令式重设双保险，
     /// 都是合法 TSF 用法，确保各种焦点路径下 IME 都能回到当前文档。
     /// </summary>
@@ -105,9 +117,20 @@ internal sealed class TsfManager : IDisposable
         {
             return;
         }
+        if (_textStore?.IsComposing == true)
+        {
+            // 组字进行中：焦点已经是我们（组字只能发生在本店），不打扰
+            return;
+        }
         try
         {
             _threadMgr.SetFocus(_documentMgr);
+            if (!HasFocus)
+            {
+                // 指示灯：SetFocus 未生效（激活瞬间的已知现象）——留给排查用，正常路径不打印
+                System.Diagnostics.Debug.WriteLine(
+                    $"[TSF {Tag}] Refocus 未生效：HasFocus=False，组字计数={CompositionStartCount}");
+            }
         }
         catch
         {
@@ -115,12 +138,37 @@ internal sealed class TsfManager : IDisposable
         }
     }
 
+    /// <summary>TSF 线程焦点是否在本文档（诊断用：便签列表重开窗口后 IME 失效时判定焦点归属）。</summary>
+    public bool HasFocus
+    {
+        get
+        {
+            if (_threadMgr is null || _documentMgr is null)
+            {
+                return false;
+            }
+            try
+            {
+                _threadMgr.GetFocus(out var focused);
+                return focused is not null && ReferenceEquals(focused, _documentMgr);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+    }
+
+    /// <summary>组字开始计数（诊断用）：中文输入若绕开本店，计数不会增长。</summary>
+    public int CompositionStartCount { get; private set; }
+
     public void Dispose()
     {
         if (_documentMgr is not null)
         {
-            try { _threadMgr?.SetFocus(null); } catch { } // 焦点交还系统（null = 无 TSF 文档）
-            try { _documentMgr.Pop(0); } catch { }
+            // 不调 SetFocus(null)：CsWin32 投影对非空参数先抛异常（ArgumentException，实测噪音），
+            // 且 ITfThreadMgr::SetFocus 文档明言不接受 NULL。Pop 掉上下文 + Deactivate 即可清焦点。
+            try { _documentMgr.Pop(_editCookie); } catch { }
             _documentMgr = null;
         }
         _context = null;

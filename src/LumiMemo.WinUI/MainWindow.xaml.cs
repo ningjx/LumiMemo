@@ -1,6 +1,7 @@
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Media;
 using LumiMemo.Core.Abstractions;
 using LumiMemo.Core.Models;
@@ -259,6 +260,74 @@ public sealed partial class MainWindow : Window
     private void OnBulletClick(object sender, RoutedEventArgs e) => _editor.ExecuteCommand("bullet");
 
     private void OnTodoClick(object sender, RoutedEventArgs e) => _editor.ExecuteCommand("todo");
+
+    /// <summary>块背景色的 Alpha：保住毛玻璃透出的观感约束（Phase 3 §9 R4，上限 0x40）。</summary>
+    private const byte BlockBackgroundAlpha = 0x40;
+
+    /// <summary>
+    /// 段落底色色板（Phase 3 M1）：便签纸色系 × 低 Alpha 色块，作用到选区覆盖的块；
+    /// 末位「无」清除。色块显示纸面色（实色），写入块的色值 = 同色 × <see cref="BlockBackgroundAlpha"/>。
+    /// </summary>
+    private void OnBackgroundClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button button)
+        {
+            return;
+        }
+
+        var panel = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 6,
+            Padding = new Thickness(10, 8, 10, 8),
+        };
+        var flyout = new Flyout { Content = panel, Placement = FlyoutPlacementMode.Top };
+        var border = new SolidColorBrush(Windows.UI.Color.FromArgb(0x50, 0x75, 0x69, 0x7C));
+
+        foreach (NoteColor color in Enum.GetValues<NoteColor>())
+        {
+            var paper = NoteColorPalette.Paper(color);
+            var tint = new LumiText.Core.Documents.Color32(BlockBackgroundAlpha, paper.R, paper.G, paper.B);
+            var swatch = new Button
+            {
+                Width = 22,
+                Height = 22,
+                Padding = new Thickness(0),
+                CornerRadius = new CornerRadius(11),
+                Background = new SolidColorBrush(paper),
+                BorderThickness = new Thickness(1),
+                BorderBrush = border,
+            };
+            ToolTipService.SetToolTip(swatch, NoteColorPalette.DisplayName(color));
+            swatch.Click += (_, _) =>
+            {
+                flyout.Hide();
+                _editor.SetBlockBackground(tint);
+            };
+            panel.Children.Add(swatch);
+        }
+
+        var clear = new Button
+        {
+            Width = 22,
+            Height = 22,
+            Padding = new Thickness(0),
+            CornerRadius = new CornerRadius(11),
+            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0, 0, 0, 0)),
+            BorderThickness = new Thickness(1),
+            BorderBrush = border,
+            Content = new TextBlock { Text = "无", FontSize = 10 },
+        };
+        ToolTipService.SetToolTip(clear, "清除底色");
+        clear.Click += (_, _) =>
+        {
+            flyout.Hide();
+            _editor.SetBlockBackground(null);
+        };
+        panel.Children.Add(clear);
+
+        flyout.ShowAt(button);
+    }
 
     // ---- 关闭与退出 ----
 

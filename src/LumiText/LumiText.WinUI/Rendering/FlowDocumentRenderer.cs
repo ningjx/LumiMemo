@@ -31,6 +31,12 @@ public sealed class FlowDocumentRenderer
     /// <summary>堆叠一致性容差（与引擎 Epsilon 同值）。</summary>
     private const float StackingEpsilon = 0.01f;
 
+    /// <summary>块背景圆角半径（dip，Phase 3 §4；视觉值走界面检查微调）。</summary>
+    private const float BackgroundCornerRadius = 5f;
+
+    private static Color FromColor32(Color32 color) =>
+        Color.FromArgb(color.A, color.R, color.G, color.B);
+
     private readonly FlowLayoutEngine _engine;
 
     public FlowDocumentRenderer(ITextMeasurer measurer)
@@ -88,18 +94,27 @@ public sealed class FlowDocumentRenderer
     /// 行盒 Y 有序，二分定位首行；只画与视口相交的批组、浮动与块级覆盖层。
     /// 调用方负责把「文档坐标 → surface 局部坐标」的平移放进 session.Transform。
     /// </summary>
+    /// <param name="includeBlockBackgrounds">是否连带画块背景。编辑宿主（LumiEditor）的 z 序是
+    /// 「块背景 → 选区高亮 → 浮动/文字」，需自行先调 <see cref="RenderBlockBackgrounds"/>
+    /// 再带 <c>false</c> 调本方法，避免背景盖住选区；其余宿主保持默认一次画全。</param>
     public void Render(
         CanvasDrawingSession session,
         LayoutResult layout,
         Windows.Foundation.Rect viewport,
         Color textColor,
-        bool debugOverlay)
+        bool debugOverlay,
+        bool includeBlockBackgrounds = true)
     {
         ArgumentNullException.ThrowIfNull(session);
         ArgumentNullException.ThrowIfNull(layout);
 
         float viewTop = (float)viewport.Y;
         float viewBottom = (float)(viewport.Y + viewport.Height);
+
+        if (includeBlockBackgrounds)
+        {
+            RenderBlockBackgrounds(session, layout, viewport);
+        }
 
         foreach (var f in layout.Floats)
         {
@@ -194,6 +209,41 @@ public sealed class FlowDocumentRenderer
                     DrawBullet(session, line, textColor);
                     break;
             }
+        }
+    }
+
+    /// <summary>
+    /// 块级背景通道（Phase 3 §4/§6）：整列圆角矩形，画在浮动与文字之下（浮动图片压在其上）。
+    /// 单独暴露是为了让编辑宿主把它排在选区高亮之前（背景 → 选区 → 文字）。
+    /// </summary>
+    public void RenderBlockBackgrounds(
+        CanvasDrawingSession session, LayoutResult layout, Windows.Foundation.Rect viewport)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        ArgumentNullException.ThrowIfNull(layout);
+        if (layout.Blocks is not { } blocks)
+        {
+            return;
+        }
+
+        float viewTop = (float)viewport.Y;
+        float viewBottom = (float)(viewport.Y + viewport.Height);
+        foreach (var extent in layout.BlockExtents)
+        {
+            var r = extent.Rect;
+            if (r.Bottom < viewTop || r.Y > viewBottom)
+            {
+                continue;
+            }
+            if (extent.BlockIndex >= blocks.Count
+                || blocks[extent.BlockIndex].Background is not { } background)
+            {
+                continue;
+            }
+            session.FillRoundedRectangle(
+                new Windows.Foundation.Rect(r.X, r.Y, r.Width, r.Height),
+                BackgroundCornerRadius, BackgroundCornerRadius,
+                FromColor32(background));
         }
     }
 

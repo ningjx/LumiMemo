@@ -38,6 +38,13 @@ internal sealed class TsfTextStore : ITextStoreACP2, ITextStoreACP, ITfContextOw
     /// <summary>组字期状态（宿主据此抑制自动保存，§6.3）。</summary>
     public bool IsComposing => _composing;
 
+    /// <summary>
+    /// 文档所属窗口（Phase 3 修复）：<see cref="ITextStoreACP.GetWnd"/> 的返回值。
+    /// 文档显示在屏幕上就应报出宿主窗口——TSF 借此定位 IME UI 并判定窗口归属；
+    /// 恒返回 NULL 在单窗口下可用，多窗口（便签 + 管理器）下会让 IME 绑定判断失据。
+    /// </summary>
+    public IntPtr OwnerWindow { get; set; }
+
     /// <summary>组字期边界事件（宿主据此切换光标加粗/抑制自动保存）。</summary>
     public event EventHandler? CompositionStarted;
     public event EventHandler? CompositionEnded;
@@ -386,7 +393,8 @@ internal sealed class TsfTextStore : ITextStoreACP2, ITextStoreACP, ITfContextOw
     unsafe void ITextStoreACP.GetTextExt(uint vcView, int acpStart, int acpEnd, RECT* prc, BOOL* pfClipped) =>
         GetTextExt(vcView, acpStart, acpEnd, prc, pfClipped);
     unsafe void ITextStoreACP.GetScreenExt(uint vcView, RECT* prc) => GetScreenExt(vcView, prc);
-    unsafe void ITextStoreACP.GetWnd(uint vcView, HWND* phwnd) => *phwnd = default;
+    unsafe void ITextStoreACP.GetWnd(uint vcView, HWND* phwnd) =>
+        *phwnd = OwnerWindow == IntPtr.Zero ? default : new HWND(OwnerWindow);
 
     // ------------------------------------------------------------------
     // ITfContextOwnerCompositionSink（组字期边界，TSF 直接回调本对象）
