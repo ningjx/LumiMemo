@@ -36,7 +36,7 @@ Phase 2 顺延项与遗留的并入评估：
 | RESULTS §7.5-1 | 行内图片混排（SetInlineObject） | **不并入**（O6 拍板，继续挂账） |
 | RESULTS §7.5-2 | R7 设备丢失重建 | 继续挂账（与本期无耦合，便签场景罕见） |
 | RESULTS §7.5-3 | 上下方向键 / Home / End | **并入**（O7 拍板，M6） |
-| RESULTS §7.5-4 | 旧内核 RichEditorHost / ImageAdorner | 以其交互契约为对等基线（八手柄、四角等比、缩放上限），Phase 4 退役 |
+| RESULTS §7.5-4 | 旧内核 RichEditorHost / ImageAdorner | 以其交互契约为对等基线（八手柄、四角等比、缩放上限）；**已于 Phase 4 退役**（2026-10-04，见 `phase4-old-kernel-retirement-design.md`） |
 
 ### 0.2 做（本期交付清单）
 

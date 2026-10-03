@@ -11,8 +11,8 @@ namespace LumiMemo.Core.Models;
 /// 一张便签最多有一个窗口（§0.2 术语表）。
 /// </para>
 /// <para>
-/// <c>RichTextContent</c>（RTF）是<strong>权威内容</strong>——格式与图片都在里面；
-/// <see cref="Content"/> 是纯文本投影，供标题派生、搜索与字数统计使用。
+/// <c>RichTextContent</c>（编辑器内核产出的<b>不透明字节</b>，当前为 v2 JSON）是<strong>权威内容</strong>——
+/// 格式与图片都在里面；<see cref="Content"/> 是纯文本投影，供标题派生、搜索与字数统计使用。
 /// </para>
 /// </remarks>
 public sealed class Note

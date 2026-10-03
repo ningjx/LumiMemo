@@ -63,7 +63,7 @@ public sealed record MoveImageAnchorCommand(int BlockIndex, FloatAnchor Anchor, 
 /// 图片显示尺寸命令（Phase 3 设计 §5/§6.3）：改 <see cref="ImageBlock"/> 的显示尺寸（dip）。
 /// 拖动左/上侧手柄时左上角会移动，<paramref name="Anchor"/> 非空即同时把锚点改到新位置——
 /// 尺寸与锚点一次提交 = 一条撤销记录，且重锚后图片紧跟锚字符、不留外边距（与拖动落点同语义）。
-/// 缩放拖动期间覆盖层只动预览几何，松手提交本命令后一次重排——与旧 ImageAdorner 的提交语义一致。
+/// 缩放拖动期间覆盖层只动预览几何，松手提交本命令后一次重排——与旧产品的提交语义一致。
 /// </summary>
 public sealed record ResizeImageCommand(int BlockIndex, float Width, float Height,
     FloatAnchor? Anchor = null) : IEditCommand

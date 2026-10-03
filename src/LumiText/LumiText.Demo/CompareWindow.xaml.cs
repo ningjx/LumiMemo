@@ -29,7 +29,8 @@ public sealed partial class CompareWindow : Window
         _backdrop = DemoBackdrop.Apply(this, RootGrid);
         AppWindow.Resize(new Windows.Graphics.SizeInt32(1240, 680));
 
-        // 现产品 RichEditorHost 的同款资源覆盖（背景/边框全走 frost/透明）。
+        // 对照侧 RichEditBox 的资源覆盖（背景/边框全走 frost/透明）——
+        // 旧内核已退役，这里只作「原生富文本」视觉对照。
         Editor.Background = new SolidColorBrush(FrostColor);
         Editor.Foreground = new SolidColorBrush(InkColor);
         foreach (string key in new[]

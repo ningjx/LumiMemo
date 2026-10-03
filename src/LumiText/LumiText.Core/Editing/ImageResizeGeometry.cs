@@ -3,7 +3,7 @@ using LumiText.Core.Layout;
 
 namespace LumiText.Core.Editing;
 
-/// <summary>图片缩放的八个手柄（Phase 3 M4；语义移植自旧内核 AdornerGeometry）。</summary>
+/// <summary>图片缩放的八个手柄（Phase 3 M4；语义移植自旧内核的缩放几何）。</summary>
 public enum ImageHandle
 {
     None,
@@ -19,7 +19,7 @@ public enum ImageHandle
 
 /// <summary>
 /// 图片缩放手柄几何（纯函数，可无头测试）：手柄中心点、坐标命中、拖动 → 新尺寸。
-/// 交互契约沿用旧产品（<c>LumiMemo.WinUI/Controls/AdornerGeometry.cs</c>，已被 Phase 2 验收）：
+/// 交互契约沿用旧产品（Phase 2 验收过的缩放手感，旧内核已在 Phase 4 退役）：
 /// 四角等比（取两轴相对变化的较大者，保证图片不缩到指针内侧）、四边只动单轴；
 /// 最小边长 24dip、宽不超过内容区宽。
 /// </summary>

@@ -8,8 +8,8 @@ namespace LumiMemo.WinUI.Controls;
 /// </para>
 /// <para>
 /// <strong>权威内容是不透明字节</strong>（O1，2026-10-03 拍板改名 <c>SaveContent</c>）：
-/// 格式由编辑器内核决定（旧内核 <c>RichEditorHost</c> 产 RTF 字节，新内核 <c>LumiEditor</c>
-/// 产 v2 JSON 字节），VM 与 <c>Note.RichTextContent</c> 全程不解析——换内核 VM 零改动。
+/// 格式由编辑器内核决定（当前内核 <c>LumiEditor</c> 产 v2 JSON 字节），
+/// VM 与 <c>Note.RichTextContent</c> 全程不解析——换内核 VM 零改动。
 /// </para>
 /// </remarks>
 public interface IRichTextDocument

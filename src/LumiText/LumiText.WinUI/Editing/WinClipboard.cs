@@ -62,7 +62,7 @@ public static class WinClipboard
         ArgumentNullException.ThrowIfNull(core);
         var view = Clipboard.GetContent();
 
-        // ① 纯图片拦截（现产品 RichEditorHost.OnPaste 语义平移）：
+        // ① 纯图片拦截（沿用旧产品的粘贴语义）：
         // 含 Bitmap 且不含 Text/Rtf → 自己走插图逻辑，统一 280px 上限
         if (view.Contains(StandardDataFormats.Bitmap)
             && !view.Contains(StandardDataFormats.Text)

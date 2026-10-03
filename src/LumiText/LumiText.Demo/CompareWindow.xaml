@@ -12,7 +12,7 @@
             <ColumnDefinition />
         </Grid.ColumnDefinitions>
 
-        <!-- 左：现产品同款 RichEditBox（frost 底、墨色、内边距与 RichEditorHost 一致） -->
+        <!-- 左：对照用的原生 RichEditBox（frost 底、墨色，样式贴近产品观感） -->
         <RichEditBox
             x:Name="Editor"
             Grid.Column="0"

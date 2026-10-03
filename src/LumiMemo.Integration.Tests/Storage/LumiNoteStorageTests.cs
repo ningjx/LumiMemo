@@ -47,6 +47,11 @@ public sealed class LumiNoteStorageTests
     /// 刻意不引用实现的私有 <c>StoredNote</c>：属性名（PascalCase）与色值（数字）
     /// 是<strong>格式契约</strong>——沿用自第一版 .lumi 文件的真实形态（现有用户文件
     /// 就是 <c>"Version"</c>、<c>"Color":0</c>）。这份测试手写契约，实现改坏契约时它就红。
+    /// <para>
+    /// <c>Version</c> 由调用方给：v2（当前）之外的版本用来验「跳过」路径——加载端自
+    /// Phase 2 M7 起明确 <b>v1（RTF 权威）不迁移、直接跳过</b>，故凡期望「正常加载」的用例
+    /// 都必须写当前版本，否则验的就成了版本跳过而不是用例本意。
+    /// </para>
     /// </remarks>
     private static string BuildNoteJson(int version, Guid id, string text = "") =>
         JsonSerializer.Serialize(new
@@ -54,7 +59,7 @@ public sealed class LumiNoteStorageTests
             Version = version,
             Id = id,
             Text = text,
-            Rtf = (byte[]?)null,
+            Document = (byte[]?)null,
             Color = NoteColor.Yellow,
             Tags = Array.Empty<string>(),
             CreatedAt = When,
@@ -62,7 +67,7 @@ public sealed class LumiNoteStorageTests
         });
 
     [Fact]
-    public async Task 保存再加载_内容与RTF逐字节保真()
+    public async Task 保存再加载_内容与权威内容逐字节保真()
     {
         using var temp = new TempDirectory();
         Note note = NewNote(temp.Path);
@@ -183,7 +188,8 @@ public sealed class LumiNoteStorageTests
     public async Task id为空_跳过()
     {
         using var temp = new TempDirectory();
-        File.WriteAllText(temp.Combine("空id.lumi"), BuildNoteJson(1, Guid.Empty));
+        File.WriteAllText(temp.Combine("空id.lumi"),
+            BuildNoteJson(LumiNoteStorage.FormatVersion, Guid.Empty));
 
         Assert.Empty(await Create(temp.Path).LoadAllAsync(Ct));
     }
@@ -194,7 +200,7 @@ public sealed class LumiNoteStorageTests
         using var temp = new TempDirectory();
         Guid id = Guid.NewGuid();
         string path = temp.Combine("名字对不上.lumi");
-        File.WriteAllText(path, BuildNoteJson(1, id, "名字对不上但内容有效"));
+        File.WriteAllText(path, BuildNoteJson(LumiNoteStorage.FormatVersion, id, "名字对不上但内容有效"));
 
         Note loaded = Assert.Single(await Create(temp.Path).LoadAllAsync(Ct));
 
@@ -208,8 +214,10 @@ public sealed class LumiNoteStorageTests
     {
         using var temp = new TempDirectory();
         Guid id = Guid.NewGuid();
-        File.WriteAllText(temp.Combine("a-第一份.lumi"), BuildNoteJson(1, id, "甲"));
-        File.WriteAllText(temp.Combine("b-第二份.lumi"), BuildNoteJson(1, id, "乙"));
+        File.WriteAllText(temp.Combine("a-第一份.lumi"),
+            BuildNoteJson(LumiNoteStorage.FormatVersion, id, "甲"));
+        File.WriteAllText(temp.Combine("b-第二份.lumi"),
+            BuildNoteJson(LumiNoteStorage.FormatVersion, id, "乙"));
 
         Note loaded = Assert.Single(await Create(temp.Path).LoadAllAsync(Ct));
 

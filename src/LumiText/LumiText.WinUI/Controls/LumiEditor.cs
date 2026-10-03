@@ -64,7 +64,7 @@ public sealed class LumiEditor : Grid
 
     // ---- 图片交互（Phase 3 M4）----
     // 覆盖层 = 滚动内容内、surface 之上的 Canvas：虚线框 + 八手柄 + 尺寸标签。
-    // Canvas 不设 Background（空白处不吃指针），只有手柄元素吃事件——旧 ImageAdorner 的纪律。
+    // Canvas 不设 Background（空白处不吃指针），只有手柄元素吃事件——覆盖层的一贯纪律。
     private readonly Canvas _imageOverlay = new();
     private readonly Rectangle _imageOutline = new();
     private readonly Dictionary<ImageHandle, Border> _imageHandles = [];
@@ -342,7 +342,7 @@ public sealed class LumiEditor : Grid
     }
 
     /// <summary>
-    /// 工具栏命令（与现产品 RichEditorHost.ExecuteCommand 对齐的命令名）。
+    /// 工具栏命令（命令名与主程序工具栏对齐）。
     /// 粗/斜/下划/删线映射到 <see cref="ApplyInlineStyleCommand"/>；
     /// bullet/todo 映射到 <see cref="ToggleBulletCommand"/>/<see cref="ToggleTodoCommand"/>。
     /// </summary>
