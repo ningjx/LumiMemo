@@ -60,6 +60,7 @@ public partial class App : Application
             "m4" => new RichDocWindow(),
             "m6" => new ScrollDocWindow(),
             "m7" => new CompareWindow(),
+            "edit" => new EditWindow(),
             "perf" => new DemoWindow(autoRunPerf: true),
             _ => new DemoWindow(autoRunU2: probe == "u2"),
         };

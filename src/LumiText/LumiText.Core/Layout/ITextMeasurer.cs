@@ -19,6 +19,22 @@ public readonly record struct MeasuredLine(
     int CharStart, int CharsConsumed, float Width,
     float Ascent, float Descent, float OffsetY);
 
+/// <summary>字符级命中结果（M2 编辑层）：命中的字符偏移 + 是否落尾。</summary>
+/// <param name="CharacterIndex">命中字符在批文本流中的偏移。</param>
+/// <param name="IsTrailingHit">true = 光标落在该字符之后；false = 之前。</param>
+public readonly record struct CharHit(int CharacterIndex, bool IsTrailingHit);
+
+/// <summary>一段连续字符的几何区域（选区高亮用）。</summary>
+/// <param name="CharacterIndex">段首字符在批文本流中的偏移。</param>
+/// <param name="CharacterCount">段字符数。</param>
+/// <param name="X">区域左上角 X（批布局坐标）。</param>
+/// <param name="Y">区域左上角 Y（批布局坐标）。</param>
+/// <param name="Width">区域宽。</param>
+/// <param name="Height">区域高。</param>
+public readonly record struct CharRegion(
+    int CharacterIndex, int CharacterCount,
+    float X, float Y, float Width, float Height);
+
 /// <summary>
 /// 一批行：同一段（X，宽）下对一段文本流一次排版得到的全部行。
 /// 归调用方（排版引擎）持有，其生命周期内所有引用本批的 <see cref="PlacedLine"/> 都有效；
@@ -34,6 +50,25 @@ public interface ILineBatch : IDisposable
 
     /// <summary>整批共享的度量器私有布局产物（如 Win2D 的 CanvasTextLayout），原样透传给渲染层。</summary>
     object? NativeLayout { get; }
+
+    /// <summary>
+    /// 字符级命中（M2）：以批布局坐标 (x, y) 命中字符。
+    /// 未命中任何字符（点在文本区外）时返回 null。
+    /// </summary>
+    CharHit? HitTestChar(float x, float y);
+
+    /// <summary>
+    /// 光标几何（M2）：characterIndex 字符前/后的插入符位置（批布局坐标）。
+    /// 返回 (x, yTop, height)：yTop 是光标顶缘 Y，height 是光标高度（随行高）。
+    /// characterIndex 越界时钳到 [0, 文本长度]。
+    /// </summary>
+    (float X, float YTop, float Height) GetCaretGeometry(int characterIndex, bool isTrailing);
+
+    /// <summary>
+    /// 选区几何（M2）：[characterIndex, characterIndex+count) 的几何区域序列
+    /// （每行一个矩形，自动处理跨行拆分与双向文本）。坐标为批布局坐标。
+    /// </summary>
+    IReadOnlyList<CharRegion> GetCharRegions(int characterIndex, int characterCount);
 }
 
 /// <summary>

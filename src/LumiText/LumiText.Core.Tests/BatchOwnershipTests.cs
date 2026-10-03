@@ -46,6 +46,14 @@ public sealed class BatchOwnershipTests
 
         public object? NativeLayout => inner.NativeLayout;
 
+        public CharHit? HitTestChar(float x, float y) => inner.HitTestChar(x, y);
+
+        public (float X, float YTop, float Height) GetCaretGeometry(int characterIndex, bool isTrailing) =>
+            inner.GetCaretGeometry(characterIndex, isTrailing);
+
+        public IReadOnlyList<CharRegion> GetCharRegions(int characterIndex, int characterCount) =>
+            inner.GetCharRegions(characterIndex, characterCount);
+
         public void Dispose()
         {
             Disposed = true;

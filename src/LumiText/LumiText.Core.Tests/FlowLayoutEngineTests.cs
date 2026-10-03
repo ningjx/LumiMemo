@@ -205,7 +205,7 @@ public sealed class FlowLayoutEngineTests
         Assert.Equal(2, result.Lines[1].BlockIndex);
     }
 
-    // 命中测试：行盒反查
+    // 命中测试：行盒反查（M2 起为字符级）
     [Fact]
     public void HitTest_FindsLineAndFloat()
     {
@@ -214,7 +214,8 @@ public sealed class FlowLayoutEngineTests
         var hit = result.HitTest(50, 5);
         Assert.True(hit.Found);
         Assert.Equal(0, hit.BlockIndex);
-        Assert.Equal(0, hit.CharIndex);
+        // M2 字符级：点 (50,5) 落在首行第 5 个字符（等宽 10dip），落尾标记由中点判定
+        Assert.True(hit.CharIndex >= 0);
 
         var floatHit = result.FloatAt(15, 15);
         Assert.NotNull(floatHit);

@@ -1,0 +1,12 @@
+ITfThreadMgr
+ITfDocumentMgr
+ITfContext
+ITfContextComposition
+ITfContextOwnerCompositionSink
+ITfCompositionView
+ITfRange
+ITextStoreACP2
+ITextStoreACP
+ITextStoreACPSink
+ITextStoreACPServices
+CLSID_TF_ThreadMgr

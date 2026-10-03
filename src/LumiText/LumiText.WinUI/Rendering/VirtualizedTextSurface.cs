@@ -111,10 +111,13 @@ public sealed class VirtualizedTextSurface : IDisposable
         }
     }
 
+    /// <summary>是否已 Attach（sprite 就绪）。未 Attach 时 Invalidate 是合法空操作。</summary>
+    public bool IsAttached => _sprite is not null;
+
     /// <summary>强制整面重绘当前区域（重排/图片就绪/调试开关后调用）。</summary>
     public void Invalidate()
     {
-        if (_surface is not null)
+        if (_surface is not null && _sprite is not null)
         {
             Redraw(_originY);
         }

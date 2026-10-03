@@ -1,0 +1,103 @@
+using LumiText.Core.Documents;
+using LumiText.Core.Editing;
+using LumiText.Core.Editing.Commands;
+using Xunit;
+
+namespace LumiText.Core.Tests.Editing;
+
+/// <summary>
+/// BlockTextOps 单测：run 序列的文本替换/样式变换/切片——命令层的底座。
+/// </summary>
+public sealed class BlockTextOpsTests
+{
+    [Fact]
+    public void ReplaceText_InsertIntoSingleRun_KeepsStyle()
+    {
+        var block = new ParagraphBlock([new TextRun("hello", new InlineStyle(Bold: true))]);
+        var result = BlockTextOps.ReplaceText(block, 2, 0, "XY");
+        var p = Assert.IsType<ParagraphBlock>(result);
+        Assert.Equal("heXYllo", p.PlainText);
+        Assert.Single(p.Runs); // 同样式合并
+        Assert.True(p.Runs[0].Style!.Bold);
+    }
+
+    [Fact]
+    public void ReplaceText_InsertAcrossStyleBoundary_InheritsPreviousCharStyle()
+    {
+        var block = new ParagraphBlock([
+            new TextRun("normal"),
+            new TextRun("bold", new InlineStyle(Bold: true)),
+        ]);
+        // 在两个 run 的接缝处（偏移 6）插入——继承前字符（normal）的样式
+        var result = BlockTextOps.ReplaceText(block, 6, 0, "X");
+        var p = Assert.IsType<ParagraphBlock>(result);
+        Assert.Equal("normalXbold", p.PlainText);
+        Assert.Equal(2, p.Runs.Count);
+        Assert.Equal("normalX", p.Runs[0].Text);
+        Assert.Null(p.Runs[0].Style);
+        Assert.Equal("bold", p.Runs[1].Text);
+        Assert.True(p.Runs[1].Style!.Bold);
+    }
+
+    [Fact]
+    public void ReplaceText_DeleteAcrossStyleBoundary_MergesNeighbors()
+    {
+        var block = new ParagraphBlock([
+            new TextRun("ab"),
+            new TextRun("XY", new InlineStyle(Bold: true)),
+            new TextRun("cd"),
+        ]);
+        // 删掉 "bXYc"（从 1 开始 4 个字符），剩 "ad"
+        var result = BlockTextOps.ReplaceText(block, 1, 4, string.Empty);
+        var p = Assert.IsType<ParagraphBlock>(result);
+        Assert.Equal("ad", p.PlainText);
+        Assert.Single(p.Runs);
+        Assert.Null(p.Runs[0].Style);
+    }
+
+    [Fact]
+    public void ReplaceText_EmptyBlock_InsertsPlainRun()
+    {
+        var block = new ParagraphBlock([]);
+        var result = BlockTextOps.ReplaceText(block, 0, 0, "new");
+        var p = Assert.IsType<ParagraphBlock>(result);
+        Assert.Equal("new", p.PlainText);
+        Assert.Single(p.Runs);
+    }
+
+    [Fact]
+    public void ReplaceText_NewlineRejected()
+    {
+        var block = new ParagraphBlock("a");
+        Assert.Throws<ArgumentException>(() => BlockTextOps.ReplaceText(block, 0, 0, "x\ny"));
+    }
+
+    [Fact]
+    public void TransformInlineStyle_PartialRange_SplitsRuns()
+    {
+        var block = new ParagraphBlock([new TextRun("abcdef")]);
+        var result = BlockTextOps.TransformInlineStyle(block, 2, 2,
+            s => (s ?? new InlineStyle()) with { Bold = true });
+        var p = Assert.IsType<ParagraphBlock>(result);
+        Assert.Equal(3, p.Runs.Count);
+        Assert.Equal("ab", p.Runs[0].Text);
+        Assert.Equal("cd", p.Runs[1].Text);
+        Assert.True(p.Runs[1].Style!.Bold);
+        Assert.Equal("ef", p.Runs[2].Text);
+        Assert.Null(p.Runs[2].Style);
+    }
+
+    [Fact]
+    public void SliceRuns_ExactRange_ReturnsFragments()
+    {
+        var block = new ParagraphBlock([
+            new TextRun("abc"),
+            new TextRun("DEF", new InlineStyle(Italic: true)),
+        ]);
+        var slice = BlockTextOps.SliceRuns(block, 2, 3); // "cDE"
+        Assert.Equal(2, slice.Count);
+        Assert.Equal("c", slice[0].Text);
+        Assert.Equal("DE", slice[1].Text);
+        Assert.True(slice[1].Style!.Italic);
+    }
+}

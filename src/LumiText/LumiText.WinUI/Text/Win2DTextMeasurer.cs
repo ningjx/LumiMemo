@@ -165,6 +165,75 @@ public sealed class Win2DTextMeasurer : ITextMeasurer
 
         public object? NativeLayout => _layout;
 
+        public CharHit? HitTestChar(float x, float y)
+        {
+            if (_layout is null)
+            {
+                return null;
+            }
+            bool hit = _layout.HitTest(x, y, out var region, out bool isTrailing);
+            return hit ? new CharHit(region.CharacterIndex, isTrailing) : null;
+        }
+
+        public (float X, float YTop, float Height) GetCaretGeometry(int characterIndex, bool isTrailing)
+        {
+            if (_layout is null)
+            {
+                return (0f, 0f, 0f);
+            }
+            int clamped = Math.Clamp(characterIndex, 0, GetTextLength());
+            var point = _layout.GetCaretPosition(clamped, isTrailing);
+            // 光标高度随行高：clamped == lineEnd 时优先下一行（isTrailing=false 的段首语义）
+            for (int i = 0; i < _lines.Length; i++)
+            {
+                var line = _lines[i];
+                int lineEnd = line.CharStart + line.CharsConsumed;
+                bool isLast = i == _lines.Length - 1;
+                if (clamped < lineEnd || (isLast && clamped <= lineEnd))
+                {
+                    return (point.X, line.OffsetY, line.Ascent + line.Descent);
+                }
+            }
+            var last = _lines[^1];
+            return (point.X, last.OffsetY, last.Ascent + last.Descent);
+        }
+
+        public IReadOnlyList<CharRegion> GetCharRegions(int characterIndex, int characterCount)
+        {
+            if (_layout is null || characterCount <= 0)
+            {
+                return Array.Empty<CharRegion>();
+            }
+            int textLength = GetTextLength();
+            int clampedIndex = Math.Clamp(characterIndex, 0, textLength);
+            int clampedCount = Math.Clamp(characterCount, 0, textLength - clampedIndex);
+            if (clampedCount <= 0)
+            {
+                return Array.Empty<CharRegion>();
+            }
+            var regions = _layout.GetCharacterRegions(clampedIndex, clampedCount);
+            var result = new CharRegion[regions.Length];
+            for (int i = 0; i < regions.Length; i++)
+            {
+                var r = regions[i];
+                result[i] = new CharRegion(
+                    r.CharacterIndex, r.CharacterCount,
+                    (float)r.LayoutBounds.X, (float)r.LayoutBounds.Y,
+                    (float)r.LayoutBounds.Width, (float)r.LayoutBounds.Height);
+            }
+            return result;
+        }
+
+        private int GetTextLength()
+        {
+            if (_lines.Length == 0)
+            {
+                return 0;
+            }
+            var last = _lines[^1];
+            return last.CharStart + last.CharsConsumed;
+        }
+
         public void Dispose() => _layout?.Dispose();
     }
 }

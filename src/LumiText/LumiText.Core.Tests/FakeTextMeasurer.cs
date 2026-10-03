@@ -81,6 +81,74 @@ internal sealed class FakeTextMeasurer : ITextMeasurer
 
         public object? NativeLayout => null;
 
+        public CharHit? HitTestChar(float x, float y)
+        {
+            // 等宽假字体：y 定位行，x 定位字符（每字符 CharWidth × ratio，但测试只用 ratio=1）
+            if (_lines.Count == 0)
+            {
+                return null;
+            }
+            int lineIndex = (int)(y / LineHeight);
+            if (lineIndex < 0 || lineIndex >= _lines.Count)
+            {
+                return null;
+            }
+            var line = _lines[lineIndex];
+            int charOffset = (int)(x / CharWidth);
+            if (charOffset < 0 || charOffset >= line.CharsConsumed)
+            {
+                return null;
+            }
+            float charX = charOffset * CharWidth;
+            bool isTrailing = x >= charX + CharWidth / 2f;
+            return new CharHit(line.CharStart + charOffset, isTrailing);
+        }
+
+        public (float X, float YTop, float Height) GetCaretGeometry(int characterIndex, bool isTrailing)
+        {
+            if (_lines.Count == 0)
+            {
+                return (0f, 0f, 0f);
+            }
+            int clamped = Math.Clamp(characterIndex, 0,
+                _lines[^1].CharStart + _lines[^1].CharsConsumed);
+            // 找含该偏移的行：clamped == lineEnd 时优先下一行（isTrailing=false 的段首语义）；
+            // isTrailing=true 或已到末行时，行尾偏移归本行
+            for (int i = 0; i < _lines.Count; i++)
+            {
+                var line = _lines[i];
+                int lineEnd = line.CharStart + line.CharsConsumed;
+                bool isLast = i == _lines.Count - 1;
+                if (clamped < lineEnd || (isLast && clamped <= lineEnd))
+                {
+                    float x = (clamped - line.CharStart) * CharWidth;
+                    return (x, line.OffsetY, line.Ascent + line.Descent);
+                }
+            }
+            var last = _lines[^1];
+            return (last.Width, last.OffsetY, last.Ascent + last.Descent);
+        }
+
+        public IReadOnlyList<CharRegion> GetCharRegions(int characterIndex, int characterCount)
+        {
+            var result = new List<CharRegion>();
+            int end = characterIndex + characterCount;
+            foreach (var line in _lines)
+            {
+                int lineEnd = line.CharStart + line.CharsConsumed;
+                int selStart = Math.Max(characterIndex, line.CharStart);
+                int selEnd = Math.Min(end, lineEnd);
+                if (selStart < selEnd)
+                {
+                    result.Add(new CharRegion(
+                        selStart, selEnd - selStart,
+                        (selStart - line.CharStart) * CharWidth, line.OffsetY,
+                        (selEnd - selStart) * CharWidth, line.Ascent + line.Descent));
+                }
+            }
+            return result;
+        }
+
         public void Dispose()
         {
         }

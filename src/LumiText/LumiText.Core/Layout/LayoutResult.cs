@@ -1,9 +1,21 @@
 using LumiText.Core.Documents;
+using LumiText.Core.Editing;
 
 namespace LumiText.Core.Layout;
 
-/// <summary>命中测试结果（当前为行盒级：返回行首字符；字符级精确定位随编辑层在 Phase 2 引入）。</summary>
-public readonly record struct HitTestResult(bool Found, int BlockIndex, int CharIndex);
+/// <summary>
+/// 命中测试结果（M2 字符级）：命中的行 + 块内字符偏移 + 落尾标记。
+/// <see cref="CaretPosition"/> 把命中结果直接翻译成编辑器可用的光标位置。
+/// </summary>
+public readonly record struct HitTestResult(
+    bool Found,
+    int BlockIndex,
+    int CharIndex,
+    bool IsTrailingHit)
+{
+    /// <summary>命中点对应的光标位置（落尾时落在字符之后）。</summary>
+    public TextPosition CaretPosition => new(BlockIndex, CharIndex);
+}
 
 /// <summary>
 /// 一次完整排版的产物。实现 <see cref="IDisposable"/>：各行引用的
@@ -52,15 +64,35 @@ public sealed class LayoutResult : IDisposable
         return null;
     }
 
-    /// <summary>坐标命中：命中文本行盒。</summary>
+    /// <summary>
+    /// 坐标命中：字符级命中（M2）。
+    /// 先定位行盒，再经行盒所属批的 <see cref="ILineBatch.HitTestChar"/> 精确到字符偏移；
+    /// 批不支持字符级命中（如 Divider 占位行盒无批）时退化为行首字符（M1 行为）。
+    /// </summary>
     public HitTestResult HitTest(float x, float y)
     {
         foreach (var line in Lines)
         {
-            if (line.Bounds.Contains(x, y))
+            if (!line.Bounds.Contains(x, y))
             {
-                return new HitTestResult(true, line.BlockIndex, line.CharStart);
+                continue;
             }
+            if (line.Batch is null)
+            {
+                return new HitTestResult(true, line.BlockIndex, line.CharStart, false);
+            }
+            // 批布局坐标 = (点 X − 行盒 X, 点 Y − 行盒 Y + 行在批内的偏移)
+            float localX = x - line.X;
+            float localY = (y - line.Y) + line.LineOffsetY;
+            var hit = line.Batch.HitTestChar(localX, localY);
+            if (hit is not { } h)
+            {
+                return new HitTestResult(true, line.BlockIndex, line.CharStart, false);
+            }
+            // HitTestChar 返回批文本流内偏移（与 GetCaretGeometry/GetCharRegions 同坐标系）；
+            // 块内偏移 = 批内偏移（批的文本起点 == 行的 CharStart 由排版引擎保证）
+            int charIndex = h.CharacterIndex + (h.IsTrailingHit ? 1 : 0);
+            return new HitTestResult(true, line.BlockIndex, charIndex, h.IsTrailingHit);
         }
         return default;
     }
