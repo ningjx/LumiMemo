@@ -73,6 +73,27 @@ internal sealed class TsfManager : IDisposable
         }
     }
 
+    /// <summary>
+    /// 把窗口 HWND 与文档管理器关联（<see cref="ITfThreadMgr.AssociateFocus"/>）：
+    /// 之后窗口每次得焦，TSF 会自动调 <c>SetFocus</c>——窗口失焦再切回时 IME 不掉回英文。
+    /// 必须在 <see cref="Initialize"/> 成功之后调用；重复调用以最后一次为准。
+    /// </summary>
+    public void AssociateWindowFocus(IntPtr hwnd)
+    {
+        if (_threadMgr is null || _documentMgr is null || hwnd == IntPtr.Zero)
+        {
+            return;
+        }
+        try
+        {
+            _threadMgr.AssociateFocus(new Windows.Win32.Foundation.HWND(hwnd), _documentMgr, out _);
+        }
+        catch
+        {
+            // 关联失败不致命——Initialize 的 SetFocus 已保底，只是失焦切换要手动重设
+        }
+    }
+
     public void Dispose()
     {
         if (_documentMgr is not null)

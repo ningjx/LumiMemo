@@ -214,6 +214,11 @@ public sealed class LumiEditor : Grid
                 store.CaretScreenRectProvider = GetCaretScreenRect;
                 store.ScreenRectProvider = GetEditorScreenRect;
             }
+            // 关联窗口焦点：窗口失焦再切回时 TSF 自动 SetFocus，IME 不掉回英文（M7 实测修复）
+            if (HostWindow is not null)
+            {
+                _tsf.AssociateWindowFocus(WinRT.Interop.WindowNative.GetWindowHandle(HostWindow));
+            }
         }
 
         Relayout();
