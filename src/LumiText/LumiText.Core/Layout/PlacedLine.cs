@@ -34,6 +34,10 @@ public enum PlacedLineKind
 /// <param name="Baseline">基线的 Y 坐标（文档坐标）。</param>
 /// <param name="Batch">本行所属的批量行（M3）；渲染层据此按批分组绘制（Phase 1 设计 §7.3）。</param>
 /// <param name="LineOffsetY">本行顶缘相对批布局顶缘的偏移（批内定位，取自 <see cref="MeasuredLine.OffsetY"/>）。</param>
+/// <param name="BatchStart">本行所属批的文本流起点在<b>块文本</b>中的偏移：批的文本 = 块文本从
+/// <see cref="BatchStart"/> 起的切片（段一变——绕图、缩进变化——引擎就按剩余文本重建批），
+/// 因此「批内偏移 + <see cref="BatchStart"/> = 块内偏移」。命中/光标/选区几何全按这条换算
+/// （Phase 3 M4 修复：漏了它，绕图段落的点击会往段落前面偏）。无批占位行盒为 0。</param>
 /// <param name="Kind">行盒种类。</param>
 /// <param name="IsBlockStart">是否所属块的第一个行盒（Todo 复选框只画在首行，§6.2）。</param>
 public sealed record PlacedLine(
@@ -47,6 +51,7 @@ public sealed record PlacedLine(
     float Baseline,
     ILineBatch? Batch,
     float LineOffsetY,
+    int BatchStart,
     PlacedLineKind Kind = PlacedLineKind.Text,
     bool IsBlockStart = false)
 {

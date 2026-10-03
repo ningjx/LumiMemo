@@ -119,8 +119,9 @@ public sealed class LayoutResult : IDisposable
         {
             return new HitTestResult(true, target.BlockIndex, target.CharStart, false);
         }
+        // 批内偏移 → 块内偏移：+ 批起点（同 HitOnLine）
         return new HitTestResult(true, target.BlockIndex,
-            h.CharacterIndex + (h.IsTrailingHit ? 1 : 0), h.IsTrailingHit);
+            target.BatchStart + h.CharacterIndex + (h.IsTrailingHit ? 1 : 0), h.IsTrailingHit);
     }
 
     /// <summary>
@@ -200,9 +201,10 @@ public sealed class LayoutResult : IDisposable
             float inlineX = anchorLine.X;
             if (anchorLine.Batch is { } batch)
             {
-                int lineStart = anchorLine.CharStart;
-                int lineEnd = anchorLine.CharStart + anchorLine.CharCount;
-                int index = Math.Clamp(anchor.CharIndex, lineStart, lineEnd);
+                // 批内偏移 = 块内偏移 − 批起点（自然版面里若有别的浮动挤开文字，批同样是切片）
+                int lineStart = anchorLine.CharStart - anchorLine.BatchStart;
+                int lineEnd = anchorLine.CharStart + anchorLine.CharCount - anchorLine.BatchStart;
+                int index = Math.Clamp(anchor.CharIndex - anchorLine.BatchStart, lineStart, lineEnd);
                 // 插入位置的几何：行内取「本字符左缘」（= 前一字符右缘，isTrailing=false）；
                 // 块尾（index == lineEnd，行内无处可取左缘）取末字符右缘（isTrailing=true）。
                 // 恒定 isTrailing=true 会让图片偏右一个字——A1 探针实测
@@ -345,8 +347,9 @@ public sealed class LayoutResult : IDisposable
             return new HitTestResult(true, line.BlockIndex, line.CharStart, false);
         }
         // HitTestChar 返回批文本流内偏移（与 GetCaretGeometry/GetCharRegions 同坐标系）；
-        // 块内偏移 = 批内偏移（批的文本起点 == 行的 CharStart 由排版引擎保证）
-        int charIndex = h.CharacterIndex + (h.IsTrailingHit ? 1 : 0);
+        // 批的文本 = 块文本从 line.BatchStart 起的切片（绕图换段时批会在中途重建），
+        // 块内偏移 = BatchStart + 批内偏移——直接当块内偏移用会让绕图段落的点击往段落前面偏。
+        int charIndex = line.BatchStart + h.CharacterIndex + (h.IsTrailingHit ? 1 : 0);
         return new HitTestResult(true, line.BlockIndex, charIndex, h.IsTrailingHit);
     }
 

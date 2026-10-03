@@ -288,6 +288,10 @@ public readonly record struct BlockExtent(int BlockIndex, LayoutRect Rect);
   ——`isTrailing=false` 取左缘（插入位置）、`true` 取右缘；恒定 `true` 会让图片偏右一个字。
   A1 探针实测（索引 4：左缘 56 / 右缘 70，锚定落到了 70）。`FakeTextMeasurer` 同步按真实语义
   实现（此前忽略 `isTrailing`，把单测全绿而应用偏一格的坑盖住了）；
+- **批偏移换算（2026-10-04 修复）**：批的文本 = 块文本从 `PlacedLine.BatchStart` 起的切片
+  （段一变——绕图、缩进变化——引擎就按剩余文本重建批），命中 / 光标 / 选区几何都必须做
+  「块内偏移 ↔ 批内偏移」换算。漏了它，**绕图段落的点击只会往段落前面偏**，而第一行图左段
+  因为批恰从 0 起看着正常（`BatchOffsetTests` 四条，含图片下方同段落的行）；
 - **光标导航**：Up/Down 跨行跨块 / 短行 goal-X / Home/End / Ctrl+Home/End / 空块。
 
 ### 8.2 WinUI 侧（用户检查）

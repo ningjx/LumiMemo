@@ -155,7 +155,7 @@ public sealed class FlowLayoutEngine
                         lines.Add(new PlacedLine(
                             bi, 0, 0, leftIndent, yCursor, Math.Max(0, contentWidth - leftIndent),
                             empty.Total, yCursor + empty.Ascent, Batch: null, LineOffsetY: 0f,
-                            kind, IsBlockStart: true));
+                            BatchStart: 0, kind, IsBlockStart: true));
                         yCursor += empty.Total;
                     }
                     else
@@ -325,7 +325,7 @@ public sealed class FlowLayoutEngine
                     lines.Add(new PlacedLine(
                         blockIndex, 0, 0, segment.X, yCursor, segment.Width, height,
                         yCursor + empty.Ascent, Batch: null, LineOffsetY: 0f,
-                        PlacedLineKind.Divider, IsBlockStart: true));
+                        BatchStart: 0, PlacedLineKind.Divider, IsBlockStart: true));
                     yCursor += height;
                     return;
                 }
@@ -542,7 +542,7 @@ public sealed class FlowLayoutEngine
         float baseline = yCursor + maxAscent;
         int rowConsumed = 0;
         bool firstPending = true;
-        foreach (var (segment, line, batch, lineIndex, charStart) in pending)
+        foreach (var (segment, line, batch, lineIndex, charStart, batchStart) in pending)
         {
             lines.Add(new PlacedLine(
                 blockIndex,
@@ -555,6 +555,7 @@ public sealed class FlowLayoutEngine
                 baseline,
                 batch,
                 line.OffsetY,
+                batchStart,
                 kind,
                 isBlockStart && firstPending));
             firstPending = false;
@@ -581,7 +582,8 @@ public sealed class FlowLayoutEngine
     }
 
     /// <summary>逐段探测一行：按 X 序填充各段，段间顺序消费文本（只看不取，提交在 LayoutRow）。</summary>
-    private List<(HInterval Segment, MeasuredLine Line, ILineBatch Batch, int LineIndex, int CharStart)> ProbeRow(
+    private List<(HInterval Segment, MeasuredLine Line, ILineBatch Batch, int LineIndex, int CharStart,
+        int BatchStart)> ProbeRow(
         IReadOnlyList<TextRun> runs,
         int textLength,
         int start,
@@ -592,7 +594,7 @@ public sealed class FlowLayoutEngine
         out float maxAscent,
         out float maxDescent)
     {
-        var pending = new List<(HInterval, MeasuredLine, ILineBatch, int, int)>();
+        var pending = new List<(HInterval, MeasuredLine, ILineBatch, int, int, int)>();
         maxAscent = 0f;
         maxDescent = 0f;
         int absPos = start;
@@ -612,7 +614,7 @@ public sealed class FlowLayoutEngine
                 // 窄段放弃：文本顺延到下一个有空间的段/带（Word 同款，防死循环的关键）。
                 continue;
             }
-            pending.Add((segment, found, cursor.Batch!, cursor.NextLine, absPos));
+            pending.Add((segment, found, cursor.Batch!, cursor.NextLine, absPos, cursor.StartPos));
             absPos += found.CharsConsumed;
             maxAscent = Math.Max(maxAscent, found.Ascent);
             maxDescent = Math.Max(maxDescent, found.Descent);

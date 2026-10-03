@@ -69,9 +69,10 @@ public static class CaretGeometryCalculator
         line ??= layout.Lines[^1]; // 块索引越界：钳到全文末行
 
         // GetCaretGeometry 的 characterIndex 是批文本流内偏移（与 HitTestChar/GetCharRegions 同坐标系）：
-        // 批内偏移 = 块内偏移（批的文本起点 == 行的 CharStart 由排版引擎保证）
-        int batchIndex = Math.Clamp(position.CharIndex, 0,
-            line.CharStart + line.CharCount);
+        // 批的文本 = 块文本从 line.BatchStart 起的切片（绕图换段时批会在中途重建），
+        // 批内偏移 = 块内偏移 − BatchStart；上界取「本行行尾的批内偏移」。
+        int batchIndex = Math.Clamp(position.CharIndex - line.BatchStart, 0,
+            line.CharStart + line.CharCount - line.BatchStart);
         var (x, yTop, height) = line.Batch!.GetCaretGeometry(batchIndex, isTrailing: isLineEnd);
         // 批布局坐标 → 文档坐标：行盒文档原点 + (批内偏移 − 行在批内的偏移)
         float docX = line.X + x;
@@ -120,8 +121,9 @@ public static class CaretGeometryCalculator
                 continue;
             }
 
-            // GetCharRegions 的 characterIndex 是批文本流内偏移（与 HitTestChar 同坐标系）
-            int batchStart = selStart;
+            // GetCharRegions 的 characterIndex 是批文本流内偏移（与 HitTestChar 同坐标系）：
+            // 批内偏移 = 块内偏移 − BatchStart（绕图换段时批会在中途重建）
+            int batchStart = selStart - line.BatchStart;
             int batchCount = selEnd - selStart;
             foreach (var region in line.Batch.GetCharRegions(batchStart, batchCount))
             {
