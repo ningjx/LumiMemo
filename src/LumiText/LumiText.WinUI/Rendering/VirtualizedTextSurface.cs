@@ -46,10 +46,18 @@ public sealed class VirtualizedTextSurface : IDisposable
     private float _widthDips;
     private float _viewportHeightDips;
     private float _documentHeightDips;
-    private float _surfaceHeightDips;
+    private float _surfaceWidthDips;   // 钳制后的实际 surface 逻辑宽（DIP）
+    private float _surfaceHeightDips;  // 钳制后的实际 surface 逻辑高（DIP）
     private float _scale = 1f;
     private float _originY;
     private bool _pendingRedraw;
+
+    /// <summary>
+    /// surface 单边像素上限。D3D11 纹理硬上限 16384，拉大窗口时 surface 像素尺寸
+    /// （宽/高 DIP × scale）若超限，CreateDrawingSession 抛 ArgumentException
+    /// （Win2D 内建限制，无 API 预查）——钳到安全值之下避免崩溃。
+    /// </summary>
+    private const float MaxSurfacePixelEdge = 16000f;
 
     /// <summary>最近一次整面重绘耗时（毫秒；§10.3 一屏重绘基准的数据源）。</summary>
     public double LastRedrawMs { get; private set; }
@@ -89,9 +97,18 @@ public sealed class VirtualizedTextSurface : IDisposable
             return;
         }
 
-        if (_surface is null || Math.Abs(surfaceHeight - _surfaceHeightDips) > 0.5f)
+        // 与 RebuildSurface 一致的钳制（避免「请求值 ≠ 钳制值」导致每次 SetMetrics 都重建）
+        float maxDipW = MaxSurfacePixelEdge / _scale;
+        float maxDipH = MaxSurfacePixelEdge / _scale;
+        float wantW = Math.Min(_widthDips, maxDipW);
+        float wantH = Math.Min(surfaceHeight, maxDipH);
+
+        bool needRebuild = _surface is null
+            || Math.Abs(wantH - _surfaceHeightDips) > 0.5f
+            || Math.Abs(wantW - _surfaceWidthDips) > 0.5f;
+        if (needRebuild)
         {
-            _surfaceHeightDips = surfaceHeight;
+            _surfaceHeightDips = surfaceHeight; // 未钳制值，RebuildSurface 内再钳
             RebuildSurface();
         }
         Redraw(_originY);
@@ -160,8 +177,14 @@ public sealed class VirtualizedTextSurface : IDisposable
     private void RebuildSurface()
     {
         _surface?.Dispose();
-        int pixelW = Math.Max(1, (int)Math.Ceiling(_widthDips * _scale));
-        int pixelH = Math.Max(1, (int)Math.Ceiling(_surfaceHeightDips * _scale));
+        // 像素尺寸钳制：拉大到超纹理上限时，把 surface 逻辑尺寸等比缩小，
+        // 避免 CreateDrawingSession ArgumentException（视觉上网格拉伸 Fill 会等比缩放，可接受）。
+        float maxDipW = MaxSurfacePixelEdge / _scale;
+        float maxDipH = MaxSurfacePixelEdge / _scale;
+        float surfW = Math.Min(_widthDips, maxDipW);
+        float surfH = Math.Min(_surfaceHeightDips, maxDipH);
+        int pixelW = Math.Max(1, (int)Math.Ceiling(surfW * _scale));
+        int pixelH = Math.Max(1, (int)Math.Ceiling(surfH * _scale));
         _surface = _graphicsDevice!.CreateVirtualDrawingSurface(
             new Windows.Graphics.SizeInt32(pixelW, pixelH),
             DirectXPixelFormat.B8G8R8A8UIntNormalized,
@@ -170,8 +193,11 @@ public sealed class VirtualizedTextSurface : IDisposable
         var brush = _compositor!.CreateSurfaceBrush(_surface);
         brush.Stretch = CompositionStretch.Fill;
         _sprite!.Brush = brush;
-        _sprite.Size = new Vector2(_widthDips, _surfaceHeightDips);
+        _sprite.Size = new Vector2(surfW, surfH);
         _sprite.Offset = new Vector3(0, _originY, 0);
+        // 记录钳制后的实际逻辑尺寸，Redraw 的 updateRect 用它（与 surface 像素严格对应）
+        _surfaceWidthDips = surfW;
+        _surfaceHeightDips = surfH;
     }
 
     private void Redraw(float newOrigin)
@@ -187,7 +213,8 @@ public sealed class VirtualizedTextSurface : IDisposable
             _originY = newOrigin;
             _sprite!.Offset = new Vector3(0, _originY, 0);
 
-            int pixelW = Math.Max(1, (int)Math.Ceiling(_widthDips * _scale));
+            // updateRect 与 RebuildSurface 的像素尺寸严格对应（用钳制后的逻辑尺寸换算）
+            int pixelW = Math.Max(1, (int)Math.Ceiling(_surfaceWidthDips * _scale));
             int pixelH = Math.Max(1, (int)Math.Ceiling(_surfaceHeightDips * _scale));
             var updateRect = new Rect(0, 0, pixelW, pixelH);
             using (var session = CanvasComposition.CreateDrawingSession(_surface, updateRect))
@@ -199,8 +226,13 @@ public sealed class VirtualizedTextSurface : IDisposable
                 session.Transform = Matrix3x2.CreateScale(_scale)
                     * Matrix3x2.CreateTranslation(0, -_originY * _scale);
                 RenderViewport?.Invoke(session,
-                    new Rect(0, _originY, _widthDips, _surfaceHeightDips), _scale);
+                    new Rect(0, _originY, _surfaceWidthDips, _surfaceHeightDips), _scale);
             }
+        }
+        catch (ArgumentException)
+        {
+            // CreateDrawingSession 在极端尺寸下抛 ArgumentException（Win2D 内建纹理限制，
+            // 无 API 预查；CommunityToolkit 同款处理）——跳过本次重绘，不让应用崩。
         }
         finally
         {
