@@ -42,6 +42,21 @@ public sealed class HitTestCharLevelTests
     }
 
     [Fact]
+    public void HitTest_OnDivider_LandsOnNearestTextLine()
+    {
+        // 分隔线占位行盒（Y=20..40）没有可放光标的文本位置：点它落到最近的文本行
+        using var result = Layout(
+            new ParagraphBlock(FakeTextMeasurer.Text(4)),
+            new DividerBlock(),
+            new ParagraphBlock(FakeTextMeasurer.Text(4)));
+
+        var hit = result.HitTest(24, 25); // 离上一行（底缘 20）比下一行（顶缘 40）近
+        Assert.True(hit.Found);
+        Assert.Equal(0, hit.BlockIndex);
+        Assert.Equal(2, hit.CharIndex);
+    }
+
+    [Fact]
     public void HitTest_MiddleOfLine_CharIndexMatchesOffset()
     {
         using var result = Layout(new ParagraphBlock(FakeTextMeasurer.Text(20)));

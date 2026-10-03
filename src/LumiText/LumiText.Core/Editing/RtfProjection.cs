@@ -74,14 +74,15 @@ public static class RtfProjection
                 default:
                     if (BlockTextOps.IsTextBlock(block))
                     {
-                        // Heading 用字号比表达（RTF 无标题概念，用绝对字号 \fs，单位半磅）
+                        // Heading 用字号比表达（RTF 无标题概念，用绝对字号 \fs，单位半磅）+ 块级加粗
+                        bool blockBold = block is HeadingBlock { EffectiveStyle.Bold: true };
                         if (block is HeadingBlock h)
                         {
                             sb.Append(@"\fs").Append((int)(h.EffectiveStyle.FontSize * 2)).Append(' ');
                         }
                         foreach (var run in BlockTextOps.GetRuns(block))
                         {
-                            AppendRun(sb, run, colorIndex);
+                            AppendRun(sb, run, colorIndex, blockBold);
                         }
                         if (block is HeadingBlock)
                         {
@@ -95,11 +96,15 @@ public static class RtfProjection
         return sb.ToString();
     }
 
-    private static void AppendRun(StringBuilder sb, TextRun run, Dictionary<Color32, int> colorIndex)
+    private static void AppendRun(StringBuilder sb, TextRun run, Dictionary<Color32, int> colorIndex,
+        bool blockBold = false)
     {
         var style = run.Style;
-        bool hasStyle = style is not null &&
-            (style.Bold || style.Italic || style.Strikethrough || style.Underline || style.Color is not null);
+        // 块级加粗（标题的 EffectiveStyle.Bold）与 run 级加粗取或：H1–H3 复制到 Word 也要粗
+        bool bold = blockBold || (style?.Bold ?? false);
+        bool hasStyle = bold ||
+            (style is not null &&
+                (style.Italic || style.Strikethrough || style.Underline || style.Color is not null));
         if (!hasStyle)
         {
             AppendEscaped(sb, run.Text);
@@ -107,22 +112,22 @@ public static class RtfProjection
         }
 
         sb.Append('{');
-        if (style!.Bold) sb.Append(@"\b");
-        if (style.Italic) sb.Append(@"\i");
-        if (style.Underline) sb.Append(@"\ul");
-        if (style.Strikethrough) sb.Append(@"\strike");
-        if (style.Color is { } c && colorIndex.TryGetValue(c, out int idx))
+        if (bold) sb.Append(@"\b");
+        if (style?.Italic == true) sb.Append(@"\i");
+        if (style?.Underline == true) sb.Append(@"\ul");
+        if (style?.Strikethrough == true) sb.Append(@"\strike");
+        if (style?.Color is { } c && colorIndex.TryGetValue(c, out int idx))
         {
             sb.Append(@"\cf").Append(idx);
         }
         sb.Append(' ');
         AppendEscaped(sb, run.Text);
         // 关闭样式
-        if (style.Bold) sb.Append(@"\b0");
-        if (style.Italic) sb.Append(@"\i0");
-        if (style.Underline) sb.Append(@"\ul0");
-        if (style.Strikethrough) sb.Append(@"\strike0");
-        if (style.Color is not null) sb.Append(@"\cf0");
+        if (bold) sb.Append(@"\b0");
+        if (style?.Italic == true) sb.Append(@"\i0");
+        if (style?.Underline == true) sb.Append(@"\ul0");
+        if (style?.Strikethrough == true) sb.Append(@"\strike0");
+        if (style?.Color is not null) sb.Append(@"\cf0");
         sb.Append('}');
     }
 

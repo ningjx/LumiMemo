@@ -67,6 +67,17 @@ public sealed class RtfProjectionTests
     }
 
     [Fact]
+    public void ToRtf_Heading_CarriesFontSizeAndBlockBold()
+    {
+        // 标题的加粗在块级 EffectiveStyle 上（run 无显式样式）：复制到 Word 也要粗 + 大字号
+        var doc = new Document([new HeadingBlock([new TextRun("标题")], level: 1)]);
+
+        string rtf = RtfProjection.ToRtf(doc);
+        Assert.Contains(@"\b", rtf);
+        Assert.Contains(@"\fs44", rtf); // H1 22pt → RTF 半磅 44
+    }
+
+    [Fact]
     public void RoundTrip_Unicode_EscapedAndRestored()
     {
         var doc = new Document([new ParagraphBlock("中文、Emoji🎉、日文テスト")]);

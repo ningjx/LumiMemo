@@ -250,7 +250,10 @@ public readonly record struct BlockExtent(int BlockIndex, LayoutRect Rect);
   - Home/End = 当前行首/末字符（行盒 `CharStart` / `CharStart + CharCount`）；
   - Ctrl+Home / Ctrl+End = 文档首 / 尾；
 - **goal-X**：连续 Up/Down 记忆期望列（其它按键清除），短行穿越时不过早贴边；
-- Shift 扩选沿用现有 `SetSelection(new TextRange(anchor, newPos))` 模式。
+- Shift 扩选沿用现有 `SetSelection(new TextRange(anchor, newPos))` 模式；
+- Ctrl+A 全选 = 首个可放光标块的行首 → 末个可放光标块的行尾（图片块跳过，同 `DocumentEdge`）；
+- 分隔线占位行盒**不参与命中**（点它落到最近的文本行）——占位行盒上没有可放光标的文本位置，
+  导航（Up/Down）同样不停在它上面（2026-10-04 补）。
 
 ---
 

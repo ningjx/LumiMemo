@@ -43,6 +43,12 @@ public sealed class LumiEditor : Grid
     private TsfManager? _tsf;
     private readonly DispatcherTimer _caretBlink;
     private bool _caretVisible = true;
+
+    /// <summary>上下移动的期望列（文档坐标 X，Phase 3 M6 §6.4）；null = 下一趟重取。</summary>
+    private float? _goalCaretX;
+
+    /// <summary>期望列对应的落点：光标落点与它不同（被点击/打字/左右键改过）时重取期望列。</summary>
+    private TextPosition _goalPosition;
     private readonly Microsoft.UI.Input.InputCursor _ibeamCursor;
     private readonly Microsoft.UI.Input.InputCursor _handCursor;
 
@@ -703,8 +709,36 @@ public sealed class LumiEditor : Grid
                 MoveCaret(1, shift);
                 e.Handled = true;
                 break;
+            case VirtualKey.Up:
+                MoveVertical(-1, shift);
+                e.Handled = true;
+                break;
+            case VirtualKey.Down:
+                MoveVertical(1, shift);
+                e.Handled = true;
+                break;
+            case VirtualKey.Home when ctrl:
+                MoveTo(CaretNavigator.DocumentEdge(_core.Document.Blocks, toEnd: false), shift);
+                e.Handled = true;
+                break;
+            case VirtualKey.End when ctrl:
+                MoveTo(CaretNavigator.DocumentEdge(_core.Document.Blocks, toEnd: true), shift);
+                e.Handled = true;
+                break;
+            case VirtualKey.Home:
+                MoveToLineEdge(toEnd: false, shift);
+                e.Handled = true;
+                break;
+            case VirtualKey.End:
+                MoveToLineEdge(toEnd: true, shift);
+                e.Handled = true;
+                break;
             case VirtualKey.B when ctrl:
                 _core.ApplyCommand(new ApplyInlineStyleCommand(_core.Selection, InlineStyleFlag.Bold));
+                e.Handled = true;
+                break;
+            case VirtualKey.A when ctrl:
+                SelectAll();
                 e.Handled = true;
                 break;
             case VirtualKey.I when ctrl:
@@ -845,12 +879,74 @@ public sealed class LumiEditor : Grid
 
         if (extend)
         {
-            _core.SetSelection(new TextRange(_core.Selection.Anchor, newPos));
+            MoveTo(newPos, extend: true);
         }
         else
         {
-            _core.SetSelection(TextRange.Collapse(newPos));
+            MoveTo(newPos, extend: false);
         }
+    }
+
+    /// <summary>
+    /// 上下移动（Phase 3 M6 §6.4）：按<b>视觉行</b>走（行盒序 = 视觉序，跨块自然成立），
+    /// 目标行内按<b>期望列</b>（goal-X）命中字符——一趟连续上下移动里列宽固定，
+    /// 短行穿过时不会过早贴边；光标被点击/打字/左右键改动过（落点与上次不同）就按当前位置重取。
+    /// </summary>
+    private void MoveVertical(int direction, bool extend)
+    {
+        if (_core is null || _renderer.Current is not { } layout)
+        {
+            return;
+        }
+        var position = _core.Selection.Active;
+        float? goal = _goalCaretX;
+        if (goal is null || position != _goalPosition)
+        {
+            goal = CaretGeometryCalculator.GetCaret(layout, position)?.X ?? 0f;
+            _goalCaretX = goal;
+        }
+        var target = CaretNavigator.Vertical(layout, position, goal.Value, down: direction > 0);
+        if (target == position)
+        {
+            return; // 首/末行：原地不动（期望列留给下一次）
+        }
+        _goalPosition = target;
+        MoveTo(target, extend);
+    }
+
+    /// <summary>Home/End：当前视觉行的行首/行末。</summary>
+    private void MoveToLineEdge(bool toEnd, bool extend)
+    {
+        if (_core is null || _renderer.Current is not { } layout)
+        {
+            return;
+        }
+        MoveTo(CaretNavigator.LineEdge(layout, _core.Selection.Active, toEnd), extend);
+    }
+
+    /// <summary>设置光标（Shift 扩选：锚点保持、活动端移动）。</summary>
+    private void MoveTo(TextPosition position, bool extend)
+    {
+        if (_core is null)
+        {
+            return;
+        }
+        _core.SetSelection(extend
+            ? new TextRange(_core.Selection.Anchor, position)
+            : TextRange.Collapse(position));
+    }
+
+    /// <summary>全选（Ctrl+A）：首个可放光标块的行首 → 末个可放光标块的行尾（图片块跳过）。</summary>
+    private void SelectAll()
+    {
+        if (_core is null)
+        {
+            return;
+        }
+        var blocks = _core.Document.Blocks;
+        _core.SetSelection(new TextRange(
+            CaretNavigator.DocumentEdge(blocks, toEnd: false),
+            CaretNavigator.DocumentEdge(blocks, toEnd: true)));
     }
 
     private void OnTappedHandler(object sender, TappedRoutedEventArgs e)

@@ -85,11 +85,11 @@ public sealed class LayoutResult : IDisposable
             return default;
         }
 
-        // 第一条纵向相交的文本行（行盒按 Y 有序）：跳过「底缘在图片顶缘之上」的行
+        // 第一条纵向相交的文本行（行盒按 Y 有序）：跳过「底缘在图片顶缘之上」的行与分隔线占位行
         PlacedLine? first = null;
         foreach (var line in Lines)
         {
-            if (line.Y + line.Height <= imageRect.Y)
+            if (line.Kind == PlacedLineKind.Divider || line.Y + line.Height <= imageRect.Y)
             {
                 continue;
             }
@@ -269,13 +269,14 @@ public sealed class LayoutResult : IDisposable
     /// 点在行盒矩形之外但纵向仍落在该行高度内（短行右侧空白、缩进区左侧、
     /// 被浮动挤开的窄行两端）→ 取横向距离最近的行，落行首/行尾——
     /// 否则「行尾空白点不到、拖选经过空白就断」。
+    /// 分隔线占位行盒不参与命中（那里没有可放光标的文本位置）：点它落到最近的文本行。
     /// 纵向整篇之外：首行之上 → 文档首，末行之下 → 文档末。
     /// </remarks>
     public HitTestResult HitTest(float x, float y)
     {
         foreach (var line in Lines)
         {
-            if (!line.Bounds.Contains(x, y))
+            if (line.Kind == PlacedLineKind.Divider || !line.Bounds.Contains(x, y))
             {
                 continue;
             }
@@ -295,6 +296,10 @@ public sealed class LayoutResult : IDisposable
         float bestHorizontal = float.MaxValue;
         foreach (var line in Lines)
         {
+            if (line.Kind == PlacedLineKind.Divider)
+            {
+                continue; // 分隔线占位行盒：光标落不上去（点它取最近的文本行）
+            }
             float vertical = y < line.Y
                 ? line.Y - y
                 : y >= line.Y + line.Height ? y - (line.Y + line.Height) : 0f;
