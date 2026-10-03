@@ -588,6 +588,14 @@ public sealed class LumiEditor : Grid
                 ? f with { Anchor = null, AnchorToChar = false, Rect = dragRect, Margin = 0f }
                 : f)];
         }
+        else if (_resizePreview is { } resizeRect && _selectedImageBlock >= 0)
+        {
+            // 缩放拖动期间图片本体也实时重排（Rect 直给路径，与拖动同款）：
+            // 否则只有手柄在动、图片要松手才变。松手仍按锚定规则提交（见 OnImageHandleReleased）
+            floats = [.. floats.Select(f => f.Id == _selectedImageBlock
+                ? f with { Anchor = null, AnchorToChar = false, Rect = resizeRect }
+                : f)];
+        }
         var result = _renderer.UpdateLayout(_document.Blocks, floats, (float)ActualWidth);
         _contentGrid.Height = Math.Max(result.TotalHeight, ActualHeight);
         _surfaceHost.Height = ActualHeight;
@@ -1922,7 +1930,7 @@ public sealed class LumiEditor : Grid
         // 左/上侧手柄松手时还要按新左上角重锚，落位会吸到字符/行上（见 OnImageHandleReleased）。
         _resizePreview = ImageResizeGeometry.Resize(
             _resizeStartRect, _resizeHandle, (float)point.X, (float)point.Y, maxWidth);
-        UpdateImageOverlay();
+        Relayout(); // 图片本体与文字环绕一起实时跟着预览矩形重排
     }
 
     private void OnImageHandleReleased(object sender, PointerRoutedEventArgs e)
@@ -1969,7 +1977,7 @@ public sealed class LumiEditor : Grid
         _resizeHandle = ImageHandle.None;
         _resizePreview = null;
         ClearResizeNaturalLayout();
-        UpdateImageOverlay();
+        Relayout(); // 预览矩形已进了版面：取消时也要重排回去
     }
 
     /// <summary>左/上侧手柄：图片左上角会移动，落位需按新左上角重算锚点。</summary>
