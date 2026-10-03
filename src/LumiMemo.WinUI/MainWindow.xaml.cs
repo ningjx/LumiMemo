@@ -268,21 +268,22 @@ public sealed partial class MainWindow : Window
 
     private void OnHeading3Click(object sender, RoutedEventArgs e) => _editor.ExecuteCommand("h3");
 
-    /// <summary>标题按钮态随光标所在块刷新（Phase 3 M2 §6.1）：已在该级别显示为按下。</summary>
+    /// <summary>标题按钮态随光标所在块刷新（Phase 3 M2 §6.1）：已在该级别显示为按下；
+    /// 分点/勾选按钮同源（Phase 3 打磨）：光标所在块已带标记就显示为激活。</summary>
     private void OnCaretBlockChanged(object? sender, EventArgs e)
     {
         int level = _editor.CaretHeadingLevel;
         Heading1Button.IsChecked = level == 1;
         Heading2Button.IsChecked = level == 2;
         Heading3Button.IsChecked = level == 3;
+        BulletButton.IsChecked = _editor.CaretIsBullet;
+        TodoButton.IsChecked = _editor.CaretIsTodo;
     }
 
-    /// <summary>块背景色的 Alpha：保住毛玻璃透出的观感约束（Phase 3 §9 R4，上限 0x40）。</summary>
-    private const byte BlockBackgroundAlpha = 0x40;
-
     /// <summary>
-    /// 段落底色色板（Phase 3 M1）：便签纸色系 × 低 Alpha 色块，作用到选区覆盖的块；
-    /// 末位「无」清除。色块显示纸面色（实色），写入块的色值 = 同色 × <see cref="BlockBackgroundAlpha"/>。
+    /// 文字底色色板（Phase 3 打磨，取代原「段落底色」）：作用于<b>选中文字</b>；
+    /// 末位「无」清除。色值用纸面色<b>实色</b>（RTF 颜色表没有 alpha 通道，
+    /// 带透明度的底色在复制粘贴时会被抹平——高亮面积小，实色不影响毛玻璃观感）。
     /// </summary>
     private void OnBackgroundClick(object sender, RoutedEventArgs e)
     {
@@ -303,7 +304,7 @@ public sealed partial class MainWindow : Window
         foreach (NoteColor color in Enum.GetValues<NoteColor>())
         {
             var paper = NoteColorPalette.Paper(color);
-            var tint = new LumiText.Core.Documents.Color32(BlockBackgroundAlpha, paper.R, paper.G, paper.B);
+            var highlight = new LumiText.Core.Documents.Color32(0xFF, paper.R, paper.G, paper.B);
             var swatch = new Button
             {
                 Width = 22,
@@ -318,7 +319,7 @@ public sealed partial class MainWindow : Window
             swatch.Click += (_, _) =>
             {
                 flyout.Hide();
-                _editor.SetBlockBackground(tint);
+                _editor.SetInlineBackground(highlight);
             };
             panel.Children.Add(swatch);
         }
@@ -334,11 +335,11 @@ public sealed partial class MainWindow : Window
             BorderBrush = border,
             Content = new TextBlock { Text = "无", FontSize = 10 },
         };
-        ToolTipService.SetToolTip(clear, "清除底色");
+        ToolTipService.SetToolTip(clear, "清除文字底色");
         clear.Click += (_, _) =>
         {
             flyout.Hide();
-            _editor.SetBlockBackground(null);
+            _editor.SetInlineBackground(null);
         };
         panel.Children.Add(clear);
 

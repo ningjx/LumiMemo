@@ -51,6 +51,29 @@ public sealed class RtfProjectionTests
     }
 
     [Fact]
+    public void RoundTrip_InlineBackground_Preserved()
+    {
+        // 文字底色走 \highlight + 颜色表（与 \cf 共用）：应用内复制粘贴不能丢底色。
+        // RTF 颜色表没有 alpha 通道，故底色用不透明色（工具栏给的也是纸面色实色）。
+        var highlight = new Color32(0xFF, 0xFF, 0xD9, 0x66);
+        var doc = new Document([
+            new ParagraphBlock([
+                new TextRun("带底色", new InlineStyle(Background: highlight)),
+                new TextRun("普通"),
+            ]),
+        ]);
+
+        string rtf = RtfProjection.ToRtf(doc);
+        Assert.Contains(@"\highlight1", rtf);
+        Assert.Contains(@"\red255\green217\blue102", rtf);
+
+        var back = RtfProjection.FromRtf(rtf);
+        var p = Assert.IsType<ParagraphBlock>(back.Blocks[0]);
+        Assert.Equal(highlight, p.Runs[0].Style!.Background);
+        Assert.Null(p.Runs[1].Style?.Background);
+    }
+
+    [Fact]
     public void RoundTrip_MultipleParagraphs_Preserved()
     {
         var doc = new Document([

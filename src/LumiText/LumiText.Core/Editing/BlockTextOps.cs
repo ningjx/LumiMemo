@@ -39,21 +39,12 @@ public static class BlockTextOps
         _ => throw new InvalidOperationException($"{block.GetType().Name} 不承载文本 run。"),
     };
 
-    /// <summary>用新 run 序列重建同型块（保留块级属性：层级/勾选态/样式/间距/bullet 标记/底色）。</summary>
+    /// <summary>用新 run 序列重建同型块（保留块级属性：层级/勾选态/样式/间距/bullet 标记）。</summary>
     public static Block WithRuns(Block block, IReadOnlyList<TextRun> runs) => block switch
     {
-        ParagraphBlock p => new ParagraphBlock(runs, p.Style, p.SpaceAfter, p.IsBullet)
-        {
-            Background = p.Background,
-        },
-        HeadingBlock h => new HeadingBlock(runs, h.Level, h.SpaceAfter)
-        {
-            Background = h.Background,
-        },
-        TodoBlock t => new TodoBlock(runs, t.Checked, t.SpaceAfter)
-        {
-            Background = t.Background,
-        },
+        ParagraphBlock p => new ParagraphBlock(runs, p.Style, p.SpaceAfter, p.IsBullet),
+        HeadingBlock h => new HeadingBlock(runs, h.Level, h.SpaceAfter),
+        TodoBlock t => new TodoBlock(runs, t.Checked, t.SpaceAfter),
         _ => throw new InvalidOperationException($"{block.GetType().Name} 不承载文本 run。"),
     };
 

@@ -111,13 +111,12 @@ public sealed class HeadingCommandTests
     }
 
     [Fact]
-    public void SetHeading_PreservesBackgroundAndSelection()
+    public void SetHeading_PreservesSpaceAfterAndSelection()
     {
-        var state = StateWith(new ParagraphBlock("标题", spaceAfter: 6f) { Background = Bg })
+        var state = StateWith(new ParagraphBlock("标题", spaceAfter: 6f))
             with { Selection = Caret(0) };
         var after = new SetHeadingLevelCommand(state.Selection, 1).Apply(state);
         var h = Assert.IsType<HeadingBlock>(after.Document.Blocks[0]);
-        Assert.Equal(Bg, h.Background);
         Assert.Equal(6f, h.SpaceAfter);
         Assert.Equal(state.Selection, after.Selection);
     }

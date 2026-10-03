@@ -4,6 +4,7 @@ using Microsoft.Graphics.Canvas;
 using Microsoft.Graphics.Canvas.Geometry;
 using Microsoft.Graphics.Canvas.Text;
 using LumiText.Core.Documents;
+using LumiText.Core.Editing;
 using LumiText.Core.Layout;
 using Windows.UI;
 
@@ -30,9 +31,6 @@ public sealed class FlowDocumentRenderer
 
     /// <summary>堆叠一致性容差（与引擎 Epsilon 同值）。</summary>
     private const float StackingEpsilon = 0.01f;
-
-    /// <summary>块背景圆角半径（dip，Phase 3 §4；视觉值走界面检查微调）。</summary>
-    private const float BackgroundCornerRadius = 5f;
 
     /// <summary>Todo 复选框悬停高亮底色（Phase 3 M3，墨色低 alpha）。</summary>
     private static readonly Color CheckboxHoverFill = Color.FromArgb(0x28, 40, 32, 48);
@@ -119,27 +117,22 @@ public sealed class FlowDocumentRenderer
     /// 行盒 Y 有序，二分定位首行；只画与视口相交的批组、浮动与块级覆盖层。
     /// 调用方负责把「文档坐标 → surface 局部坐标」的平移放进 session.Transform。
     /// </summary>
-    /// <param name="includeBlockBackgrounds">是否连带画块背景。编辑宿主（LumiEditor）的 z 序是
-    /// 「块背景 → 选区高亮 → 浮动/文字」，需自行先调 <see cref="RenderBlockBackgrounds"/>
-    /// 再带 <c>false</c> 调本方法，避免背景盖住选区；其余宿主保持默认一次画全。</param>
+    /// <param name="includeTextBackgrounds">是否连带画文字底色。编辑宿主（LumiEditor）的 z 序是
+    /// 「选区高亮 → 文字底色 → 浮动/文字」，需自行先调 <see cref="RenderTextBackgrounds"/>
+    /// 再带 <c>false</c> 调本方法，避免底色盖住选区；其余宿主保持默认一次画全。</param>
     public void Render(
         CanvasDrawingSession session,
         LayoutResult layout,
         Windows.Foundation.Rect viewport,
         Color textColor,
         bool debugOverlay,
-        bool includeBlockBackgrounds = true)
+        bool includeTextBackgrounds = true)
     {
         ArgumentNullException.ThrowIfNull(session);
         ArgumentNullException.ThrowIfNull(layout);
 
         float viewTop = (float)viewport.Y;
         float viewBottom = (float)(viewport.Y + viewport.Height);
-
-        if (includeBlockBackgrounds)
-        {
-            RenderBlockBackgrounds(session, layout, viewport);
-        }
 
         foreach (var f in layout.Floats)
         {
@@ -159,7 +152,7 @@ public sealed class FlowDocumentRenderer
                     session.DrawImage(bitmap, rect,
                         new Windows.Foundation.Rect(0, 0, bitmap.SizeInPixels.Width, bitmap.SizeInPixels.Height));
                 }
-                session.DrawRoundedRectangle(rect, 6, 6, FloatStroke, 1.5f);
+                // 图片本体不描边（圆角保留）：选中框由编辑器的覆盖层单独画
             }
             else
             {
@@ -169,6 +162,13 @@ public sealed class FlowDocumentRenderer
         }
 
         var lines = layout.Lines;
+
+        // 文字底色（Phase 3 打磨）：浮动之后、文字之前铺——与文字同层，不盖住图片
+        if (includeTextBackgrounds)
+        {
+            RenderTextBackgrounds(session, layout, viewport);
+        }
+
         int i = FirstLineAt(lines, viewTop);
         while (i < lines.Count && lines[i].Y < viewBottom)
         {
@@ -242,37 +242,62 @@ public sealed class FlowDocumentRenderer
     }
 
     /// <summary>
-    /// 块级背景通道（Phase 3 §4/§6）：整列圆角矩形，画在浮动与文字之下（浮动图片压在其上）。
-    /// 单独暴露是为了让编辑宿主把它排在选区高亮之前（背景 → 选区 → 文字）。
+    /// 文字底色通道（Phase 3 打磨，取代原块级背景通道）：把带
+    /// <see cref="InlineStyle.Background"/> 的 run 的字符区域铺成矩形。
+    /// 单独暴露是为了让编辑宿主把它排在选区高亮之后（选区 → 底色 → 文字），
+    /// 否则选中的带底色文字看不到选区色。
     /// </summary>
-    public void RenderBlockBackgrounds(
+    public void RenderTextBackgrounds(
         CanvasDrawingSession session, LayoutResult layout, Windows.Foundation.Rect viewport)
     {
         ArgumentNullException.ThrowIfNull(session);
         ArgumentNullException.ThrowIfNull(layout);
-        if (layout.Blocks is not { } blocks)
+        float viewBottom = (float)(viewport.Y + viewport.Height);
+        var lines = layout.Lines;
+        for (int k = FirstLineAt(lines, (float)viewport.Y); k < lines.Count && lines[k].Y < viewBottom; k++)
+        {
+            DrawRunBackgrounds(session, layout, lines[k]);
+        }
+    }
+
+    /// <summary>
+    /// 单行的文字底色：本行里带 <see cref="InlineStyle.Background"/> 的 run 的字符区域，
+    /// 批坐标 → 文档坐标的换算与选区几何同一条（<see cref="PlacedLine.BatchStart"/> /
+    /// <see cref="PlacedLine.LineOffsetY"/>）。
+    /// </summary>
+    private static void DrawRunBackgrounds(
+        CanvasDrawingSession session, LayoutResult layout, PlacedLine line)
+    {
+        if (line.Batch is not { } batch
+            || layout.Blocks is not { } blocks
+            || line.BlockIndex < 0 || line.BlockIndex >= blocks.Count
+            || !BlockTextOps.IsTextBlock(blocks[line.BlockIndex]))
         {
             return;
         }
 
-        float viewTop = (float)viewport.Y;
-        float viewBottom = (float)(viewport.Y + viewport.Height);
-        foreach (var extent in layout.BlockExtents)
+        int lineEnd = line.CharStart + line.CharCount;
+        int runStart = 0;
+        foreach (var run in BlockTextOps.GetRuns(blocks[line.BlockIndex]))
         {
-            var r = extent.Rect;
-            if (r.Bottom < viewTop || r.Y > viewBottom)
+            int runEnd = runStart + run.Text.Length;
+            int start = Math.Max(runStart, line.CharStart);
+            int end = Math.Min(runEnd, lineEnd);
+            runStart = runEnd;
+            if (start >= end || run.Style?.Background is not { } background)
             {
                 continue;
             }
-            if (extent.BlockIndex >= blocks.Count
-                || blocks[extent.BlockIndex].Background is not { } background)
+            foreach (var region in batch.GetCharRegions(start - line.BatchStart, end - start))
             {
-                continue;
+                session.FillRectangle(
+                    new Windows.Foundation.Rect(
+                        line.X + region.X,
+                        line.Y + (region.Y - line.LineOffsetY),
+                        region.Width,
+                        region.Height),
+                    FromColor32(background));
             }
-            session.FillRoundedRectangle(
-                new Windows.Foundation.Rect(r.X, r.Y, r.Width, r.Height),
-                BackgroundCornerRadius, BackgroundCornerRadius,
-                FromColor32(background));
         }
     }
 

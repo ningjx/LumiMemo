@@ -235,34 +235,35 @@ public sealed class DocumentSerializationTests
         Assert.Null(DocumentSerializer.Deserialize("""{"schema":99,"blocks":[]}"""));
     }
 
-    // T-S9：块级底色往返（Phase 3 M1）——bg 写出/读回；无底色块不写出该字段；
-    // 老 JSON 无该字段读为 null（纯增量字段，不动 schema 版本）
+    // T-S9（Phase 3 打磨改版）：文字底色（行内背景）往返——run 样式的 bg 写出/读回；
+    // 无底色 run 不写出该字段；老 JSON 无该字段读为 null
     [Fact]
-    public void RoundTrip_BlockBackground_PreservesColor()
+    public void RoundTrip_InlineBackground_PreservesColor()
     {
+        var highlight = new Color32(0x66, 0xFF, 0xD9, 0x66);
         var doc = new Document(
         [
-            new ParagraphBlock("带底色") { Background = new Color32(0x40, 0xFF, 0xD9, 0x66) },
-            new HeadingBlock("标题", 2) { Background = new Color32(255, 0, 0, 0) },
-            new ParagraphBlock("普通段"),
+            new ParagraphBlock([
+                new TextRun("带底色", new InlineStyle(Background: highlight)),
+                new TextRun("普通"),
+            ]),
         ]);
 
         string json = DocumentSerializer.Serialize(doc);
-        Assert.Contains("\"bg\": \"#40FFD966\"", json);
-        // 只有两个块带底色 → "bg" 恰好出现 2 次（无底色块不写出字段）
-        Assert.Equal(2, json.Split("\"bg\"").Length - 1);
+        Assert.Contains("\"bg\": \"#66FFD966\"", json);
+        Assert.Equal(1, json.Split("\"bg\"").Length - 1); // 只有带底色的 run 写出该字段
 
         var doc2 = DocumentSerializer.Deserialize(json);
         Assert.NotNull(doc2);
-        Assert.Equal(new Color32(0x40, 0xFF, 0xD9, 0x66), doc2.Blocks[0].Background);
-        Assert.Equal(new Color32(255, 0, 0, 0), doc2.Blocks[1].Background);
-        Assert.Null(doc2.Blocks[2].Background);
+        var paragraph = Assert.IsType<ParagraphBlock>(doc2.Blocks[0]);
+        Assert.Equal(highlight, paragraph.Runs[0].Style!.Background);
+        Assert.Null(paragraph.Runs[1].Style?.Background);
         Assert.Equal(json, DocumentSerializer.Serialize(doc2));
 
         var legacy = DocumentSerializer.Deserialize(
-            """{"schema":1,"blocks":[{"type":"paragraph","runs":[{"t":"x"}]}]}""");
+            """{"schema":1,"blocks":[{"type":"paragraph","runs":[{"t":"x","s":{"b":true}}]}]}""");
         Assert.NotNull(legacy);
-        Assert.Null(legacy.Blocks[0].Background);
+        Assert.Null(Assert.IsType<ParagraphBlock>(legacy.Blocks[0]).Runs[0].Style!.Background);
     }
 
     // T-S10：段落级粗体（Phase 3 M2）——ParagraphBlock.Style 带 bold 往返；bold=false 不写出；

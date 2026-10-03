@@ -345,6 +345,8 @@ public sealed class LumiEditor : Grid
     /// 工具栏命令（命令名与主程序工具栏对齐）。
     /// 粗/斜/下划/删线映射到 <see cref="ApplyInlineStyleCommand"/>；
     /// bullet/todo 映射到 <see cref="ToggleBulletCommand"/>/<see cref="ToggleTodoCommand"/>。
+    /// 执行后把焦点要回编辑区（Phase 3 打磨）：按钮还拿着焦点时按回车会「再触发一次按钮」，
+    /// 表现为刚输入文字就被取消标题/取消分点。
     /// </summary>
     public void ExecuteCommand(string command)
     {
@@ -382,34 +384,52 @@ public sealed class LumiEditor : Grid
                 _core.ApplyCommand(new SetHeadingLevelCommand(_core.Selection, 3));
                 break;
         }
+        FocusEditor();
     }
 
-    /// <summary>
-    /// 光标所在块的标题级别（0 = 非标题），供工具栏按钮态联动（Phase 3 M2 §6.1）。
-    /// </summary>
-    public int CaretHeadingLevel
+    /// <summary>把键盘焦点交还编辑区（工具栏点完按钮后必须调，否则回车会重复触发按钮）。</summary>
+    public void FocusEditor() => _scroller.Focus(FocusState.Programmatic);
+
+    /// <summary>光标所在块（无文档时为 null）。</summary>
+    private Block? CaretBlock
     {
         get
         {
             if (_core is null || _core.Document.Blocks.Count == 0)
             {
-                return 0;
+                return null;
             }
             int index = Math.Clamp(_core.Selection.Active.BlockIndex, 0, _core.Document.Blocks.Count - 1);
-            return _core.Document.Blocks[index] is HeadingBlock h ? h.Level : 0;
+            return _core.Document.Blocks[index];
         }
     }
+
+    /// <summary>
+    /// 光标所在块的标题级别（0 = 非标题），供工具栏按钮态联动（Phase 3 M2 §6.1）。
+    /// </summary>
+    public int CaretHeadingLevel => CaretBlock is HeadingBlock h ? h.Level : 0;
+
+    /// <summary>光标所在块是否分点段落（工具栏按钮态联动，Phase 3 打磨）。</summary>
+    public bool CaretIsBullet => CaretBlock is ParagraphBlock { IsBullet: true };
+
+    /// <summary>光标所在块是否待办块（工具栏按钮态联动，Phase 3 打磨）。</summary>
+    public bool CaretIsTodo => CaretBlock is TodoBlock;
 
     /// <summary>光标所在块变化（选区或文档变化）——工具栏按此刷新按钮态。</summary>
     public event EventHandler? CaretBlockChanged;
 
     /// <summary>
-    /// 块级背景（Phase 3 M1）：对当前选区覆盖的文本块设置底色（null = 清除）。
-    /// 工具栏色板入口；选区坍缩时作用于光标所在块。
+    /// 文字底色（Phase 3 打磨，取代原块级背景）：对当前选区覆盖的文字设置行内背景（null = 清除）。
+    /// 选区坍缩时不动（没有选中文字可上色）；设置后把焦点要回编辑区。
     /// </summary>
-    public void SetBlockBackground(Color32? color)
+    public void SetInlineBackground(Color32? color)
     {
-        _core?.ApplyCommand(new SetBlockBackgroundCommand(_core.Selection, color));
+        if (_core is null || _core.Selection.IsCollapsed)
+        {
+            return;
+        }
+        _core.ApplyCommand(new SetInlineBackgroundCommand(_core.Selection, color));
+        FocusEditor();
     }
 
     /// <summary>释放 TSF / surface / 图片资源（窗口关闭协议调用；与 Unloaded 清理互补）。</summary>
@@ -698,8 +718,12 @@ public sealed class LumiEditor : Grid
                 e.Handled = true;
                 break;
             case VirtualKey.Enter:
-                _core.ApplyCommand(new SplitBlockCommand(_core.Selection.Active));
+                HandleEnter();
                 e.Handled = true;
+                break;
+            case VirtualKey.Escape:
+                // Esc 退出分点/勾选（Phase 3 打磨）：没有可清的不消费按键，留给别的用途
+                e.Handled = ClearListMarks();
                 break;
             case VirtualKey.Left:
                 MoveCaret(-1, shift);
@@ -799,6 +823,30 @@ public sealed class LumiEditor : Grid
         e.Handled = true;
     }
 
+    /// <summary>
+    /// Enter：普通分块（标题内回车 → 新块为正文段，见 <see cref="SplitBlockCommand"/>）；
+    /// <b>空的分点/勾选行改为退出列表</b>（Phase 3 打磨，Word 同款）——空行上回车否则会
+    /// 无限续出新的分点/勾选框，等于没有出口。
+    /// </summary>
+    private void HandleEnter()
+    {
+        if (_core is null)
+        {
+            return;
+        }
+        var caret = _core.Selection.Active;
+        var blocks = _core.Document.Blocks;
+        if (_core.Selection.IsCollapsed
+            && caret.BlockIndex >= 0 && caret.BlockIndex < blocks.Count
+            && blocks[caret.BlockIndex] is TodoBlock or ParagraphBlock { IsBullet: true }
+            && BlockTextOps.GetTextLength(blocks[caret.BlockIndex]) == 0)
+        {
+            _core.ApplyCommand(new ClearListMarksCommand(TextRange.Collapse(caret)));
+            return;
+        }
+        _core.ApplyCommand(new SplitBlockCommand(caret));
+    }
+
     private void HandleBackspace()
     {
         if (_core!.Selection.IsCollapsed)
@@ -808,6 +856,13 @@ public sealed class LumiEditor : Grid
             {
                 _core.ApplyCommand(new DeleteRangeCommand(
                     new TextRange(new TextPosition(pos.BlockIndex, pos.CharIndex - 1), pos)));
+            }
+            else if (_core.Document.Blocks[pos.BlockIndex] is TodoBlock
+                or ParagraphBlock { IsBullet: true })
+            {
+                // 行首退格：先退出本行的分点/勾选（Phase 3 打磨，与 Esc / 按钮再按一次同一语义）。
+                // 再按一次才与前块合并——Word 同款：第一下退出列表、第二下并段。
+                _core.ApplyCommand(new ClearListMarksCommand(TextRange.Collapse(pos)));
             }
             else if (pos.BlockIndex > 0)
             {
@@ -934,6 +989,42 @@ public sealed class LumiEditor : Grid
         _core.SetSelection(extend
             ? new TextRange(_core.Selection.Anchor, position)
             : TextRange.Collapse(position));
+    }
+
+    /// <summary>
+    /// Esc 退出分点/勾选（Phase 3 打磨）：选区覆盖的段落（无选区 = 光标所在块）里只要有分点或
+    /// 勾选框就清掉——只清不加（<see cref="ClearListMarksCommand"/>）。
+    /// 返回是否有可清的（没有则不消费按键）。
+    /// </summary>
+    private bool ClearListMarks()
+    {
+        if (_core is null)
+        {
+            return false;
+        }
+        if (_tsf is { CompositionStartCount: > 0 })
+        {
+            return false; // 组字中：Esc 先留给输入法（取消候选），不动文档
+        }
+        var blocks = _core.Document.Blocks;
+        var (start, end) = (_core.Selection.Start, _core.Selection.End);
+        bool hasMark = false;
+        for (int i = Math.Max(0, start.BlockIndex);
+            i <= Math.Min(end.BlockIndex, blocks.Count - 1);
+            i++)
+        {
+            if (blocks[i] is TodoBlock || blocks[i] is ParagraphBlock { IsBullet: true })
+            {
+                hasMark = true;
+                break;
+            }
+        }
+        if (!hasMark)
+        {
+            return false;
+        }
+        _core.ApplyCommand(new ClearListMarksCommand(_core.Selection));
+        return true;
     }
 
     /// <summary>全选（Ctrl+A）：首个可放光标块的行首 → 末个可放光标块的行尾（图片块跳过）。</summary>
@@ -1657,9 +1748,6 @@ public sealed class LumiEditor : Grid
 
     // ---- OS 拖放插图（文件/位图拖入 → 落点锚定）----
 
-    private static readonly string[] ImageExtensions =
-        [".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"];
-
     private void OnDragOverHandler(object sender, DragEventArgs e)
     {
         bool accepted = e.DataView.Contains(StandardDataFormats.Bitmap)
@@ -1701,18 +1789,21 @@ public sealed class LumiEditor : Grid
             {
                 var reference = await e.DataView.GetBitmapAsync();
                 using var stream = await reference.OpenReadAsync();
-                await InsertImageFromStreamAsync(stream);
+                if (_core is not null)
+                {
+                    await WinClipboard.InsertImageAsync(_core, stream);
+                }
                 return;
             }
-            if (e.DataView.Contains(StandardDataFormats.StorageItems))
+            if (e.DataView.Contains(StandardDataFormats.StorageItems) && _core is not null)
             {
                 var items = await e.DataView.GetStorageItemsAsync();
                 foreach (var item in items)
                 {
-                    if (item is StorageFile file && IsImageFile(file))
+                    if (item is StorageFile file && WinClipboard.IsImageFile(file))
                     {
                         using var stream = await file.OpenReadAsync();
-                        await InsertImageFromStreamAsync(stream);
+                        await WinClipboard.InsertImageAsync(_core, stream);
                         break; // 一次拖放插一张（多文件时取第一张图片）
                     }
                 }
@@ -1728,19 +1819,6 @@ public sealed class LumiEditor : Grid
         }
     }
 
-    private static bool IsImageFile(StorageFile file) =>
-        ImageExtensions.Contains(System.IO.Path.GetExtension(file.Name), StringComparer.OrdinalIgnoreCase);
-
-    private async Task InsertImageFromStreamAsync(IRandomAccessStreamWithContentType stream)
-    {
-        if (_core is null || await WinClipboard.DecodeImageAsync(stream) is not { } decoded)
-        {
-            return;
-        }
-        _core.ApplyCommand(new InsertImageCommand(
-            $"img-{Guid.NewGuid():N}", decoded.Bytes, decoded.Mime, decoded.Width, decoded.Height));
-    }
-
     private void OnRenderViewport(CanvasDrawingSession session, Windows.Foundation.Rect viewport, float scale)
     {
         if (_renderer.Current is null)
@@ -1748,10 +1826,7 @@ public sealed class LumiEditor : Grid
             return;
         }
 
-        // 块背景最先（在选区高亮与文字之下）；渲染主通道随后画浮动与文字（跳过背景避免重画）
-        _renderer.RenderBlockBackgrounds(session, _renderer.Current, viewport);
-
-        // 选区高亮（文字下层，§4.5）
+        // 选区高亮（文字下层，§4.5）→ 文字底色（Phase 3 打磨）→ 浮动/文字
         if (_core is not null && !_core.Selection.IsCollapsed)
         {
             var rects = CaretGeometryCalculator.GetSelectionRects(_renderer.Current, _core.Selection);
@@ -1761,8 +1836,9 @@ public sealed class LumiEditor : Grid
             }
         }
 
+        _renderer.RenderTextBackgrounds(session, _renderer.Current, viewport);
         _renderer.Render(session, _renderer.Current, viewport, InkColor, DebugOverlay,
-            includeBlockBackgrounds: false);
+            includeTextBackgrounds: false);
 
         // OS 拖放落点指示线（Phase 3 M4）：拖入悬停期间画在落点字符处
         if (_dropIndicator is { } drop)

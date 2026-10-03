@@ -158,14 +158,14 @@
                         <TextBlock Text="S" FontSize="15" TextDecorations="Strikethrough" />
                     </Button>
                     <Rectangle Width="1" Height="18" Margin="3,0" Fill="#5075697C" />
-                    <Button Style="{StaticResource GlassButtonStyle}" Width="30" Height="30" Click="OnBulletClick" ToolTipService.ToolTip="分点列表">
+                    <ToggleButton x:Name="BulletButton" Style="{StaticResource GlassToggleButtonStyle}" Width="30" Height="30" Click="OnBulletClick" ToolTipService.ToolTip="分点列表（再按一次取消；Esc 也行）">
                         <TextBlock Text="•" FontSize="18" />
-                    </Button>
-                    <Button Style="{StaticResource GlassButtonStyle}" Width="30" Height="30" Click="OnTodoClick" ToolTipService.ToolTip="待办勾选">
+                    </ToggleButton>
+                    <ToggleButton x:Name="TodoButton" Style="{StaticResource GlassToggleButtonStyle}" Width="30" Height="30" Click="OnTodoClick" ToolTipService.ToolTip="待办勾选（再按一次取消；Esc 也行）">
                         <TextBlock Text="☐" FontSize="14" />
-                    </Button>
+                    </ToggleButton>
                     <Rectangle Width="1" Height="18" Margin="3,0" Fill="#5075697C" />
-                    <Button Style="{StaticResource GlassButtonStyle}" Width="30" Height="30" Click="OnBackgroundClick" ToolTipService.ToolTip="段落底色">
+                    <Button Style="{StaticResource GlassButtonStyle}" Width="30" Height="30" Click="OnBackgroundClick" ToolTipService.ToolTip="文字底色（作用于选中文字）">
                         <Border Width="17" Height="13" CornerRadius="3" Background="#59FDF3C4" BorderBrush="#8075697C" BorderThickness="1" />
                     </Button>
                     <Rectangle Width="1" Height="18" Margin="3,0" Fill="#5075697C" />

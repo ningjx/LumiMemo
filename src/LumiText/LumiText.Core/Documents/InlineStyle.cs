@@ -29,6 +29,7 @@ public readonly record struct Color32(byte A, byte R, byte G, byte B)
 
 /// <summary>
 /// 行内样式（Phase 1 设计 §3.2）：可空字段为 null 时继承段落样式。
+/// <see cref="Background"/> 是文字底色（Phase 3 打磨：原先的「整段底色」改为只作用于选中文字）。
 /// 首版显式不含：超链接、行内代码底色、字体族切换——均为「加字段即可向后兼容演进」。
 /// </summary>
 public sealed record InlineStyle(
@@ -37,4 +38,5 @@ public sealed record InlineStyle(
     [property: JsonPropertyName("st")] bool Strikethrough = false,
     [property: JsonPropertyName("u")] bool Underline = false,
     [property: JsonPropertyName("c"), JsonConverter(typeof(Color32JsonConverter))] Color32? Color = null,
-    [property: JsonPropertyName("r")] float? FontSizeRatio = null);
+    [property: JsonPropertyName("r")] float? FontSizeRatio = null,
+    [property: JsonPropertyName("bg"), JsonConverter(typeof(Color32JsonConverter))] Color32? Background = null);

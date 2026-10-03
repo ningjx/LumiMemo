@@ -55,7 +55,10 @@ public sealed record InsertImageCommand(
         }
 
         var imageBlock = new ImageBlock(ImageId, Width, Height,
-            new FloatPlacement(Side, Margin: 4f, Anchor: new FloatAnchor(anchorBlock, anchorChar)));
+            // 粘贴落位 = 光标处（Phase 3 打磨）：紧跟锚字符、不留外边距——
+            // 与原「按侧贴右缘」相比，插图现在落在光标所在位置而不是窗口最右
+            new FloatPlacement(Side, Margin: 0f,
+                Anchor: new FloatAnchor(anchorBlock, anchorChar), AnchorToChar: true));
 
         // 图片块插到锚点块之后
         var newBlocks = new List<Block>(blocks.Count + 1);

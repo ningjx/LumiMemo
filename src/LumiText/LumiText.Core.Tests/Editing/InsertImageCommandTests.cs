@@ -43,6 +43,10 @@ public sealed class InsertImageCommandTests
         Assert.NotNull(img.Float!.Anchor);
         Assert.Equal(0, img.Float.Anchor!.BlockIndex);
         Assert.Equal(2, img.Float.Anchor.CharIndex); // 锚定 caret 所在字符
+        // 落位语义（Phase 3 打磨）：紧跟锚字符、不留边距——粘贴的图片出现在光标处而不是窗口最右
+        Assert.True(img.Float.AnchorToChar);
+        Assert.Equal(0f, img.Float.Margin);
+        Assert.Null(img.Float.Position);
     }
 
     [Fact]

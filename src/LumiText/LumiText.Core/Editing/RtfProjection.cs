@@ -6,7 +6,7 @@ namespace LumiText.Core.Editing;
 /// <summary>
 /// RTF 投影（Phase 2 设计 §7）：新模型 ↔ RTF 最小集双向转换。
 /// <b>只用于剪贴板互通，不是权威格式</b>（框架稿红线 4）——权威格式是 v2 JSON。
-/// 最小集：\b \i \ul \strike + 颜色表 + 段落换行；图片 \pict 留待 M6 内嵌图片。
+/// 最小集：\b \i \ul \strike \cf \highlight + 颜色表 + 段落换行；图片 \pict 留待 M6 内嵌图片。
 /// 不支持的 tag 解析时静默跳过，复杂结构降级为纯文本。
 /// </summary>
 public static class RtfProjection
@@ -27,10 +27,16 @@ public static class RtfProjection
             }
             foreach (var run in BlockTextOps.GetRuns(block))
             {
+                // 前景色与文字底色共用一张颜色表（\cf 与 \highlight 都按下标引用）
                 if (run.Style?.Color is { } c && !colorIndex.ContainsKey(c))
                 {
                     colors.Add(c);
                     colorIndex[c] = colors.Count; // 1-based
+                }
+                if (run.Style?.Background is { } bg && !colorIndex.ContainsKey(bg))
+                {
+                    colors.Add(bg);
+                    colorIndex[bg] = colors.Count;
                 }
             }
         }
@@ -104,7 +110,8 @@ public static class RtfProjection
         bool bold = blockBold || (style?.Bold ?? false);
         bool hasStyle = bold ||
             (style is not null &&
-                (style.Italic || style.Strikethrough || style.Underline || style.Color is not null));
+                (style.Italic || style.Strikethrough || style.Underline
+                    || style.Color is not null || style.Background is not null));
         if (!hasStyle)
         {
             AppendEscaped(sb, run.Text);
@@ -120,6 +127,10 @@ public static class RtfProjection
         {
             sb.Append(@"\cf").Append(idx);
         }
+        if (style?.Background is { } bg && colorIndex.TryGetValue(bg, out int highlight))
+        {
+            sb.Append(@"\highlight").Append(highlight);
+        }
         sb.Append(' ');
         AppendEscaped(sb, run.Text);
         // 关闭样式
@@ -128,6 +139,7 @@ public static class RtfProjection
         if (style?.Underline == true) sb.Append(@"\ul0");
         if (style?.Strikethrough == true) sb.Append(@"\strike0");
         if (style?.Color is not null) sb.Append(@"\cf0");
+        if (style?.Background is not null) sb.Append(@"\highlight0");
         sb.Append('}');
     }
 
@@ -156,7 +168,7 @@ public static class RtfProjection
     }
 
     /// <summary>
-    /// 解析 RTF 为文档（剪贴板读取用）。最小子集：\b \i \ul \strike \cf \par \u + 颜色表。
+    /// 解析 RTF 为文档（剪贴板读取用）。最小子集：\b \i \ul \strike \cf \highlight \par \u + 颜色表。
     /// 不支持的 tag 静默跳过；解析失败/无样式时退化为单段落纯文本。
     /// </summary>
     public static Document FromRtf(string rtf)
@@ -330,6 +342,7 @@ public static class RtfProjection
                 case "ulnone": if (_skipDepth == 0) SetStyle(underline: false); _pendingDecision = false; break;
                 case "strike": if (_skipDepth == 0) SetStyle(strikethrough: num != 0); _pendingDecision = false; break;
                 case "cf": if (_skipDepth == 0) SetColor(num); _pendingDecision = false; break;
+                case "highlight": if (_skipDepth == 0) SetBackground(num); _pendingDecision = false; break;
                 case "par": if (_skipDepth == 0) { FlushText(); FlushBlock(); } _pendingDecision = false; break;
                 case "u": if (_skipDepth == 0) AppendUnicode(num); _pendingDecision = false; break;
                 case "red": case "green": case "blue": CollectColor(word, num); break;
@@ -370,7 +383,8 @@ public static class RtfProjection
                 Italic: italic ?? _currentStyle.Italic,
                 Strikethrough: strikethrough ?? _currentStyle.Strikethrough,
                 Underline: underline ?? _currentStyle.Underline,
-                Color: _currentStyle.Color);
+                Color: _currentStyle.Color,
+                Background: _currentStyle.Background);
         }
 
         private void SetColor(int? num)
@@ -382,6 +396,18 @@ public static class RtfProjection
                 color = _colorTable[num.Value - 1];
             }
             _currentStyle = _currentStyle with { Color = color };
+        }
+
+        /// <summary>文字底色（\highlightN，N=0 表示无底色）；与 \cf 共用颜色表。</summary>
+        private void SetBackground(int? num)
+        {
+            FlushText();
+            Color32? background = null;
+            if (num is > 0 && num.Value <= _colorTable.Count)
+            {
+                background = _colorTable[num.Value - 1];
+            }
+            _currentStyle = _currentStyle with { Background = background };
         }
 
         private void AppendUnicode(int? num)

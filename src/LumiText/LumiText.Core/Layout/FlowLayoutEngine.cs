@@ -1,4 +1,4 @@
-using LumiText.Core.Documents;
+﻿using LumiText.Core.Documents;
 
 namespace LumiText.Core.Layout;
 
@@ -187,104 +187,15 @@ public sealed class FlowLayoutEngine
             }
         }
 
-        var extents = BuildBlockExtents(blocks, lines, contentWidth);
         float totalHeight = yCursor;
         foreach (var f in placed)
         {
             totalHeight = Math.Max(totalHeight, f.Rect.Bottom);
         }
-        foreach (var e in extents)
-        {
-            totalHeight = Math.Max(totalHeight, e.Rect.Bottom);
-        }
 
         LastStats = new LayoutStats(ledger.Created.Count, ledger.Discarded);
         DisposeOrphans(ledger, lines);
-        return new LayoutResult(lines, placed, totalHeight, blocks, extents);
-    }
-
-    /// <summary>块背景的垂直内边距（dip，Phase 3 §4；视觉值走界面检查微调）。</summary>
-    private const float BackgroundPadding = 4f;
-
-    /// <summary>
-    /// 块几何（Phase 3 §4）：为「带底色且产生行盒」的块算行盒并集矩形——
-    /// X = 0、宽 = 内容区宽；垂直内边距按与相邻有行盒块间距的一半钳制（防底色粘连/重叠）。
-    /// </summary>
-    private static IReadOnlyList<BlockExtent> BuildBlockExtents(
-        IReadOnlyList<Block> blocks, List<PlacedLine> lines, float contentWidth)
-    {
-        bool anyBackground = false;
-        for (int i = 0; i < blocks.Count; i++)
-        {
-            if (blocks[i].Background is not null)
-            {
-                anyBackground = true;
-                break;
-            }
-        }
-        if (!anyBackground)
-        {
-            return [];
-        }
-
-        var tops = new float[blocks.Count];
-        var bottoms = new float[blocks.Count];
-        var hasLines = new bool[blocks.Count];
-        foreach (var line in lines)
-        {
-            int b = line.BlockIndex;
-            if (b < 0 || b >= blocks.Count)
-            {
-                continue;
-            }
-            if (hasLines[b])
-            {
-                tops[b] = Math.Min(tops[b], line.Y);
-                bottoms[b] = Math.Max(bottoms[b], line.Y + line.Height);
-            }
-            else
-            {
-                hasLines[b] = true;
-                tops[b] = line.Y;
-                bottoms[b] = line.Y + line.Height;
-            }
-        }
-
-        var extents = new List<BlockExtent>();
-        for (int i = 0; i < blocks.Count; i++)
-        {
-            if (blocks[i].Background is null || !hasLines[i])
-            {
-                continue;
-            }
-            float top = tops[i];
-            float bottom = bottoms[i];
-
-            float prevBottom = 0f;
-            for (int j = i - 1; j >= 0; j--)
-            {
-                if (hasLines[j])
-                {
-                    prevBottom = bottoms[j];
-                    break;
-                }
-            }
-            float padTop = Math.Min(BackgroundPadding, Math.Max(0f, (top - prevBottom) / 2f));
-
-            float padBottom = BackgroundPadding;
-            for (int j = i + 1; j < blocks.Count; j++)
-            {
-                if (hasLines[j])
-                {
-                    padBottom = Math.Min(BackgroundPadding, Math.Max(0f, (tops[j] - bottom) / 2f));
-                    break;
-                }
-            }
-
-            extents.Add(new BlockExtent(i, new LayoutRect(
-                0f, top - padTop, contentWidth, (bottom - top) + padTop + padBottom)));
-        }
-        return extents;
+        return new LayoutResult(lines, placed, totalHeight, blocks);
     }
 
     /// <summary>文本块的统一展开视图（§4：Paragraph/Heading/Todo 在排版层都是带预设样式的段落）。</summary>

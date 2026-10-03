@@ -27,14 +27,12 @@ public sealed class LayoutResult : IDisposable
         IReadOnlyList<PlacedLine> lines,
         IReadOnlyList<FloatObject> floats,
         float totalHeight,
-        IReadOnlyList<Block>? blocks = null,
-        IReadOnlyList<BlockExtent>? blockExtents = null)
+        IReadOnlyList<Block>? blocks = null)
     {
         Lines = lines;
         Floats = floats;
         TotalHeight = totalHeight;
         Blocks = blocks;
-        BlockExtents = blockExtents ?? [];
     }
 
     /// <summary>全部已放置行盒，按文档顺序（块序 → 字符序）。</summary>
@@ -52,12 +50,6 @@ public sealed class LayoutResult : IDisposable
     /// 经旧签名（段落列表）排版时为 <see langword="null"/>。
     /// </summary>
     public IReadOnlyList<Block>? Blocks { get; }
-
-    /// <summary>
-    /// 块几何（Phase 3 §4）：带底色的块的行盒并集矩形（块序），渲染层绘制块背景的数据源。
-    /// 无带色块时为空表。
-    /// </summary>
-    public IReadOnlyList<BlockExtent> BlockExtents { get; }
 
     /// <summary>坐标命中：命中最上层浮动对象（用于拖动/手柄命中）。</summary>
     public FloatObject? FloatAt(float x, float y)

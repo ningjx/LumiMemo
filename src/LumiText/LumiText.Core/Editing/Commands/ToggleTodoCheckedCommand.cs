@@ -27,10 +27,7 @@ public sealed record ToggleTodoCheckedCommand(int BlockIndex) : IEditCommand
         {
             newBlocks[i] = blocks[i];
         }
-        newBlocks[BlockIndex] = new TodoBlock(t.Runs, !t.Checked, t.SpaceAfter)
-        {
-            Background = t.Background,
-        };
+        newBlocks[BlockIndex] = new TodoBlock(t.Runs, !t.Checked, t.SpaceAfter);
 
         return new EditorState(
             state.Document with { Blocks = newBlocks },

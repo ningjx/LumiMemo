@@ -1,4 +1,6 @@
 using Windows.ApplicationModel.DataTransfer;
+using Windows.Storage;
+using Windows.Storage.Streams;
 using LumiText.Core.Documents;
 using LumiText.Core.Editing;
 
@@ -51,10 +53,11 @@ public static class WinClipboard
     public const float MaxInsertImageEdge = 280f;
 
     /// <summary>
-    /// 粘贴：按现产品 OnPaste 语义查询——
-    /// ① 纯 Bitmap（不含 Text/Rtf）→ 拦截插图（现产品的拦截分支，M6）；
-    /// ② RTF → 解析为模型命令序列；
-    /// ③ 纯文本。
+    /// 粘贴：按查询顺序——
+    /// ① 图片文件（资源管理器里复制的 StorageItems）→ 取第一张图片插图；
+    /// ② 纯 Bitmap（不含 Text/Rtf）→ 拦截插图；
+    /// ③ RTF → 解析为模型命令序列；
+    /// ④ 纯文本。
     /// 返回是否消费了剪贴板内容。
     /// </summary>
     public static async Task<bool> PasteAsync(EditorCore core)
@@ -62,7 +65,33 @@ public static class WinClipboard
         ArgumentNullException.ThrowIfNull(core);
         var view = Clipboard.GetContent();
 
-        // ① 纯图片拦截（沿用旧产品的粘贴语义）：
+        // ① 图片文件（Phase 3 打磨）：资源管理器「复制」放上剪贴板的是 StorageItems 而不是 Bitmap，
+        // 只认位图的老实现会整条漏掉；与 OS 拖放走同一条解码/插图路径
+        if (view.Contains(StandardDataFormats.StorageItems))
+        {
+            try
+            {
+                var items = await view.GetStorageItemsAsync();
+                foreach (var item in items)
+                {
+                    if (item is StorageFile file && IsImageFile(file))
+                    {
+                        using var stream = await file.OpenReadAsync();
+                        if (await InsertImageAsync(core, stream))
+                        {
+                            return true;
+                        }
+                        break; // 只取第一张图片（多选文件时）
+                    }
+                }
+            }
+            catch
+            {
+                // 文件读取失败放行，继续尝试文本路径
+            }
+        }
+
+        // ② 纯图片拦截（沿用旧产品的粘贴语义）：
         // 含 Bitmap 且不含 Text/Rtf → 自己走插图逻辑，统一 280px 上限
         if (view.Contains(StandardDataFormats.Bitmap)
             && !view.Contains(StandardDataFormats.Text)
@@ -70,7 +99,9 @@ public static class WinClipboard
         {
             try
             {
-                await PasteImageAsync(core, view);
+                var reference = await view.GetBitmapAsync();
+                using var stream = await reference.OpenReadAsync();
+                await InsertImageAsync(core, stream);
                 return true;
             }
             catch
@@ -110,19 +141,29 @@ public static class WinClipboard
         return false;
     }
 
-    /// <summary>从剪贴板读位图 → 解码量尺寸（280px 上限）→ InsertImageCommand。</summary>
-    private static async Task PasteImageAsync(EditorCore core, DataPackageView view)
+    /// <summary>插图可识别的扩展名（剪贴板粘贴与 OS 拖放共用）。</summary>
+    private static readonly string[] ImageExtensions =
+        [".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"];
+
+    /// <summary>文件是否按扩展名判为图片（剪贴板粘贴与 OS 拖放共用）。</summary>
+    public static bool IsImageFile(StorageFile file) =>
+        ImageExtensions.Contains(System.IO.Path.GetExtension(file.Name), StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// 图片流 → 解码（长边 280dip 上限）→ <see cref="Core.Editing.Commands.InsertImageCommand"/>。
+    /// 剪贴板粘贴与 OS 拖放共用；解码失败/空流不产生命令，返回是否插入。
+    /// </summary>
+    public static async Task<bool> InsertImageAsync(
+        EditorCore core, IRandomAccessStreamWithContentType stream)
     {
-        var reference = await view.GetBitmapAsync();
-        using var stream = await reference.OpenReadAsync();
+        ArgumentNullException.ThrowIfNull(core);
         if (await DecodeImageAsync(stream) is not { } decoded)
         {
-            return;
+            return false;
         }
-
-        string imageId = $"img-{Guid.NewGuid():N}";
         core.ApplyCommand(new Core.Editing.Commands.InsertImageCommand(
-            imageId, decoded.Bytes, decoded.Mime, decoded.Width, decoded.Height));
+            $"img-{Guid.NewGuid():N}", decoded.Bytes, decoded.Mime, decoded.Width, decoded.Height));
+        return true;
     }
 
     /// <summary>

@@ -160,6 +160,70 @@ public sealed class ToggleCommandTests
         Assert.Equal(state.Selection, after.Selection);
     }
 
+    // ---------------- ClearListMarks（Phase 3 打磨：Esc 退出分点/勾选）----------------
+
+    [Fact]
+    public void ClearListMarks_BulletAndTodo_Removed()
+    {
+        var state = StateWith(
+            new ParagraphBlock("分点", isBullet: true),
+            new TodoBlock("待办"),
+            new ParagraphBlock("普通段"));
+        var range = new TextRange(new TextPosition(0, 0), new TextPosition(2, 0));
+        var after = new ClearListMarksCommand(range).Apply(state);
+
+        Assert.False(Assert.IsType<ParagraphBlock>(after.Document.Blocks[0]).IsBullet);
+        Assert.IsType<ParagraphBlock>(after.Document.Blocks[1]);      // Todo → 普通段落
+        Assert.False(Assert.IsType<ParagraphBlock>(after.Document.Blocks[2]).IsBullet);
+        Assert.Equal("待办", BlockTextOps.GetPlainText(after.Document.Blocks[1])); // 文本保留
+    }
+
+    [Fact]
+    public void ClearListMarks_CollapsedRange_ClearsThatLineOnly()
+    {
+        // 行首退格 / Esc 的单行口径：光标落在哪一行就只清哪一行
+        var state = StateWith(
+            new ParagraphBlock("上一行"),
+            new ParagraphBlock("分点", isBullet: true));
+        var after = new ClearListMarksCommand(
+            TextRange.Collapse(new TextPosition(1, 0))).Apply(state);
+
+        Assert.False(Assert.IsType<ParagraphBlock>(after.Document.Blocks[1]).IsBullet);
+        Assert.Equal(2, after.Document.Blocks.Count); // 不并段（第一下退出列表）
+    }
+
+    [Fact]
+    public void ClearListMarks_OnlyClears_DoesNotAdd()
+    {
+        // 与 Toggle 的「有非该标记就全启用」不同：普通段不会被标上分点/勾选
+        var state = StateWith(
+            new ParagraphBlock("带标记", isBullet: true),
+            new ParagraphBlock("普通段"));
+        var range = new TextRange(new TextPosition(0, 0), new TextPosition(1, 0));
+        var after = new ClearListMarksCommand(range).Apply(state);
+
+        Assert.False(Assert.IsType<ParagraphBlock>(after.Document.Blocks[0]).IsBullet);
+        Assert.IsType<ParagraphBlock>(after.Document.Blocks[1]);      // 仍是普通段
+    }
+
+    [Fact]
+    public void ClearListMarks_NoMarks_NoChange()
+    {
+        var state = StateWith(new ParagraphBlock("普通段"));
+        var after = new ClearListMarksCommand(
+            TextRange.Collapse(new TextPosition(0, 0))).Apply(state);
+        Assert.Same(state.Document, after.Document); // 没有可清的：不进历史
+    }
+
+    [Fact]
+    public void ClearListMarks_HeadingUntouched()
+    {
+        var state = StateWith(new HeadingBlock("标题", 2));
+        var after = new ClearListMarksCommand(
+            TextRange.Collapse(new TextPosition(0, 0))).Apply(state);
+        Assert.IsType<HeadingBlock>(after.Document.Blocks[0]);
+    }
+
     // ---------------- 排版属性联动 ----------------
 
     [Fact]

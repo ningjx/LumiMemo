@@ -38,25 +38,16 @@ public sealed record ToggleTodoCommand(TextRange Range) : IEditCommand
             switch (blocks[i])
             {
                 case TodoBlock t when !anyNonTodo:
-                    // 全已是 Todo → 转回普通段落（SpaceAfter/底色保留，bullet 归位 false）
-                    newBlocks[i] = new ParagraphBlock(t.Runs, null, t.SpaceAfter)
-                    {
-                        Background = t.Background,
-                    };
+                    // 全已是 Todo → 转回普通段落（SpaceAfter 保留，bullet 归位 false）
+                    newBlocks[i] = new ParagraphBlock(t.Runs, null, t.SpaceAfter);
                     changed = true;
                     break;
                 case ParagraphBlock p when anyNonTodo:
-                    newBlocks[i] = new TodoBlock(p.Runs, false, p.SpaceAfter)
-                    {
-                        Background = p.Background,
-                    };
+                    newBlocks[i] = new TodoBlock(p.Runs, false, p.SpaceAfter);
                     changed = true;
                     break;
                 case HeadingBlock h when anyNonTodo:
-                    newBlocks[i] = new TodoBlock(h.Runs, false, h.SpaceAfter)
-                    {
-                        Background = h.Background,
-                    };
+                    newBlocks[i] = new TodoBlock(h.Runs, false, h.SpaceAfter);
                     changed = true;
                     break;
                 // Divider/Image/已合目标的块：不动

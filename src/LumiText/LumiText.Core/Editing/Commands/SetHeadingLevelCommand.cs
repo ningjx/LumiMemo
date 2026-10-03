@@ -78,35 +78,17 @@ public sealed record SetHeadingLevelCommand(TextRange Range, int Level) : IEditC
         {
             0 => block switch
             {
-                // 转正文：bullet/todo 标记丢弃（保留 runs/间距/底色）
-                ParagraphBlock p => new ParagraphBlock(p.Runs, p.Style, p.SpaceAfter)
-                {
-                    Background = p.Background,
-                },
-                HeadingBlock h => new ParagraphBlock(h.Runs, null, h.SpaceAfter)
-                {
-                    Background = h.Background,
-                },
-                TodoBlock t => new ParagraphBlock(t.Runs, null, t.SpaceAfter)
-                {
-                    Background = t.Background,
-                },
+                // 转正文：bullet/todo 标记丢弃（保留 runs/间距）
+                ParagraphBlock p => new ParagraphBlock(p.Runs, p.Style, p.SpaceAfter),
+                HeadingBlock h => new ParagraphBlock(h.Runs, null, h.SpaceAfter),
+                TodoBlock t => new ParagraphBlock(t.Runs, null, t.SpaceAfter),
                 _ => block,
             },
             _ => block switch
             {
-                ParagraphBlock p => new HeadingBlock(p.Runs, level, p.SpaceAfter)
-                {
-                    Background = p.Background,
-                },
-                HeadingBlock h => new HeadingBlock(h.Runs, level, h.SpaceAfter)
-                {
-                    Background = h.Background,
-                },
-                TodoBlock t => new HeadingBlock(t.Runs, level, t.SpaceAfter)
-                {
-                    Background = t.Background,
-                },
+                ParagraphBlock p => new HeadingBlock(p.Runs, level, p.SpaceAfter),
+                HeadingBlock h => new HeadingBlock(h.Runs, level, h.SpaceAfter),
+                TodoBlock t => new HeadingBlock(t.Runs, level, t.SpaceAfter),
                 _ => block,
             },
         };
