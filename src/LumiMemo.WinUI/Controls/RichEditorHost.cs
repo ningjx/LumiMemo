@@ -133,13 +133,13 @@ public sealed class RichEditorHost : IRichTextDocument, IDisposable
         }
     }
 
-    public async Task LoadAsync(byte[] rtf)
+    public async Task LoadAsync(byte[] content)
     {
         _loading = true;
         _adorner.Hide();
         try
         {
-            if (rtf.Length == 0)
+            if (content.Length == 0)
             {
                 _editor.Document.SetText(TextSetOptions.None, string.Empty);
             }
@@ -148,7 +148,7 @@ public sealed class RichEditorHost : IRichTextDocument, IDisposable
                 var stream = new InMemoryRandomAccessStream();
                 using (var writer = new DataWriter(stream))
                 {
-                    writer.WriteBytes(rtf);
+                    writer.WriteBytes(content);
                     await writer.StoreAsync();
                     writer.DetachStream();
                 }
@@ -165,7 +165,7 @@ public sealed class RichEditorHost : IRichTextDocument, IDisposable
         }
     }
 
-    public byte[] SaveRtf()
+    public byte[] SaveContent()
     {
         using var stream = new InMemoryRandomAccessStream();
         _editor.Document.SaveToStream(TextGetOptions.FormatRtf, stream);

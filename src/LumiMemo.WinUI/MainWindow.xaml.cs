@@ -7,6 +7,7 @@ using LumiMemo.Core.Models;
 using LumiMemo.WinUI.Controls;
 using LumiMemo.WinUI.Services;
 using LumiMemo.WinUI.ViewModels;
+using LumiText.WinUI.Controls;
 using Windows.Graphics;
 
 namespace LumiMemo.WinUI;
@@ -23,7 +24,7 @@ public sealed partial class MainWindow : Window
     private readonly ILayoutStore _layoutStore;
     private readonly Action<Guid> _onClosed;
     private readonly INoteWindowActions _actions;
-    private readonly RichEditorHost _editor;
+    private readonly LumiEditor _editor;
     private readonly AppWindow _appWindow;
     private AcrylicBackdrop? _backdrop;
     private bool _isApplicationExiting;
@@ -52,9 +53,9 @@ public sealed partial class MainWindow : Window
         _onClosed = onClosed;
         _actions = actions;
 
-        _editor = new RichEditorHost(EditorHost);
-        _viewModel.AttachDocument(_editor);
-        _editor.HintRequested += OnEditorHintRequested;
+        _editor = new LumiEditor { HostWindow = this };
+        EditorHost.Children.Add(_editor);
+        _viewModel.AttachDocument(new LumiEditorDocument(_editor));
         _viewModel.TopMostChanged += OnTopMostChanged;
 
         Title = "LumiMemo";
@@ -259,9 +260,6 @@ public sealed partial class MainWindow : Window
 
     private void OnTodoClick(object sender, RoutedEventArgs e) => _editor.ExecuteCommand("todo");
 
-    /// <summary>编辑区的提示（插图/缩放失败等）转发到状态栏。</summary>
-    private void OnEditorHintRequested(object? sender, string message) => _viewModel.ShowHint(message);
-
     // ---- 关闭与退出 ----
 
     private void OnCloseClick(object sender, RoutedEventArgs e) => _ = TryCloseAsync();
@@ -361,7 +359,6 @@ public sealed partial class MainWindow : Window
     {
         // 先做同步清理：窗口管理器要立刻把这个实例摘掉（否则同一张便签重开拿不到新窗口）。
         _viewModel.TopMostChanged -= OnTopMostChanged;
-        _editor.HintRequested -= OnEditorHintRequested;
         Closed -= OnWindowClosed;
         _onClosed(_viewModel.Id);
         _appWindow.Changed -= OnAppWindowChanged;
@@ -432,5 +429,22 @@ public sealed partial class MainWindow : Window
         _layout.Width = size.Width;
         _layout.Height = size.Height;
         _layout.ExpandedHeight = size.Height;
+    }
+
+    /// <summary>
+    /// <see cref="LumiEditor"/> → <see cref="IRichTextDocument"/> 的薄适配器。
+    /// LumiText.WinUI 不依赖 LumiMemo.WinUI（接口所在程序集），避免循环依赖，
+    /// 故接口实现放在主程序侧；成员签名一一对应，纯转发。
+    /// </summary>
+    private sealed class LumiEditorDocument(LumiEditor editor) : IRichTextDocument
+    {
+        public string PlainText => editor.PlainText;
+        public event EventHandler? UserEdited
+        {
+            add => editor.UserEdited += value;
+            remove => editor.UserEdited -= value;
+        }
+        public byte[] SaveContent() => editor.SaveContent();
+        public Task LoadAsync(byte[] content) => editor.LoadAsync(content);
     }
 }

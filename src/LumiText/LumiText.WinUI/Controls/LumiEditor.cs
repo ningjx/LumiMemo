@@ -111,11 +111,82 @@ public sealed class LumiEditor : Grid
     /// </summary>
     public Window? HostWindow { get; set; }
 
+    /// <summary>
+    /// 工具栏命令（与现产品 RichEditorHost.ExecuteCommand 对齐的命令名）。
+    /// 粗/斜/下划/删线映射到 <see cref="ApplyInlineStyleCommand"/>；
+    /// bullet/todo 的块结构命令（ToggleBullet/ToggleTodo）尚未实现，暂时 no-op（后续补）。
+    /// </summary>
+    public void ExecuteCommand(string command)
+    {
+        if (_core is null)
+        {
+            return;
+        }
+        switch (command)
+        {
+            case "bold":
+                _core.ApplyCommand(new ApplyInlineStyleCommand(_core.Selection, InlineStyleFlag.Bold));
+                break;
+            case "italic":
+                _core.ApplyCommand(new ApplyInlineStyleCommand(_core.Selection, InlineStyleFlag.Italic));
+                break;
+            case "underline":
+                _core.ApplyCommand(new ApplyInlineStyleCommand(_core.Selection, InlineStyleFlag.Underline));
+                break;
+            case "strikethrough":
+                _core.ApplyCommand(new ApplyInlineStyleCommand(_core.Selection, InlineStyleFlag.Strikethrough));
+                break;
+            case "bullet":
+            case "todo":
+                // ToggleBullet/ToggleTodo 块结构命令未实现（后续补），暂 no-op
+                break;
+        }
+    }
+
+    /// <summary>释放 TSF / surface / 图片资源（窗口关闭协议调用；与 Unloaded 清理互补）。</summary>
+    public void Dispose()
+    {
+        _caretBlink.Stop();
+        _tsf?.Dispose();
+        _tsf = null;
+        _surface.Dispose();
+        _imageStore.Dispose();
+    }
+
     /// <summary>纯文本投影（§3.4：TodoBlock 带 ☐/☑ 前缀）。</summary>
     public string PlainText => _core?.GetPlainText() ?? string.Empty;
 
     /// <summary>当前权威文档快照。</summary>
     public Document GetDocument() => _core?.Document ?? _document ?? new Document([]);
+
+    /// <summary>
+    /// 序列化权威内容为 v2 JSON 的 UTF-8 字节（IRichTextDocument.SaveContent 的新内核实现）。
+    /// VM 不解析字节内容（不透明），只负责塞进 Note.RichTextContent。
+    /// </summary>
+    public byte[] SaveContent()
+    {
+        string json = LumiText.Core.Documents.Serialization.DocumentSerializer.Serialize(GetDocument());
+        return System.Text.Encoding.UTF8.GetBytes(json);
+    }
+
+    /// <summary>
+    /// 从权威格式字节（v2 JSON UTF-8）载入文档。空字节 = 新便签，载入空文档；
+    /// 字节非法/版本不支持时抛 <see cref="InvalidDataException"/>——调用方（VM）按容错矩阵决定跳过或降级。
+    /// </summary>
+    public Task LoadAsync(byte[] content)
+    {
+        ArgumentNullException.ThrowIfNull(content);
+        if (content.Length == 0)
+        {
+            SetDocument(new Document([new ParagraphBlock("")]));
+            return Task.CompletedTask;
+        }
+        string json = System.Text.Encoding.UTF8.GetString(content);
+        var doc = LumiText.Core.Documents.Serialization.DocumentSerializer.Deserialize(json)
+            ?? throw new InvalidDataException("v2 JSON 反序列化失败（Deserialize 返回 null）。");
+        SetDocument(doc);
+        return Task.CompletedTask;
+    }
 
     /// <summary>载入文档：排版上屏 + 重建编辑内核。</summary>
     public void SetDocument(Document document)

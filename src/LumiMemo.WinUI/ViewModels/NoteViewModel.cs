@@ -201,7 +201,7 @@ public sealed class NoteViewModel : ObservableObject, IDisposable
         {
             if (_document is not null)
             {
-                Note.RichTextContent = _document.SaveRtf();
+                Note.RichTextContent = _document.SaveContent();
             }
 
             Note.UpdatedAt = _clock.Now;

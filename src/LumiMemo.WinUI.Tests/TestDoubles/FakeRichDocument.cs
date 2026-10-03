@@ -5,24 +5,24 @@ namespace LumiMemo.WinUI.Tests.TestDoubles;
 /// <summary>不出 UI 的 <see cref="IRichTextDocument"/> 替身。</summary>
 /// <remarks>
 /// <see cref="Type"/> 模拟用户输入：更新纯文本并发 <see cref="UserEdited"/>。
-/// RTF 用 <see cref="Rtf"/> 显式脚本化——保存测试要断言「RTF 原样落进 Note」。
+/// 权威字节用 <see cref="Content"/> 显式脚本化——保存测试要断言「字节原样落进 Note」。
 /// </remarks>
 public sealed class FakeRichDocument : IRichTextDocument
 {
     private string _plainText = string.Empty;
 
-    /// <summary><see cref="SaveRtf"/> 要交出去的字节。</summary>
-    public byte[] Rtf { get; set; } = [];
+    /// <summary><see cref="SaveContent"/> 要交出去的字节。</summary>
+    public byte[] Content { get; set; } = [];
 
     public string PlainText => _plainText;
 
     public event EventHandler? UserEdited;
 
-    public byte[] SaveRtf() => Rtf;
+    public byte[] SaveContent() => Content;
 
-    public Task LoadAsync(byte[] rtf)
+    public Task LoadAsync(byte[] content)
     {
-        Rtf = rtf;
+        Content = content;
 
         return Task.CompletedTask;
     }

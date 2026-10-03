@@ -32,7 +32,7 @@ public sealed class NoteViewModelTests
     public async Task 落盘_状态回已保存且RTF先进模型()
     {
         using var h = new Harness();
-        h.Document.Rtf = [1, 2, 3, 250, 255];
+        h.Document.Content = [1, 2, 3, 250, 255];
         h.ViewModel.AttachDocument(h.Document);
         h.ViewModel.ApplyUserEdit("结尾");
 

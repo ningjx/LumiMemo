@@ -22,8 +22,8 @@ namespace LumiMemo.Infrastructure.Storage;
 /// </remarks>
 public sealed class LumiNoteStorage : INoteStorage
 {
-    /// <summary>当前格式版本。高于它的文件跳过（由更新版本创建）；低于它的走迁移（当前未出现）。</summary>
-    public const int FormatVersion = 1;
+    /// <summary>当前格式版本（v2：权威内容由 RTF 换为 v2 JSON）。高于它的文件跳过（由更新版本创建）。</summary>
+    public const int FormatVersion = 2;
 
     private readonly string _folder;
     private readonly IClock _clock;
@@ -203,7 +203,14 @@ public sealed class LumiNoteStorage : INoteStorage
                 return null;
             }
 
-            // stored.Version < FormatVersion 的迁移入口留在这里（当前没有更旧的版本）。
+            // v1（RTF 权威）不迁移（2026-10-02 拍板）：直接跳过并记日志。
+            if (stored.Version < FormatVersion)
+            {
+                _logger.LogWarning(
+                    "便笺是 v1（RTF）旧格式，不迁移、已跳过：{Path}。",
+                    path);
+                return null;
+            }
 
             return new Note
             {
@@ -211,7 +218,7 @@ public sealed class LumiNoteStorage : INoteStorage
                 FilePath = path,
                 Content = stored.Text ?? string.Empty,
                 AutoTitle = stored.AutoTitle,
-                RichTextContent = stored.Rtf ?? [],
+                RichTextContent = stored.Document ?? [],
                 Color = stored.Color,
                 Tags = stored.Tags ?? [],
                 CreatedAt = stored.CreatedAt,
@@ -231,14 +238,16 @@ public sealed class LumiNoteStorage : INoteStorage
 
     /// <summary>磁盘上的文件形态。字段名即格式契约，改名等于升 <see cref="FormatVersion"/>。</summary>
     /// <remarks>
-    /// 三个引用型字段声明为可空：文件可能被手改缺字段，读取时按「缺失即空」降级，
-    /// 而不是让整个文件解析失败。
+    /// <para>v2（2026-10）：权威内容字段由 <c>Rtf</c>（RTF 字节）改为 <c>Document</c>（v2 JSON 字节）。
+    /// <c>Rtf</c> 退役不再写出；v1 文件读取时按「不迁移」直接跳过。</para>
+    /// <para>引用型字段声明为可空：文件可能被手改缺字段，读取时按「缺失即空」降级，
+    /// 而不是让整个文件解析失败。</para>
     /// </remarks>
     private sealed record StoredNote(
         int Version,
         Guid Id,
         string? Text,
-        byte[]? Rtf,
+        byte[]? Document,
         NoteColor Color,
         List<string>? Tags,
         DateTimeOffset CreatedAt,

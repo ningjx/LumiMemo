@@ -51,7 +51,10 @@ public sealed class Note
     private string _content = string.Empty;
     private string? _titleCache;
 
-    /// <summary>RTF 正文——权威内容（格式与内嵌图片都在里面）。</summary>
+    /// <summary>
+    /// 权威内容字节（不透明，VM 不解析）——格式与内嵌图片都在里面。
+    /// 格式由编辑器内核决定：旧内核为 RTF 字节，新内核（LumiEditor）为 v2 JSON 字节。
+    /// </summary>
     public byte[] RichTextContent { get; set; } = [];
 
     /// <summary>
