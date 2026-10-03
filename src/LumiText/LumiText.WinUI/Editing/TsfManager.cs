@@ -90,7 +90,28 @@ internal sealed class TsfManager : IDisposable
         }
         catch
         {
-            // 关联失败不致命——Initialize 的 SetFocus 已保底，只是失焦切换要手动重设
+            // 关联失败不致命——Initialize 的 SetFocus 已保底，失焦切换由 Refocus 手动重设
+        }
+    }
+
+    /// <summary>
+    /// 手动重设文档焦点（宿主窗口 Activated 时调用）。
+    /// 与 <see cref="AssociateWindowFocus"/> 互补：声明式关联 + 命令式重设双保险，
+    /// 都是合法 TSF 用法，确保各种焦点路径下 IME 都能回到当前文档。
+    /// </summary>
+    public void Refocus()
+    {
+        if (_threadMgr is null || _documentMgr is null)
+        {
+            return;
+        }
+        try
+        {
+            _threadMgr.SetFocus(_documentMgr);
+        }
+        catch
+        {
+            // 重设失败不致命——下一次按键/激活还会再试
         }
     }
 

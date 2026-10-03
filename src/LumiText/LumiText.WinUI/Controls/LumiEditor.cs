@@ -109,7 +109,32 @@ public sealed class LumiEditor : Grid
     /// 的坐标，IME 要屏幕物理像素——需要窗口 HWND 经 <c>ClientToScreen</c> 补屏幕原点。
     /// 不设置时 IME 候选窗定位退化为相对窗口原点（位置会偏）。
     /// </summary>
-    public Window? HostWindow { get; set; }
+    public Window? HostWindow
+    {
+        get => _hostWindow;
+        set
+        {
+            if (_hostWindow is not null)
+            {
+                _hostWindow.Activated -= OnHostWindowActivated;
+            }
+            _hostWindow = value;
+            if (_hostWindow is not null)
+            {
+                _hostWindow.Activated += OnHostWindowActivated;
+            }
+        }
+    }
+    private Window? _hostWindow;
+
+    private void OnHostWindowActivated(object sender, Microsoft.UI.Xaml.WindowActivatedEventArgs args)
+    {
+        // 窗口得焦时重设 TSF 文档焦点（与 AssociateFocus 互补，切窗后 IME 不掉回英文）。
+        if (args.WindowActivationState != WindowActivationState.Deactivated && _tsf is not null)
+        {
+            _tsf.Refocus();
+        }
+    }
 
     /// <summary>
     /// 工具栏命令（与现产品 RichEditorHost.ExecuteCommand 对齐的命令名）。
