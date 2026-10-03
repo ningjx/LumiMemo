@@ -34,6 +34,18 @@ public sealed class FlowDocumentRenderer
     /// <summary>块背景圆角半径（dip，Phase 3 §4；视觉值走界面检查微调）。</summary>
     private const float BackgroundCornerRadius = 5f;
 
+    /// <summary>Todo 复选框悬停高亮底色（Phase 3 M3，墨色低 alpha）。</summary>
+    private static readonly Color CheckboxHoverFill = Color.FromArgb(0x28, 40, 32, 48);
+
+    /// <summary>悬停中的 todo 块索引（-1 = 无）：方框外圈画高亮底（Phase 3 M3）。</summary>
+    public int HoverTodoBlockIndex { get; set; } = -1;
+
+    /// <summary>正在播放勾选动画的 todo 块索引（-1 = 无）；进度见 <see cref="AnimatedTodoProgress"/>。</summary>
+    public int AnimatedTodoBlockIndex { get; set; } = -1;
+
+    /// <summary>勾选动画进度 0–1（仅对 <see cref="AnimatedTodoBlockIndex"/> 生效）。</summary>
+    public float AnimatedTodoProgress { get; set; }
+
     private static Color FromColor32(Color32 color) =>
         Color.FromArgb(color.A, color.R, color.G, color.B);
 
@@ -202,7 +214,11 @@ public sealed class FlowDocumentRenderer
                         && layout.Blocks is { } blocks
                         && line.BlockIndex < blocks.Count
                         && blocks[line.BlockIndex] is TodoBlock todo:
-                    DrawCheckbox(session, line, todo, textColor);
+                    DrawCheckbox(session, line, todo, textColor,
+                        hovered: line.BlockIndex == HoverTodoBlockIndex,
+                        animationProgress: line.BlockIndex == AnimatedTodoBlockIndex
+                            ? AnimatedTodoProgress
+                            : -1f);
                     break;
                 case PlacedLineKind.BulletText
                     when line.IsBlockStart:
@@ -291,22 +307,69 @@ public sealed class FlowDocumentRenderer
     }
 
     /// <summary>
-    /// Todo 矢量复选框（§6.2/O2）：首行行盒左侧缩进区内、垂直居中于行盒；
+    /// Todo 矢量复选框（§6.2/O2 + Phase 3 M3）：首行行盒左侧缩进区内、垂直居中于行盒；
     /// 1.5px 描边 2px 圆角，已勾选时两条线段画对勾；颜色随主题墨色。
+    /// M3 追加：悬停时方框外圈画高亮底；勾选动画按进度（0–1）从起点描出对勾，
+    /// 方框随之轻微缩放（1 → 1.06 → 1）；<paramref name="animationProgress"/> &lt; 0 = 不播动画。
     /// </summary>
-    private static void DrawCheckbox(
-        CanvasDrawingSession session, PlacedLine line, TodoBlock todo, Color ink)
+    private static void DrawCheckbox(CanvasDrawingSession session, PlacedLine line, TodoBlock todo,
+        Color ink, bool hovered, float animationProgress)
     {
         const float boxSize = 20f;
-        float x = line.X - todo.LeftIndent;
-        float y = line.Y + (line.Height - boxSize) / 2f;
-        var rect = new Windows.Foundation.Rect(x, y, boxSize, boxSize);
-        session.DrawRoundedRectangle(rect, 2, 2, ink, 1.5f);
-        if (todo.Checked)
+        float centerX = line.X - todo.LeftIndent + boxSize / 2f;
+        float centerY = line.Y + line.Height / 2f;
+
+        float scale = animationProgress < 0f
+            ? 1f
+            : 1f + 0.06f * MathF.Sin(MathF.PI * animationProgress);
+        float half = boxSize / 2f * scale;
+        var rect = new Windows.Foundation.Rect(centerX - half, centerY - half, half * 2f, half * 2f);
+
+        if (hovered)
         {
-            session.DrawLine(x + 4.5f, y + 10.5f, x + 8.5f, y + 14.5f, ink, 2f);
-            session.DrawLine(x + 8.5f, y + 14.5f, x + 15.5f, y + 5.5f, ink, 2f);
+            // 悬停高亮：画在方框之下，不遮描边
+            session.FillRoundedRectangle(
+                new Windows.Foundation.Rect(rect.X - 3f, rect.Y - 3f, rect.Width + 6f, rect.Height + 6f),
+                5, 5, CheckboxHoverFill);
         }
+
+        session.DrawRoundedRectangle(rect, 2, 2, ink, 1.5f);
+        if (!todo.Checked)
+        {
+            return;
+        }
+
+        // 对勾三点（方框左上角起的固定比例坐标，随缩放）
+        float left = (float)rect.X;
+        float top = (float)rect.Y;
+        float x0 = left + (4.5f * scale), y0 = top + (10.5f * scale);
+        float x1 = left + (8.5f * scale), y1 = top + (14.5f * scale);
+        float x2 = left + (15.5f * scale), y2 = top + (5.5f * scale);
+
+        if (animationProgress < 0f)
+        {
+            session.DrawLine(x0, y0, x1, y1, ink, 2f);
+            session.DrawLine(x1, y1, x2, y2, ink, 2f);
+            return;
+        }
+
+        // 按进度描出：总长 = 两段之和，先画短段、超出部分画长段
+        float length1 = MathF.Sqrt(((x1 - x0) * (x1 - x0)) + ((y1 - y0) * (y1 - y0)));
+        float length2 = MathF.Sqrt(((x2 - x1) * (x2 - x1)) + ((y2 - y1) * (y2 - y1)));
+        float drawn = (length1 + length2) * Math.Clamp(animationProgress, 0f, 1f);
+        if (drawn <= 0f)
+        {
+            return;
+        }
+        if (drawn <= length1)
+        {
+            float t = drawn / length1;
+            session.DrawLine(x0, y0, x0 + ((x1 - x0) * t), y0 + ((y1 - y0) * t), ink, 2f);
+            return;
+        }
+        session.DrawLine(x0, y0, x1, y1, ink, 2f);
+        float t2 = (drawn - length1) / length2;
+        session.DrawLine(x1, y1, x1 + ((x2 - x1) * t2), y1 + ((y2 - y1) * t2), ink, 2f);
     }
 
     /// <summary>

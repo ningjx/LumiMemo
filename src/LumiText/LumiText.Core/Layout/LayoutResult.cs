@@ -73,6 +73,44 @@ public sealed class LayoutResult : IDisposable
     }
 
     /// <summary>
+    /// Todo 复选框命中（Phase 3 M3）：返回命中的块索引，-1 = 未命中。
+    /// 判定 = 该块<b>首行</b>行盒的纵向范围内、X 落在悬挂缩进区（复选框绘制区，与
+    /// <see cref="LumiText.Core.Documents.TodoBlock.LeftIndent"/> 同宽）。
+    /// 无副作用：悬停（光标/高亮）与点击共用同一判定。
+    /// </summary>
+    public int HitTestTodoCheckbox(float x, float y)
+    {
+        if (Blocks is not { } blocks)
+        {
+            return -1;
+        }
+        foreach (var line in Lines)
+        {
+            if (line.Y > y)
+            {
+                break; // 行盒按 Y 有序，越过即停
+            }
+            if (line.Kind != PlacedLineKind.TodoText || !line.IsBlockStart)
+            {
+                continue;
+            }
+            if (y < line.Y || y > line.Y + line.Height)
+            {
+                continue;
+            }
+            if (line.BlockIndex >= blocks.Count || blocks[line.BlockIndex] is not TodoBlock todo)
+            {
+                continue;
+            }
+            if (x >= line.X - todo.LeftIndent && x <= line.X)
+            {
+                return line.BlockIndex;
+            }
+        }
+        return -1;
+    }
+
+    /// <summary>
     /// 坐标命中：字符级命中（M2）+ 空白区兜底（Phase 3 修复）。
     /// 先定位行盒，再经行盒所属批的 <see cref="ILineBatch.HitTestChar"/> 精确到字符偏移；
     /// 批不支持字符级命中（如 Divider 占位行盒无批）时退化为行首字符（M1 行为）。

@@ -39,6 +39,18 @@ public sealed class LumiEditor : Grid
     private TsfManager? _tsf;
     private readonly DispatcherTimer _caretBlink;
     private bool _caretVisible = true;
+    private readonly Microsoft.UI.Input.InputCursor _ibeamCursor;
+    private readonly Microsoft.UI.Input.InputCursor _handCursor;
+
+    // 勾选动画（Phase 3 M3）：块索引 + 起时；16ms 逐帧重绘，播完自停
+    private readonly DispatcherTimer _checkAnimTimer;
+
+    /// <summary>悬停中的 todo 块索引（-1 = 无），驱动光标与悬停高亮。</summary>
+    private int _hoverTodoBlock = -1;
+
+    private int _animatedTodoBlock = -1;
+    private long _checkAnimStartTicks;
+    private const int CheckAnimationMs = 160;
 
     public LumiEditor()
     {
@@ -64,11 +76,13 @@ public sealed class LumiEditor : Grid
         _scroller.Content = _contentGrid;
         Children.Add(_scroller);
 
-        // 文本区光标：I 形（WinUI 3 经 ProtectedCursor 设置，Phase 2 §11 V-CU1 已查证）。
-        // ScrollViewer 的滚动条模板件自带光标、自会覆盖；悬停待办框/图片手柄的
-        // Hand / resize 光标归 Phase 3 M3/M4。
-        ProtectedCursor = Microsoft.UI.Input.InputSystemCursor.Create(
+        // 文本区光标：I 形（WinUI 3 经 ProtectedCursor 设置，Phase 2 §11 V-CU1 已查证）；
+        // 悬停待办复选框时切手型（Phase 3 M3）。ScrollViewer 的滚动条模板件自带光标、自会覆盖。
+        _ibeamCursor = Microsoft.UI.Input.InputSystemCursor.Create(
             Microsoft.UI.Input.InputSystemCursorShape.IBeam);
+        _handCursor = Microsoft.UI.Input.InputSystemCursor.Create(
+            Microsoft.UI.Input.InputSystemCursorShape.Hand);
+        ProtectedCursor = _ibeamCursor;
 
         _surface.RenderViewport = OnRenderViewport;
         _renderer.Images = _imageStore;
@@ -79,6 +93,9 @@ public sealed class LumiEditor : Grid
             _caretVisible = !_caretVisible;
             _surface.Invalidate();
         };
+
+        _checkAnimTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16) };
+        _checkAnimTimer.Tick += OnCheckAnimTick;
 
         Loaded += OnLoaded;
         SizeChanged += OnSizeChanged;
@@ -94,10 +111,13 @@ public sealed class LumiEditor : Grid
         _surfaceHost.PointerPressed += OnPointerPressed;
         _surfaceHost.PointerMoved += OnPointerMoved;
         _surfaceHost.PointerReleased += OnPointerReleased;
+        // 指针移出编辑器：清悬停态（手型光标/高亮环复位）
+        _surfaceHost.PointerExited += (_, _) => UpdateTodoHover(-1f, -1f);
         Tapped += OnTappedHandler;
         Unloaded += (_, _) =>
         {
             _caretBlink.Stop();
+            _checkAnimTimer.Stop();
             _tsf?.Dispose();
             _surface.Dispose();
             _imageStore.Dispose();
@@ -317,6 +337,7 @@ public sealed class LumiEditor : Grid
     public void Dispose()
     {
         _caretBlink.Stop();
+        _checkAnimTimer.Stop();
         _tsf?.Dispose();
         _tsf = null;
         _surface.Dispose();
@@ -858,12 +879,22 @@ public sealed class LumiEditor : Grid
 
     private void OnPointerMoved(object sender, PointerRoutedEventArgs e)
     {
-        if (!_isDraggingSelection || _core is null || _renderer.Current is null)
+        if (_core is null || _renderer.Current is null)
         {
             return;
         }
         var point = e.GetCurrentPoint(_surfaceHost).Position;
-        var hit = _renderer.Current.HitTest((float)point.X, (float)(point.Y + _scroller.VerticalOffset));
+        float docX = (float)point.X;
+        float docY = (float)(point.Y + _scroller.VerticalOffset);
+
+        if (!_isDraggingSelection)
+        {
+            // 非拖动：只有悬停态检测（待办复选框 → 手型光标 + 高亮环，Phase 3 M3）
+            UpdateTodoHover(docX, docY);
+            return;
+        }
+
+        var hit = _renderer.Current.HitTest(docX, docY);
         if (!hit.Found)
         {
             return;
@@ -927,38 +958,69 @@ public sealed class LumiEditor : Grid
     }
 
     /// <summary>
-    /// 复选框命中：todo 块的首行行盒，(docX, docY) 落在行盒纵向范围且
-    /// X 在缩进区（行盒 X 到缩进起点）内 → 应用 <see cref="ToggleTodoCheckedCommand"/>。
+    /// 复选框点击：命中的 todo 块切勾选。命中判定在 Core 的
+    /// <see cref="LayoutResult.HitTestTodoCheckbox"/>（与悬停共用同一判定）；
+    /// 由未勾选变勾选时播放勾选动画（Phase 3 M3）。
     /// </summary>
     private bool TryToggleTodoAt(float docX, float docY)
     {
-        var layout = _renderer.Current!;
-        foreach (var line in layout.Lines)
+        int blockIndex = _renderer.Current?.HitTestTodoCheckbox(docX, docY) ?? -1;
+        if (blockIndex < 0)
         {
-            if (line.Y > docY)
-            {
-                break; // 行盒按 Y 有序，越过即停
-            }
-            if (line.Kind != PlacedLineKind.TodoText || !line.IsBlockStart)
-            {
-                continue;
-            }
-            if (docY < line.Y || docY > line.Y + line.Height)
-            {
-                continue;
-            }
-            // 编辑器自身排的版：Blocks 恒非 null（FlowDocumentRenderer 经 Document 重载入）
-            if (layout.Blocks![line.BlockIndex] is not TodoBlock todo)
-            {
-                continue;
-            }
-            if (docX >= line.X - todo.LeftIndent && docX <= line.X)
-            {
-                _core!.ApplyCommand(new ToggleTodoCheckedCommand(line.BlockIndex));
-                return true;
-            }
+            return false;
         }
-        return false;
+        bool wasChecked = (_core!.Document.Blocks[blockIndex] as TodoBlock)?.Checked == true;
+        _core.ApplyCommand(new ToggleTodoCheckedCommand(blockIndex));
+        if (!wasChecked)
+        {
+            StartCheckAnimation(blockIndex);
+        }
+        return true;
+    }
+
+    /// <summary>悬停态：命中待办复选框 → 手型光标 + 悬停高亮环；移出恢复 I 形（Phase 3 M3）。</summary>
+    private void UpdateTodoHover(float docX, float docY)
+    {
+        int hit = _renderer.Current?.HitTestTodoCheckbox(docX, docY) ?? -1;
+        if (hit == _hoverTodoBlock)
+        {
+            return;
+        }
+        _hoverTodoBlock = hit;
+        _renderer.HoverTodoBlockIndex = hit;
+        ProtectedCursor = hit >= 0 ? _handCursor : _ibeamCursor;
+        _surface.Invalidate();
+    }
+
+    /// <summary>启动勾选动画（再次点击打断重放；160ms 内每 16ms 重绘一帧，播完自停）。</summary>
+    private void StartCheckAnimation(int blockIndex)
+    {
+        _animatedTodoBlock = blockIndex;
+        _checkAnimStartTicks = Environment.TickCount64;
+        _renderer.AnimatedTodoBlockIndex = blockIndex;
+        _renderer.AnimatedTodoProgress = 0f;
+        _checkAnimTimer.Start();
+        _surface.Invalidate();
+    }
+
+    private void OnCheckAnimTick(object? sender, object e)
+    {
+        if (_animatedTodoBlock < 0)
+        {
+            _checkAnimTimer.Stop();
+            return;
+        }
+        float progress = (Environment.TickCount64 - _checkAnimStartTicks) / (float)CheckAnimationMs;
+        if (progress >= 1f)
+        {
+            _checkAnimTimer.Stop();
+            _animatedTodoBlock = -1;
+            _renderer.AnimatedTodoBlockIndex = -1;
+            _surface.Invalidate();
+            return;
+        }
+        _renderer.AnimatedTodoProgress = progress;
+        _surface.Invalidate();
     }
 
     private void OnRenderViewport(CanvasDrawingSession session, Windows.Foundation.Rect viewport, float scale)
