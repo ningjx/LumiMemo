@@ -33,6 +33,18 @@ public static class CaretGeometryCalculator
 
         // 定位行盒：找「块索引 == position.BlockIndex 且 [CharStart, CharStart+CharCount) 含 position.CharIndex」的行；
         // 找不到时（块尾光标落在末行之后）钳到该块末行的行尾。
+        // 无批占位行（空块的零字符行盒，Batch == null）单独截住：光标 = 行盒左上角 + 行高，
+        // 不能落进批查询（line.Batch! 空引用）——空段落/空 bullet/空 todo 全靠这条路径显示光标。
+        foreach (var candidate in layout.Lines)
+        {
+            if (candidate.BlockIndex != position.BlockIndex || candidate.Batch is not null)
+            {
+                continue;
+            }
+            return new CaretGeometry(
+                candidate.X, candidate.Y, DefaultCaretWidth, candidate.Height);
+        }
+
         PlacedLine? line = null;
         bool isLineEnd = false;
         foreach (var candidate in layout.Lines)

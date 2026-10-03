@@ -79,6 +79,8 @@ public sealed class LayoutResult : IDisposable
             }
             if (line.Batch is null)
             {
+                // 无批占位行盒（空块/空 bullet/空 todo）：命中即块内唯一光标位（0,0）。
+                // 空段落原本没有行盒、点击不响应——这条路径让它获得光标落点。
                 return new HitTestResult(true, line.BlockIndex, line.CharStart, false);
             }
             // 批布局坐标 = (点 X − 行盒 X, 点 Y − 行盒 Y + 行在批内的偏移)

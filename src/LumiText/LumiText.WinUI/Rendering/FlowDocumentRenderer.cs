@@ -189,6 +189,10 @@ public sealed class FlowDocumentRenderer
                         && blocks[line.BlockIndex] is TodoBlock todo:
                     DrawCheckbox(session, line, todo, textColor);
                     break;
+                case PlacedLineKind.BulletText
+                    when line.IsBlockStart:
+                    DrawBullet(session, line, textColor);
+                    break;
             }
         }
     }
@@ -253,5 +257,18 @@ public sealed class FlowDocumentRenderer
             session.DrawLine(x + 4.5f, y + 10.5f, x + 8.5f, y + 14.5f, ink, 2f);
             session.DrawLine(x + 8.5f, y + 14.5f, x + 15.5f, y + 5.5f, ink, 2f);
         }
+    }
+
+    /// <summary>
+    /// Bullet 圆点（§0.1 分点基线）：首行行盒左侧缩进区内、垂直居中于行盒；
+    /// 实心圆直径 5px，颜色随主题墨色。缩进 16 全由本方法消费（与 DrawCheckbox 同纪律）。
+    /// </summary>
+    private static void DrawBullet(CanvasDrawingSession session, PlacedLine line, Color ink)
+    {
+        const float diameter = 5f;
+        const float indent = 16f; // 与 ParagraphBlock.LeftIndent 同步
+        float cx = line.X - indent / 2f;
+        float cy = line.Y + line.Height / 2f;
+        session.FillCircle(cx, cy, diameter / 2f, ink);
     }
 }

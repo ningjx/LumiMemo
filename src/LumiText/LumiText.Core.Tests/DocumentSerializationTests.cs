@@ -185,6 +185,33 @@ public sealed class DocumentSerializationTests
         Assert.Equal(80f, floats[1].Rect.Height);
     }
 
+    // T-S8：bullet 段落往返（isBullet 写出/读回）；老 JSON 无该字段按缺省 false 降级
+    [Fact]
+    public void RoundTrip_BulletParagraph_PreservesFlag()
+    {
+        var doc = new Document(
+        [
+            new ParagraphBlock("分点项", isBullet: true),
+            new ParagraphBlock("普通段"),
+        ]);
+
+        string json = DocumentSerializer.Serialize(doc);
+        Assert.Contains("\"isBullet\": true", json);
+
+        var doc2 = DocumentSerializer.Deserialize(json);
+        Assert.NotNull(doc2);
+        Assert.True(Assert.IsType<ParagraphBlock>(doc2.Blocks[0]).IsBullet);
+        Assert.False(Assert.IsType<ParagraphBlock>(doc2.Blocks[1]).IsBullet);
+        Assert.Equal(json, DocumentSerializer.Serialize(doc2));
+
+        // 老 JSON（无 isBullet 字段）→ 缺省 false（DefaultIgnoreCondition.WhenWritingDefault
+        // 也意味着非 bullet 段落写出时不带该字段）
+        var legacy = DocumentSerializer.Deserialize(
+            """{"schema":1,"blocks":[{"type":"paragraph","runs":[{"t":"x"}]}]}""");
+        Assert.NotNull(legacy);
+        Assert.False(Assert.IsType<ParagraphBlock>(legacy.Blocks[0]).IsBullet);
+    }
+
     // T-S7：schema 1 旧锚点格式（block/x/y）降级读取——x/y 被未知字段忽略吞掉，
     // char 缺省降级为 0，等价于「块首字符」；schema 高于当前版本 → null（高版本跳过）
     [Fact]

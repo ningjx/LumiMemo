@@ -135,6 +135,15 @@ public sealed class EditorCoreTests
     }
 
     [Fact]
+    public void GetPlainText_BulletCarriesPrefix()
+    {
+        var core = CoreWith(
+            new ParagraphBlock("first", isBullet: true),
+            new ParagraphBlock("plain"));
+        Assert.Equal("• first\nplain", core.GetPlainText());
+    }
+
+    [Fact]
     public void ResetDocument_ClearsHistory()
     {
         var core = CoreWith(new ParagraphBlock("a"));

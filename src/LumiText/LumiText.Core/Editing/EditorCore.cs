@@ -121,7 +121,7 @@ public sealed class EditorCore
         SelectionChanged?.Invoke(this, EventArgs.Empty);
     }
 
-    /// <summary>纯文本投影（§3.4）：块间 \n 分隔；TodoBlock 带 ☐/☑ 前缀（O2）。</summary>
+    /// <summary>纯文本投影（§3.4）：块间 \n 分隔；bullet 段带 • 前缀；TodoBlock 带 ☐/☑ 前缀（O2）。</summary>
     public string GetPlainText()
     {
         var blocks = _state.Document.Blocks;
@@ -137,6 +137,10 @@ public sealed class EditorCore
                 case TodoBlock t:
                     builder.Append(t.Checked ? "☑ " : "☐ ");
                     builder.Append(t.PlainText);
+                    break;
+                case ParagraphBlock p when p.IsBullet:
+                    builder.Append("• ");
+                    builder.Append(p.PlainText);
                     break;
                 case ParagraphBlock p:
                     builder.Append(p.PlainText);
@@ -199,7 +203,7 @@ public sealed class EditorCore
         return result.Count > 0 ? new Document(result) : null;
     }
 
-    /// <summary>选区的纯文本投影（块间 \n；TodoBlock 带前缀）。坍缩选区返回空串。</summary>
+    /// <summary>选区的纯文本投影（块间 \n；bullet 段带 • 前缀；TodoBlock 带前缀）。坍缩选区返回空串。</summary>
     public string GetSelectionPlainText()
     {
         var fragment = ExtractSelection();
@@ -219,6 +223,10 @@ public sealed class EditorCore
                 case TodoBlock t:
                     builder.Append(t.Checked ? "☑ " : "☐ ");
                     builder.Append(t.PlainText);
+                    break;
+                case ParagraphBlock p when p.IsBullet:
+                    builder.Append("• ");
+                    builder.Append(p.PlainText);
                     break;
                 case ParagraphBlock p:
                     builder.Append(p.PlainText);

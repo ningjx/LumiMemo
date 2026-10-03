@@ -200,9 +200,13 @@ public sealed class FlowLayoutEngineTests
         };
         using var result = engine.Layout(paragraphs, Array.Empty<FloatObject>(), W);
 
-        Assert.Equal(2, result.Lines.Count);
-        Assert.Equal(40f, result.Lines[1].Y);  // 20（行）+ 20（空行）
-        Assert.Equal(2, result.Lines[1].BlockIndex);
+        // 空段落也产出行盒（M8 起：空块补零字符占位行，空 bullet/todo 的标记与光标落点需要）
+        Assert.Equal(3, result.Lines.Count);
+        Assert.Equal(1, result.Lines[1].BlockIndex);
+        Assert.Equal(0, result.Lines[1].CharCount);
+        Assert.Equal(20f, result.Lines[1].Y);
+        Assert.Equal(40f, result.Lines[2].Y);  // 20（行）+ 20（空行）
+        Assert.Equal(2, result.Lines[2].BlockIndex);
     }
 
     // 命中测试：行盒反查（M2 起为字符级）
@@ -279,5 +283,51 @@ public sealed class FlowLayoutEngineTests
         {
             Assert.Equal(280f, wide.Floats[0].Rect.X);
         }
+    }
+
+    // bullet 段落：文本整体右移缩进、行盒挂 BulletText 标记（圆点由渲染层画在缩进区）
+    [Fact]
+    public void BulletParagraph_IndentedAndMarked()
+    {
+        var engine = new FlowLayoutEngine(new FakeTextMeasurer());
+        using var result = engine.Layout(
+            new Document([new ParagraphBlock(FakeTextMeasurer.Text(10), isBullet: true)]), W);
+
+        Assert.Equal(2, result.Lines.Count);     // 段宽 = 100 − 16 = 84，假字体 10/字 → 8+2 折两行
+        var first = result.Lines[0];
+        Assert.Equal(PlacedLineKind.BulletText, first.Kind);
+        Assert.True(first.IsBlockStart);
+        Assert.Equal(16f, first.X);              // ParagraphBlock.LeftIndent
+        Assert.Equal(8, first.CharCount);
+        Assert.Equal(80f, first.Width);
+        Assert.False(result.Lines[1].IsBlockStart); // 圆点只画首行
+    }
+
+    // 空 bullet 段落也产出行盒（否则圆点画不出、视觉上空行 bullet 消失）
+    [Fact]
+    public void EmptyBulletParagraph_PlaceholderLineKeepsMarker()
+    {
+        var engine = new FlowLayoutEngine(new FakeTextMeasurer());
+        using var result = engine.Layout(
+            new Document([new ParagraphBlock("", isBullet: true)]), W);
+
+        var line = Assert.Single(result.Lines);
+        Assert.Equal(PlacedLineKind.BulletText, line.Kind);
+        Assert.True(line.IsBlockStart);
+        Assert.Equal(0, line.CharCount);
+        Assert.Equal(FakeTextMeasurer.LineHeight, result.TotalHeight);
+    }
+
+    // 空 todo 段同样产出行盒（既有行为只推进高度，复选框原本画不出）
+    [Fact]
+    public void EmptyTodoBlock_PlaceholderLineKeepsCheckbox()
+    {
+        var engine = new FlowLayoutEngine(new FakeTextMeasurer());
+        using var result = engine.Layout(new Document([new TodoBlock("")]), W);
+
+        var line = Assert.Single(result.Lines);
+        Assert.Equal(PlacedLineKind.TodoText, line.Kind);
+        Assert.True(line.IsBlockStart);
+        Assert.Equal(0, line.CharCount);
     }
 }

@@ -14,19 +14,26 @@ namespace LumiText.Core.Documents;
 public sealed record ParagraphBlock : Block
 {
     /// <summary>v2 主构造：样式 run 序列。</summary>
+    /// <remarks>
+    /// <paramref name="isBullet"/> 是追加参数（放末尾、带缺省）：老 JSON 读入时缺省 false，
+    /// 既有位置实参调用点零改动。
+    /// </remarks>
     [JsonConstructor]
-    public ParagraphBlock(IReadOnlyList<TextRun> runs, TextStyle? style = null, float spaceAfter = 0f)
+    public ParagraphBlock(IReadOnlyList<TextRun> runs, TextStyle? style = null, float spaceAfter = 0f,
+        bool isBullet = false)
     {
         // JSON 缺省 runs 按缺省字段降级契约视为空段落（T-S2）。
         Runs = runs ?? [];
         Style = style;
         SpaceAfter = spaceAfter;
+        IsBullet = isBullet;
         PlainText = string.Concat(Runs.Select(static r => r.Text));
     }
 
     /// <summary>兼容构造：单一样式纯文本段落。</summary>
-    public ParagraphBlock(string text, TextStyle? style = null, float spaceAfter = 0f)
-        : this([new TextRun(text)], style, spaceAfter)
+    public ParagraphBlock(string text, TextStyle? style = null, float spaceAfter = 0f,
+        bool isBullet = false)
+        : this([new TextRun(text)], style, spaceAfter, isBullet)
     {
     }
 
@@ -41,6 +48,14 @@ public sealed record ParagraphBlock : Block
     /// <summary>段后间距（dip）。</summary>
     [JsonPropertyName("spaceAfter")]
     public float SpaceAfter { get; }
+
+    /// <summary>分点标记（§0.1 功能对等基线）：渲染层在块首行缩进区画实心圆点，不进文本流。</summary>
+    [JsonPropertyName("isBullet")]
+    public bool IsBullet { get; }
+
+    /// <summary>悬挂缩进（dip）：bullet 时文本整体右移（圆点 4 + 间隙，与 <see cref="TodoBlock.LeftIndent"/> 同纪律）。</summary>
+    [JsonIgnore]
+    public float LeftIndent => IsBullet ? 16f : 0f;
 
     /// <summary>runs 拼接后的纯文本（不含格式；M3 前引擎的输入形态）。</summary>
     [JsonIgnore]

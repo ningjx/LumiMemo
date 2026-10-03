@@ -191,7 +191,13 @@ public sealed class FlowLayoutEngine
                     if (text.Length == 0)
                     {
                         // 空文本块占一个空行高度（样式随行：空标题占标题行高）。
+                        // 非空块可能窄于缩进（整行换到下一带）不产生行盒，空块若也不放占位行盒，
+                        // bullet 圆点/todo 复选框就画不出来——补一个零字符行盒挂块标记。
                         var empty = _measurer.MeasureLineHeight(style);
+                        lines.Add(new PlacedLine(
+                            bi, 0, 0, leftIndent, yCursor, Math.Max(0, contentWidth - leftIndent),
+                            empty.Total, yCursor + empty.Ascent, Batch: null, LineOffsetY: 0f,
+                            kind, IsBlockStart: true));
                         yCursor += empty.Total;
                     }
                     else
@@ -239,7 +245,8 @@ public sealed class FlowLayoutEngine
         float LeftIndent, PlacedLineKind Kind) ExpandTextBlock(Block block) =>
         block switch
         {
-            ParagraphBlock p => (p.Runs, p.PlainText, p.EffectiveStyle, p.SpaceAfter, 0f, PlacedLineKind.Text),
+            ParagraphBlock p => (p.Runs, p.PlainText, p.EffectiveStyle, p.SpaceAfter, p.LeftIndent,
+                p.IsBullet ? PlacedLineKind.BulletText : PlacedLineKind.Text),
             HeadingBlock h => (h.Runs, h.PlainText, h.EffectiveStyle, h.SpaceAfter, 0f, PlacedLineKind.Text),
             TodoBlock t => (t.Runs, t.PlainText, t.EffectiveStyle, t.SpaceAfter, t.LeftIndent, PlacedLineKind.TodoText),
             _ => throw new ArgumentException($"非文本块：{block.GetType().Name}", nameof(block)),

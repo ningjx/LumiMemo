@@ -8,6 +8,11 @@ namespace LumiText.Core.Tests;
 /// 「批量消费器结果与逐行旧逻辑逐行一致」（Phase 1 设计 §10.1 T-B2）。
 /// 生产代码不再使用此路径；几何部分与引擎同源（Band + 行盒分割）。
 /// </summary>
+/// <remarks>
+/// 唯一刻意的行为偏差：空段落此处只推进高度、不产出行（忠实复制旧引擎），
+/// 而 M8 起生产引擎为空块补零字符占位行盒（空 bullet/todo 的标记与光标落点需要）。
+/// 故 T-B2 的等价断言跳过零字符行（见 BatchLayoutTests.TB2 注释）。
+/// </remarks>
 internal static class ReferenceLayout
 {
     private const float Epsilon = 0.01f;

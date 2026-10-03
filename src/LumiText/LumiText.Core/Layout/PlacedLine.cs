@@ -9,6 +9,9 @@ public enum PlacedLineKind
     /// <summary>Todo 块文本行（渲染层在块首行的缩进区画矢量复选框，§6.2）。</summary>
     TodoText,
 
+    /// <summary>Bullet 段落文本行（渲染层在块首行的缩进区画实心圆点，§0.1 分点基线）。</summary>
+    BulletText,
+
     /// <summary>分割线占位行盒（无文本，渲染层画 1px 水平线）。</summary>
     Divider,
 

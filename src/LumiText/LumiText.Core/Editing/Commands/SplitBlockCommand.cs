@@ -40,7 +40,7 @@ public sealed record SplitBlockCommand(TextPosition Position) : IEditCommand
                 new ParagraphBlock(tailRuns, null, h.SpaceAfter),
             HeadingBlock h => new HeadingBlock(tailRuns, h.Level, h.SpaceAfter),
             TodoBlock t => new TodoBlock(tailRuns, false, t.SpaceAfter), // 新行默认未勾选
-            ParagraphBlock p => new ParagraphBlock(tailRuns, p.Style, p.SpaceAfter),
+            ParagraphBlock p => new ParagraphBlock(tailRuns, p.Style, p.SpaceAfter, p.IsBullet),
             _ => throw new InvalidOperationException("不支持的块型。"),
         };
 
@@ -67,7 +67,7 @@ public sealed record SplitBlockCommand(TextPosition Position) : IEditCommand
 
     private static Block ResetSpaceAfter(Block block) => block switch
     {
-        ParagraphBlock p => new ParagraphBlock(p.Runs, p.Style, 0f),
+        ParagraphBlock p => new ParagraphBlock(p.Runs, p.Style, 0f, p.IsBullet),
         HeadingBlock h => new HeadingBlock(h.Runs, h.Level, 0f),
         TodoBlock t => new TodoBlock(t.Runs, t.Checked, 0f),
         _ => block,

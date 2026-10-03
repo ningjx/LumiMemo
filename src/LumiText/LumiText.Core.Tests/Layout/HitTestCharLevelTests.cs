@@ -176,4 +176,41 @@ public sealed class HitTestCharLevelTests
         var rects = CaretGeometryCalculator.GetSelectionRects(result, range);
         Assert.Empty(rects);
     }
+
+    // ---- 空块占位行盒（无批）的命中/光标路径 ----
+
+    [Fact]
+    public void HitTest_EmptyParagraph_HitsBlockStart()
+    {
+        using var result = Layout(
+            new ParagraphBlock(FakeTextMeasurer.Text(10)),
+            new ParagraphBlock(""));
+        // 空块占位行盒在 [20,40)：点击落点 = (1, 0)
+        var hit = result.HitTest(50, 25);
+        Assert.True(hit.Found);
+        Assert.Equal(1, hit.BlockIndex);
+        Assert.Equal(0, hit.CharIndex);
+    }
+
+    [Fact]
+    public void GetCaret_EmptyParagraph_PlacesholderLineOrigin()
+    {
+        using var result = Layout(
+            new ParagraphBlock(FakeTextMeasurer.Text(10)),
+            new ParagraphBlock(""));
+        var caret = CaretGeometryCalculator.GetCaret(result, new TextPosition(1, 0));
+        Assert.NotNull(caret);
+        Assert.Equal(0f, caret.Value.X);
+        Assert.Equal(20f, caret.Value.Y);
+        Assert.Equal(20f, caret.Value.Height);
+    }
+
+    [Fact]
+    public void GetCaret_EmptyBullet_IndentedOrigin()
+    {
+        using var result = Layout(new ParagraphBlock("", isBullet: true));
+        var caret = CaretGeometryCalculator.GetCaret(result, new TextPosition(0, 0));
+        Assert.NotNull(caret);
+        Assert.Equal(16f, caret.Value.X); // 光标在缩进之后（bullet 圆点左侧区域留给标记）
+    }
 }

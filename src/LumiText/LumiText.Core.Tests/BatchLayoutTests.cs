@@ -48,7 +48,9 @@ public sealed class BatchLayoutTests
         Assert.True(engine.LastStats.BatchesCreated <= 2 + engine.LastStats.BatchesDiscarded);
     }
 
-    // T-B2：批量结果与逐行旧逻辑（参照实现）逐行一致——T1–T10 同款输入矩阵
+    // T-B2：批量结果与逐行旧逻辑（参照实现）逐行一致——T1–T10 同款输入矩阵。
+    // 例外：参照实现不产空段落占位行（M8 起生产引擎为空块补零字符行盒，见 ReferenceLayout 注释），
+    // 比较前把零字符行从生产结果里剔掉，剩余行必须逐行一致。
     [Theory]
     [MemberData(nameof(EquivalenceCases))]
     public void TB2_BatchMatchesFirstLineReference(string name, ParagraphBlock[] paragraphs, FloatObject[] floats)
@@ -57,19 +59,19 @@ public sealed class BatchLayoutTests
         var engine = NewEngine();
         using var result = engine.Layout(paragraphs, floats, W);
         var reference = ReferenceLayout.Layout(paragraphs, floats, W);
+        var actual = result.Lines.Where(l => l.CharCount > 0).ToArray();
 
-        Assert.Equal(reference.Count, result.Lines.Count);
+        Assert.Equal(reference.Count, actual.Length);
         for (int i = 0; i < reference.Count; i++)
         {
             var expected = reference[i];
-            var actual = result.Lines[i];
-            Assert.Equal(expected.ParagraphIndex, actual.BlockIndex);
-            Assert.Equal(expected.CharStart, actual.CharStart);
-            Assert.Equal(expected.CharCount, actual.CharCount);
-            Assert.Equal(expected.X, actual.X, 2);
-            Assert.Equal(expected.Y, actual.Y, 2);
-            Assert.Equal(expected.Width, actual.Width, 2);
-            Assert.Equal(expected.Baseline, actual.Baseline, 2);
+            Assert.Equal(expected.ParagraphIndex, actual[i].BlockIndex);
+            Assert.Equal(expected.CharStart, actual[i].CharStart);
+            Assert.Equal(expected.CharCount, actual[i].CharCount);
+            Assert.Equal(expected.X, actual[i].X, 2);
+            Assert.Equal(expected.Y, actual[i].Y, 2);
+            Assert.Equal(expected.Width, actual[i].Width, 2);
+            Assert.Equal(expected.Baseline, actual[i].Baseline, 2);
         }
     }
 

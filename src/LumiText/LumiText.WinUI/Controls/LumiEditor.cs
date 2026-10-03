@@ -139,7 +139,7 @@ public sealed class LumiEditor : Grid
     /// <summary>
     /// 工具栏命令（与现产品 RichEditorHost.ExecuteCommand 对齐的命令名）。
     /// 粗/斜/下划/删线映射到 <see cref="ApplyInlineStyleCommand"/>；
-    /// bullet/todo 的块结构命令（ToggleBullet/ToggleTodo）尚未实现，暂时 no-op（后续补）。
+    /// bullet/todo 映射到 <see cref="ToggleBulletCommand"/>/<see cref="ToggleTodoCommand"/>。
     /// </summary>
     public void ExecuteCommand(string command)
     {
@@ -162,8 +162,10 @@ public sealed class LumiEditor : Grid
                 _core.ApplyCommand(new ApplyInlineStyleCommand(_core.Selection, InlineStyleFlag.Strikethrough));
                 break;
             case "bullet":
+                _core.ApplyCommand(new ToggleBulletCommand(_core.Selection));
+                break;
             case "todo":
-                // ToggleBullet/ToggleTodo 块结构命令未实现（后续补），暂 no-op
+                _core.ApplyCommand(new ToggleTodoCommand(_core.Selection));
                 break;
         }
     }
@@ -601,11 +603,36 @@ public sealed class LumiEditor : Grid
     }
 
     // ------------------------------------------------------------------
-    // 拖动选择（§4.1：按下落点 → 拖动扩展选区 → 松开定格）
+    // 指针交互（§4.1）：单击落点/拖动扩选/双击选词/三击选段；
+    // todo 块首行缩进区（复选框）点击切换勾选。
     // ------------------------------------------------------------------
 
+    private enum DragGranularity
+    {
+        /// <summary>字符级（单击按下后拖动）。</summary>
+        Char,
+
+        /// <summary>词级（双击后拖动：锚与游标各自扩到词界）。</summary>
+        Word,
+
+        /// <summary>段落级（三击后拖动：整段扩选）。</summary>
+        Block,
+    }
+
     private bool _isDraggingSelection;
+    private DragGranularity _dragGranularity = DragGranularity.Char;
     private TextPosition _dragAnchor;
+    private TextPosition _wordAnchorEnd; // 词级/段级拖动的锚区另一端（越过锚点时翻转向量用）
+    private bool _wordDragFlipped;
+
+    // 双击/三击：PointerUpdateKind 没有双击语义（官方文档确认成员只有 Pressed/Released），
+    // 按下次数自维护——近距离 + 时间窗内连续按下计 2/3 次；窗口外归 1。
+    private const int MultiClickMs = 500;
+    private const float MultiClickRadius = 4f;
+    private int _consecutivePresses;
+    private long _lastPressTimestamp;
+    private float _lastPressX;
+    private float _lastPressY;
 
     private void OnPointerPressed(object sender, PointerRoutedEventArgs e)
     {
@@ -614,15 +641,65 @@ public sealed class LumiEditor : Grid
             return;
         }
         _scroller.Focus(FocusState.Pointer);
-        var point = e.GetCurrentPoint(_surfaceHost).Position;
-        var hit = _renderer.Current.HitTest((float)point.X, (float)(point.Y + _scroller.VerticalOffset));
-        if (hit.Found)
+        var currentPoint = e.GetCurrentPoint(_surfaceHost);
+        var point = currentPoint.Position;
+        float docX = (float)point.X;
+        float docY = (float)(point.Y + _scroller.VerticalOffset);
+
+        // 复选框点击：todo 块首行、按下点落在缩进区（行盒 X 到缩进起点）→ 切勾选，不动光标
+        if (currentPoint.Properties.IsLeftButtonPressed && TryToggleTodoAt(docX, docY))
         {
-            _dragAnchor = hit.CaretPosition;
-            _core.SetSelection(TextRange.Collapse(_dragAnchor));
-            _isDraggingSelection = true;
-            _surfaceHost.CapturePointer(e.Pointer);
             e.Handled = true;
+            return;
+        }
+
+        var hit = _renderer.Current.HitTest(docX, docY);
+        if (!hit.Found)
+        {
+            return;
+        }
+        e.Handled = true;
+        _surfaceHost.CapturePointer(e.Pointer);
+
+        long now = Environment.TickCount64;
+        bool inWindow = now - _lastPressTimestamp <= MultiClickMs
+            && Math.Abs(docX - _lastPressX) <= MultiClickRadius
+            && Math.Abs(docY - _lastPressY) <= MultiClickRadius;
+        _consecutivePresses = inWindow ? (_consecutivePresses % 3) + 1 : 1;
+        _lastPressTimestamp = now;
+        _lastPressX = docX;
+        _lastPressY = docY;
+
+        switch (_consecutivePresses)
+        {
+            case 2:
+            {
+                var range = WordRangeAt(hit.CaretPosition);
+                _dragAnchor = range.Start;
+                _wordAnchorEnd = range.End;
+                _wordDragFlipped = false;
+                _dragGranularity = DragGranularity.Word;
+                _isDraggingSelection = true;
+                _core.SetSelection(range);
+                break;
+            }
+            case 3:
+            {
+                var range = BlockRangeAt(hit.CaretPosition);
+                _dragAnchor = range.Start;
+                _wordAnchorEnd = range.End;
+                _wordDragFlipped = false;
+                _dragGranularity = DragGranularity.Block;
+                _isDraggingSelection = true;
+                _core.SetSelection(range);
+                break;
+            }
+            default:
+                _dragAnchor = hit.CaretPosition;
+                _dragGranularity = DragGranularity.Char;
+                _isDraggingSelection = true;
+                _core.SetSelection(TextRange.Collapse(_dragAnchor));
+                break;
         }
     }
 
@@ -634,11 +711,35 @@ public sealed class LumiEditor : Grid
         }
         var point = e.GetCurrentPoint(_surfaceHost).Position;
         var hit = _renderer.Current.HitTest((float)point.X, (float)(point.Y + _scroller.VerticalOffset));
-        if (hit.Found)
+        if (!hit.Found)
         {
-            _core.SetSelection(new TextRange(_dragAnchor, hit.CaretPosition));
+            return;
         }
         e.Handled = true;
+
+        switch (_dragGranularity)
+        {
+            case DragGranularity.Char:
+                _core.SetSelection(new TextRange(_dragAnchor, hit.CaretPosition));
+                break;
+            case DragGranularity.Word:
+            case DragGranularity.Block:
+            {
+                var cursor = _dragGranularity == DragGranularity.Word
+                    ? WordRangeAt(hit.CaretPosition)
+                    : BlockRangeAt(hit.CaretPosition);
+                // 越过锚区时翻转：选区从「锚区.起 → 游标区.止」翻成「锚区.止 → 游标区.起」
+                bool flipped = cursor.Start < _dragAnchor;
+                if (flipped != _wordDragFlipped)
+                {
+                    _wordDragFlipped = flipped;
+                }
+                var from = _wordDragFlipped ? _wordAnchorEnd : _dragAnchor;
+                var to = _wordDragFlipped ? cursor.Start : cursor.End;
+                _core.SetSelection(new TextRange(from, to));
+                break;
+            }
+        }
     }
 
     private void OnPointerReleased(object sender, PointerRoutedEventArgs e)
@@ -649,6 +750,62 @@ public sealed class LumiEditor : Grid
             _surfaceHost.ReleasePointerCapture(e.Pointer);
             e.Handled = true;
         }
+    }
+
+    /// <summary>position 所在词（双击）的选区；块文本空时坍缩在块首。</summary>
+    private TextRange WordRangeAt(TextPosition position)
+    {
+        var block = _core!.Document.Blocks[position.BlockIndex];
+        string text = BlockTextOps.GetPlainText(block);
+        var (start, end) = WordBoundary.Expand(text, position.CharIndex);
+        return new TextRange(
+            new TextPosition(position.BlockIndex, start),
+            new TextPosition(position.BlockIndex, end));
+    }
+
+    /// <summary>position 所在整段（三击）的选区。</summary>
+    private TextRange BlockRangeAt(TextPosition position)
+    {
+        var block = _core!.Document.Blocks[position.BlockIndex];
+        int length = BlockTextOps.GetTextLength(block);
+        return new TextRange(
+            new TextPosition(position.BlockIndex, 0),
+            new TextPosition(position.BlockIndex, length));
+    }
+
+    /// <summary>
+    /// 复选框命中：todo 块的首行行盒，(docX, docY) 落在行盒纵向范围且
+    /// X 在缩进区（行盒 X 到缩进起点）内 → 应用 <see cref="ToggleTodoCheckedCommand"/>。
+    /// </summary>
+    private bool TryToggleTodoAt(float docX, float docY)
+    {
+        var layout = _renderer.Current!;
+        foreach (var line in layout.Lines)
+        {
+            if (line.Y > docY)
+            {
+                break; // 行盒按 Y 有序，越过即停
+            }
+            if (line.Kind != PlacedLineKind.TodoText || !line.IsBlockStart)
+            {
+                continue;
+            }
+            if (docY < line.Y || docY > line.Y + line.Height)
+            {
+                continue;
+            }
+            // 编辑器自身排的版：Blocks 恒非 null（FlowDocumentRenderer 经 Document 重载入）
+            if (layout.Blocks![line.BlockIndex] is not TodoBlock todo)
+            {
+                continue;
+            }
+            if (docX >= line.X - todo.LeftIndent && docX <= line.X)
+            {
+                _core!.ApplyCommand(new ToggleTodoCheckedCommand(line.BlockIndex));
+                return true;
+            }
+        }
+        return false;
     }
 
     private void OnRenderViewport(CanvasDrawingSession session, Windows.Foundation.Rect viewport, float scale)

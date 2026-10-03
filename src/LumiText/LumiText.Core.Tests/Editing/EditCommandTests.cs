@@ -165,6 +165,16 @@ public sealed class EditCommandTests
     }
 
     [Fact]
+    public void SplitBlock_BulletParagraph_BothHalvesKeepBullet()
+    {
+        var state = StateWith(new ParagraphBlock("itemone itemtwo", isBullet: true));
+        var after = new SplitBlockCommand(new TextPosition(0, 7)).Apply(state);
+        Assert.Equal(2, after.Document.Blocks.Count);
+        Assert.All(after.Document.Blocks,
+            b => Assert.True(Assert.IsType<ParagraphBlock>(b).IsBullet));
+    }
+
+    [Fact]
     public void ApplyInlineStyle_AllBold_ClearsIt()
     {
         var state = StateWith(new ParagraphBlock(

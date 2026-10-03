@@ -52,6 +52,8 @@ public sealed class BlockLayoutTests
     }
 
     // T-C1b：空段落占空行高度，与 Divider 叠加推进
+    // （M8 起空块也产出行盒——否则空 bullet/todo 的标记画不出、空段落点击无落点、光标无处显示；
+    // 行数因此 = 空段落占位 1 + Divider 1 + 正文 1）
     [Fact]
     public void TC1_EmptyParagraphAndDivider_StackCorrectly()
     {
@@ -64,10 +66,19 @@ public sealed class BlockLayoutTests
         };
         using var result = engine.Layout(blocks, Array.Empty<FloatObject>(), W);
 
-        Assert.Equal(2, result.Lines.Count);
-        Assert.Equal(PlacedLineKind.Divider, result.Lines[0].Kind);
-        Assert.Equal(20f, result.Lines[0].Y);   // 空段落 20 + Divider 起于 20
-        Assert.Equal(40f, result.Lines[1].Y);
+        Assert.Equal(3, result.Lines.Count);
+
+        var empty = result.Lines[0];
+        Assert.Equal(PlacedLineKind.Text, empty.Kind);
+        Assert.Equal(0, empty.BlockIndex);
+        Assert.Equal(0, empty.CharCount);
+        Assert.Null(empty.Batch);           // 占位行盒无批：命中/光标走专门路径
+        Assert.True(empty.IsBlockStart);
+        Assert.Equal(0f, empty.Y);
+
+        Assert.Equal(PlacedLineKind.Divider, result.Lines[1].Kind);
+        Assert.Equal(20f, result.Lines[1].Y);   // 空段落 20 + Divider 起于 20
+        Assert.Equal(40f, result.Lines[2].Y);
         Assert.Equal(60f, result.TotalHeight);
     }
 
