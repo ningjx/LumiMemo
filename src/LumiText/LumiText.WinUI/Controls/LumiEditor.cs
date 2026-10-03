@@ -372,6 +372,18 @@ public sealed class LumiEditor : Grid
                 _core.Redo();
                 e.Handled = true;
                 break;
+            case VirtualKey.C when ctrl:
+                WinClipboard.Copy(_core);
+                e.Handled = true;
+                break;
+            case VirtualKey.X when ctrl:
+                WinClipboard.Cut(_core);
+                e.Handled = true;
+                break;
+            case VirtualKey.V when ctrl:
+                _ = WinClipboard.PasteAsync(_core);
+                e.Handled = true;
+                break;
         }
     }
 

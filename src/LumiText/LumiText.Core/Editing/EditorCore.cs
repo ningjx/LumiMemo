@@ -149,4 +149,85 @@ public sealed class EditorCore
         }
         return builder.ToString();
     }
+
+    /// <summary>
+    /// 提取选区覆盖的内容为子文档（剪贴板复制/剪切用）：
+    /// 跨块选区裁剪首尾块到选区边界、中间整块保留；单块选区裁剪到字符区间。
+    /// 坍缩选区返回 null。
+    /// </summary>
+    public Document? ExtractSelection()
+    {
+        var sel = _state.Selection;
+        if (sel.IsCollapsed)
+        {
+            return null;
+        }
+        var (start, end) = (sel.Start, sel.End);
+        var blocks = _state.Document.Blocks;
+        var result = new List<Block>();
+
+        if (start.BlockIndex == end.BlockIndex)
+        {
+            var block = blocks[start.BlockIndex];
+            int count = end.CharIndex - start.CharIndex;
+            var runs = BlockTextOps.SliceRuns(block, start.CharIndex, count);
+            result.Add(BlockTextOps.WithRuns(block, runs));
+            return new Document(result);
+        }
+
+        for (int i = start.BlockIndex; i <= end.BlockIndex; i++)
+        {
+            var block = blocks[i];
+            if (!BlockTextOps.IsTextBlock(block))
+            {
+                // 中间的非文本块（Divider/Image）整块保留
+                if (i > start.BlockIndex && i < end.BlockIndex)
+                {
+                    result.Add(block);
+                }
+                continue;
+            }
+            int blockStart = i == start.BlockIndex ? start.CharIndex : 0;
+            int blockEnd = i == end.BlockIndex ? end.CharIndex : BlockTextOps.GetTextLength(block);
+            if (blockEnd <= blockStart)
+            {
+                continue;
+            }
+            var runs = BlockTextOps.SliceRuns(block, blockStart, blockEnd - blockStart);
+            result.Add(BlockTextOps.WithRuns(block, runs));
+        }
+        return result.Count > 0 ? new Document(result) : null;
+    }
+
+    /// <summary>选区的纯文本投影（块间 \n；TodoBlock 带前缀）。坍缩选区返回空串。</summary>
+    public string GetSelectionPlainText()
+    {
+        var fragment = ExtractSelection();
+        if (fragment is null)
+        {
+            return string.Empty;
+        }
+        var builder = new System.Text.StringBuilder();
+        for (int i = 0; i < fragment.Blocks.Count; i++)
+        {
+            if (i > 0)
+            {
+                builder.Append('\n');
+            }
+            switch (fragment.Blocks[i])
+            {
+                case TodoBlock t:
+                    builder.Append(t.Checked ? "☑ " : "☐ ");
+                    builder.Append(t.PlainText);
+                    break;
+                case ParagraphBlock p:
+                    builder.Append(p.PlainText);
+                    break;
+                case HeadingBlock h:
+                    builder.Append(h.PlainText);
+                    break;
+            }
+        }
+        return builder.ToString();
+    }
 }
