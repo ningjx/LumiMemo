@@ -23,26 +23,33 @@ internal sealed class FakeTextMeasurer : ITextMeasurer
             length += run.Text.Length;
         }
         var ratios = new float[length];
+        var chars = new char[length];
         int i = 0;
         foreach (var run in runs)
         {
             float ratio = run.Style?.FontSizeRatio ?? 1f;
             for (int j = 0; j < run.Text.Length; j++)
             {
-                ratios[i++] = ratio;
+                ratios[i] = ratio;
+                chars[i] = run.Text[j];
+                i++;
             }
         }
-        return new FakeLineBatch(ratios, maxWidth);
+        return new FakeLineBatch(ratios, chars, maxWidth);
     }
 
     public LineHeightInfo MeasureLineHeight(TextStyle style) => new(Ascent, Descent);
 
-    /// <summary>贪心填充：逐字符累计字宽不超过段宽；一个字符都放不下时 LineCount = 0（窄段放弃信号）。</summary>
+    /// <summary>贪心填充 + 避头尾：逐字符累计字宽不超过段宽；一个字符都放不下时 LineCount = 0（窄段放弃信号）。</summary>
+    /// <remarks>
+    /// 避头尾（Phase 3 打磨）：与真实栈一致——断点若会让收尾标点（，。等）起行，
+    /// 就把断点往前挪（把标点前一个字一起推到下一行）。见 <see cref="LineBreakRules"/>。
+    /// </remarks>
     private sealed class FakeLineBatch : ILineBatch
     {
         private readonly List<MeasuredLine> _lines = new();
 
-        public FakeLineBatch(float[] ratios, float maxWidth)
+        public FakeLineBatch(float[] ratios, char[] chars, float maxWidth)
         {
             int pos = 0;
             float offsetY = 0f;
@@ -63,9 +70,31 @@ internal sealed class FakeTextMeasurer : ITextMeasurer
                     consumed++;
                     maxRatio = Math.Max(maxRatio, ratio);
                 }
+
+                // 避头尾：行末退字，直到下一行不是以收尾标点开头（全部退光则按原样，交由调用方放弃该段）
+                int before = consumed;
+                while (consumed > 0 && pos + consumed < chars.Length
+                    && LineBreakRules.IsClosingPunctuation(chars[pos + consumed]))
+                {
+                    consumed--;
+                }
+                if (consumed == 0)
+                {
+                    consumed = before; // 退无可退：保持贪心结果，避免死循环（真栈此时也不会更差）
+                }
+
                 if (consumed == 0)
                 {
                     break;
+                }
+                // 退字后重算宽度与行高（都要按实际容纳的字符算）
+                width = 0f;
+                maxRatio = 0f;
+                for (int k = 0; k < consumed; k++)
+                {
+                    float ratio = ratios[pos + k];
+                    width += CharWidth * ratio;
+                    maxRatio = Math.Max(maxRatio, ratio);
                 }
                 float ascent = Ascent * maxRatio;
                 float descent = Descent * maxRatio;

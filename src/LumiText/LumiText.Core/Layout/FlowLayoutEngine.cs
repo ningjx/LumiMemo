@@ -191,6 +191,8 @@ public sealed class FlowLayoutEngine
         foreach (var f in placed)
         {
             totalHeight = Math.Max(totalHeight, f.Rect.Bottom);
+            // 宽图等比内缩后视觉底缘可能比包络略低（上边界下移的那几 dip）：别让它被文档底裁掉
+            totalHeight = Math.Max(totalHeight, FloatGeometry.VisualRect(f.Rect).Bottom);
         }
 
         LastStats = new LayoutStats(ledger.Created.Count, ledger.Discarded);
@@ -368,6 +370,31 @@ public sealed class FlowLayoutEngine
         cursor.Batch = null;
     }
 
+    /// <summary>[start, start+length) 的 runs 视图（段边界补字的小批用）。</summary>
+    private static IReadOnlyList<TextRun> SliceRuns(IReadOnlyList<TextRun> runs, int start, int length)
+    {
+        var sliced = new List<TextRun>();
+        int pos = 0;
+        int end = start + length;
+        foreach (var run in runs)
+        {
+            int runStart = pos;
+            int runEnd = pos + run.Text.Length;
+            pos = runEnd;
+            int from = Math.Max(runStart, start);
+            int to = Math.Min(runEnd, end);
+            if (from < to)
+            {
+                sliced.Add(new TextRun(run.Text[(from - runStart)..(to - runStart)], run.Style));
+            }
+            if (pos >= end)
+            {
+                break;
+            }
+        }
+        return sliced;
+    }
+
     /// <summary>截取「剩余文本」的 runs 视图（批量接口的输入）。</summary>
     private static IReadOnlyList<TextRun> SliceRuns(IReadOnlyList<TextRun> runs, int start)
     {
@@ -509,8 +536,9 @@ public sealed class FlowLayoutEngine
         maxAscent = 0f;
         maxDescent = 0f;
         int absPos = start;
-        foreach (var segment in segments)
+        for (int i = 0; i < segments.Count; i++)
         {
+            var segment = segments[i];
             if (absPos >= textLength)
             {
                 break;
@@ -525,12 +553,120 @@ public sealed class FlowLayoutEngine
                 // 窄段放弃：文本顺延到下一个有空间的段/带（Word 同款，防死循环的关键）。
                 continue;
             }
-            pending.Add((segment, found, cursor.Batch!, cursor.NextLine, absPos, cursor.StartPos));
+
+            // 段边界放宽避头尾（Phase 3 打磨）：本行后面还有段时，把断行器为「标点不可行首」
+            // 退掉的字补回来，标点让给下一段（图片另一侧）——同一视觉行不算"行首"。
+            ILineBatch batch = cursor.Batch!;
+            int lineIndex = cursor.NextLine;
+            int batchStart = cursor.StartPos;
+            if (HasUsableSegmentAfter(segments, i)
+                && TryExtendAcrossBoundary(runs, textLength, absPos, segment.Width, style, found,
+                    out var extendedBatch, out var extended))
+            {
+                ledger.Created.Add(extendedBatch);
+                // 主批出现「半行」状态（只用了它行首的一部分）：整批弃用，下一段/下一行重建
+                DetachBatch(cursor, ledger);
+                batch = extendedBatch;
+                lineIndex = 0;
+                batchStart = absPos;
+                found = extended;
+            }
+
+            pending.Add((segment, found, batch, lineIndex, absPos, batchStart));
             absPos += found.CharsConsumed;
             maxAscent = Math.Max(maxAscent, found.Ascent);
             maxDescent = Math.Max(maxDescent, found.Descent);
         }
         return pending;
+    }
+
+    /// <summary>本段之后是否还有能放字的段（决定段边界放宽是否适用——"同一视觉行"的判据）。</summary>
+    private static bool HasUsableSegmentAfter(IReadOnlyList<HInterval> segments, int index)
+    {
+        for (int i = index + 1; i < segments.Count; i++)
+        {
+            if (segments[i].Width >= 1f)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// 段边界放宽避头尾（Phase 3 打磨）：断行器遇到「收尾标点会被挤到下一行行首」时会退一个字
+    /// （避头尾常规处理）。分段排版里那个"下一行"其实是图片另一侧的另一段、同一视觉行，
+    /// 这里把退掉的字补回来，标点留给下一段。
+    /// </summary>
+    /// <remarks>
+    /// 判据（只认"断行器按规则退字"，不认正常断点）：① 纯按宽度还能再放 fit 个字（fit &gt; 断行器的行字数）；
+    /// ② 宽度边界上的那个字是收尾标点（<see cref="LineBreakRules.IsClosingPunctuation"/>）。
+    /// 补出来的行用<b>独立小批</b>承载——主批只用了行首一部分，游标无法表达"半行"。
+    /// </remarks>
+    private bool TryExtendAcrossBoundary(
+        IReadOnlyList<TextRun> runs, int textLength, int absPos, float width, TextStyle style,
+        MeasuredLine line, out ILineBatch batch, out MeasuredLine extended)
+    {
+        batch = null!;
+        extended = line;
+        int consumed = line.CharsConsumed;
+        int probeLength = Math.Min(textLength - absPos, consumed + 4);
+        if (probeLength <= consumed)
+        {
+            return false; // 文本到头：没有可补的
+        }
+
+        // 探针：前缀按「超宽 → 单行」排一次，拿纯按宽度的字符位置（换行批的插入点是按行给的，不能用）
+        using (var probe = _measurer.LayoutLines(
+            SliceRuns(runs, absPos, probeLength), style, NoWrapProbeWidth))
+        {
+            if (probe.LineCount == 0)
+            {
+                return false;
+            }
+            int fit = 0;
+            for (int k = 1; k <= probeLength; k++)
+            {
+                if (probe.GetCaretGeometry(k, isTrailing: false).X > width + Epsilon)
+                {
+                    break;
+                }
+                fit = k;
+            }
+            if (fit <= consumed || !LineBreakRules.IsClosingPunctuation(CharAt(runs, absPos + fit)))
+            {
+                return false; // 宽度也就这么多，或退字不是标点起的头（如西文词边界）：不动
+            }
+
+            var ext = _measurer.LayoutLines(SliceRuns(runs, absPos, fit), style, width);
+            if (ext.LineCount == 0)
+            {
+                ext.Dispose();
+                return false;
+            }
+            batch = ext;
+            extended = ext.GetLine(0);
+            return true;
+        }
+    }
+
+    /// <summary>探针排版的"不换行"宽度（远超任何内容宽，只用来拿单行内的字符位置）。</summary>
+    private const float NoWrapProbeWidth = 1_000_000f;
+
+    /// <summary>取块内第 index 个字符（越界返回 '\0'）。</summary>
+    private static char CharAt(IReadOnlyList<TextRun> runs, int index)
+    {
+        int pos = 0;
+        foreach (var run in runs)
+        {
+            int end = pos + run.Text.Length;
+            if (index < end)
+            {
+                return run.Text[index - pos];
+            }
+            pos = end;
+        }
+        return '\0';
     }
 
     // ------------------------------------------------------------------
@@ -550,8 +686,10 @@ public sealed class FlowLayoutEngine
         var cuts = new SortedSet<float> { 0f };
         foreach (var f in floats)
         {
-            cuts.Add(Math.Max(0f, f.Rect.Y));
-            cuts.Add(Math.Max(0f, f.Rect.Bottom));
+            // 排除区（Phase 3 打磨）：文字流向的边界 = 看得见的那张图（只收有余量的一侧）
+            var rect = FloatGeometry.ExclusionRect(f.Rect, contentWidth);
+            cuts.Add(Math.Max(0f, rect.Y));
+            cuts.Add(Math.Max(0f, rect.Bottom));
         }
         cuts.Add(float.MaxValue);
 
@@ -573,7 +711,9 @@ public sealed class FlowLayoutEngine
         var segments = new List<HInterval> { new(0f, contentWidth) };
         foreach (var f in floats)
         {
-            var rect = f.Rect;
+            // 排除区 = 视觉矩形（Phase 3 打磨）：包络与视觉矩形之间的缓冲带留给文字用，
+            // 所以「差一点放不下」的行会贴到看得见的图片边上，而不是绕到另一侧
+            var rect = FloatGeometry.ExclusionRect(f.Rect, contentWidth);
             if (!rect.IntersectsVertically(yTop + Epsilon, yBottom - Epsilon))
             {
                 continue;

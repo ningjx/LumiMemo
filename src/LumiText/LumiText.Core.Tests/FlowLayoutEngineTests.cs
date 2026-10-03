@@ -1,4 +1,4 @@
-using LumiText.Core.Documents;
+﻿using LumiText.Core.Documents;
 using LumiText.Core.Layout;
 using Xunit;
 
@@ -42,8 +42,8 @@ public sealed class FlowLayoutEngineTests
 
         Assert.Equal(4, result.Lines.Count);
         Assert.Equal(new[] { 7, 7, 7, 4 }, result.Lines.Select(l => l.CharCount).ToArray());
-        Assert.Equal(30f, result.Lines[0].X);
-        Assert.Equal(30f, result.Lines[2].X);
+        Assert.Equal(26.4f, result.Lines[0].X);   // 排除区右缘 = 图右缘 − 视觉内缩 3.6
+        Assert.Equal(26.4f, result.Lines[2].X);
         Assert.Equal(0f, result.Lines[3].X);       // 越过图片底部恢复全宽
         Assert.Equal(60f, result.Lines[3].Y);
     }
@@ -69,8 +69,8 @@ public sealed class FlowLayoutEngineTests
         using var result = Layout(FakeTextMeasurer.Text(8), Left(1, 0, 0, 30, 20), right);
 
         Assert.Equal(2, result.Lines.Count);
-        Assert.Equal(4, result.Lines[0].CharCount);  // 中段 [30,70] = 40 宽
-        Assert.Equal(30f, result.Lines[0].X);
+        Assert.Equal(4, result.Lines[0].CharCount);  // 中段 [26.4,73.6] = 47.2 宽
+        Assert.Equal(26.4f, result.Lines[0].X);
         Assert.Equal(4, result.Lines[1].CharCount);  // 越过双浮底部恢复全宽
         Assert.Equal(0f, result.Lines[1].X);
         Assert.Equal(20f, result.Lines[1].Y);
@@ -83,8 +83,8 @@ public sealed class FlowLayoutEngineTests
         using var result = Layout(FakeTextMeasurer.Text(20), Left(1, 0, 0, 30, 10));
 
         Assert.Equal(3, result.Lines.Count);
-        // 行高 20 横跨带 [0,10) 与 [10,∞)，段交集 [30,100] → 首行缩进而不是被推空
-        Assert.Equal(30f, result.Lines[0].X);
+        // 行高 20 横跨带 [0,10.1) 与 [10.1,∞)，段交集 [26.4,100] → 首行缩进而不是被推空
+        Assert.Equal(26.4f, result.Lines[0].X);
         Assert.Equal(7, result.Lines[0].CharCount);
         Assert.Equal(0f, result.Lines[0].Y);
         Assert.Equal(0f, result.Lines[1].X);
@@ -100,7 +100,7 @@ public sealed class FlowLayoutEngineTests
 
         Assert.Single(result.Lines);
         Assert.Equal(0f, result.Lines[0].X);
-        Assert.Equal(20f, result.Lines[0].Y);  // 整行被推到浮动底缘之下
+        Assert.Equal(21.32f, result.Lines[0].Y, 2);  // 推到排除区底缘（宽 91 的段也放不下字）之下
         Assert.Equal(10, result.Lines[0].CharCount);
     }
 
@@ -114,17 +114,17 @@ public sealed class FlowLayoutEngineTests
             new ParagraphBlock(FakeTextMeasurer.Text(10), spaceAfter: 5f),
             new ParagraphBlock(FakeTextMeasurer.Text(10)),
         };
-        using var result = engine.Layout(paragraphs, new[] { Left(1, 0, 0, 30, 50) }, W);
+        using var result = engine.Layout(paragraphs, new[] { Left(1, 0, 0, 30, 60) }, W);
 
         Assert.Equal(4, result.Lines.Count);
-        // 段落 1（10 字符）：y=0 与 y=20 都与浮动相交（< 50）→ 缩进 7 + 3
-        Assert.Equal(30f, result.Lines[0].X);
-        Assert.Equal(30f, result.Lines[1].X);
+        // 段落 1（10 字符）：y=0 与 y=20 都与浮动相交（< 60）→ 缩进 7 + 3
+        Assert.Equal(26.4f, result.Lines[0].X);
+        Assert.Equal(26.4f, result.Lines[1].X);
         // 段落 2 起于 y=45（段落 1 两行 40 + 段后距 5），仍与浮动相交 → 首行缩进
         Assert.Equal(1, result.Lines[2].BlockIndex);
         Assert.Equal(45f, result.Lines[2].Y);
-        Assert.Equal(30f, result.Lines[2].X);
-        // y=65 越过浮动底缘（50）后恢复全宽
+        Assert.Equal(26.4f, result.Lines[2].X);
+        // y=65 越过浮动底缘（60）后恢复全宽
         Assert.Equal(0f, result.Lines[3].X);
     }
 
@@ -136,7 +136,7 @@ public sealed class FlowLayoutEngineTests
         var paragraphs = new[] { ParagraphBlock.FromText(FakeTextMeasurer.Text(20)) };
 
         using var before = engine.Layout(paragraphs, new[] { Left(1, 0, 0, 30, 40) }, W);
-        Assert.Equal(30f, before.Lines[0].X);   // 图片在左，文字在右
+        Assert.Equal(26.4f, before.Lines[0].X); // 图片在左，文字在右（排除区右缘 −3.6）
 
         using var after = engine.Layout(paragraphs, new[] { Left(1, 70, 0, 30, 40) }, W);
         Assert.Equal(0f, after.Lines[0].X);     // 图片在右，文字回到左
@@ -153,13 +153,14 @@ public sealed class FlowLayoutEngineTests
         var f2 = Left(2, 0, 20, 40, 40);   // [20,60)
         using var result = Layout(FakeTextMeasurer.Text(20), f1, f2);
 
-        // 带 [0,20)：排除 30 → 段 [30,100]（7 字符）；带 [20,40)：排除 40 → 段 [40,100]（6 字符）
+        // 带 [0,20)：排除到 26.4 → 段 [26.4,100]（7 字符）；
+        // 带 [20,40)：两个浮动都排除 → 段 [36,100]（6 字符）
         Assert.Equal(7, result.Lines[0].CharCount);
-        Assert.Equal(30f, result.Lines[0].X);
+        Assert.Equal(26.4f, result.Lines[0].X);
         Assert.Equal(6, result.Lines[1].CharCount);
-        Assert.Equal(40f, result.Lines[1].X);
-        // 带 [40,60)：f2 独占 → 段 [40,100]
-        Assert.Equal(40f, result.Lines[2].X);
+        Assert.Equal(36f, result.Lines[1].X);
+        // 带 [40,60)：f2 独占 → 段 [36,100]
+        Assert.Equal(36f, result.Lines[2].X);
     }
 
     // T10：浮动底缘与行边界恰重合 → 无 1px 缝隙/重叠
@@ -170,8 +171,8 @@ public sealed class FlowLayoutEngineTests
 
         Assert.Equal(4, result.Lines.Count);
         Assert.Equal(new[] { 7, 7, 10, 6 }, result.Lines.Select(l => l.CharCount).ToArray());
-        Assert.Equal(30f, result.Lines[0].X);
-        Assert.Equal(30f, result.Lines[1].X);
+        Assert.Equal(26.4f, result.Lines[0].X);
+        Assert.Equal(26.4f, result.Lines[1].X);
         Assert.Equal(0f, result.Lines[2].X);     // y=40 恰为边界 → 全宽
         Assert.Equal(40f, result.Lines[2].Y);
     }
@@ -183,8 +184,24 @@ public sealed class FlowLayoutEngineTests
         var withMargin = new FloatObject(1, new LayoutRect(0, 0, 30, 20), FloatSide.Left, Margin: 10f);
         using var result = Layout(FakeTextMeasurer.Text(10), withMargin);
 
-        Assert.Equal(40f, result.Lines[0].X);  // 30 + 10 margin
+        Assert.Equal(36.4f, result.Lines[0].X);  // 26.4（排除区右缘）+ 10 margin
         Assert.Equal(6, result.Lines[0].CharCount);
+    }
+
+    // 视觉缓冲留给文字用（Phase 3 打磨第二版）：包络与视觉矩形之间的 4dip 不计入"图片占用"，
+    // 差一点点放不下的行会贴到看得见的图片边上，而不是绕到另一侧
+    [Fact]
+    public void VisualBuffer_LetsLineReachImageEdge()
+    {
+        var engine = new FlowLayoutEngine(new FakeTextMeasurer());
+        using var result = engine.Layout(
+            new[] { ParagraphBlock.FromText(FakeTextMeasurer.Text(20)) },
+            new[] { Left(1, 197, 0, 60, 40) }, 300f);
+
+        // 排除区右缘 = 197 + 4（缓冲）→ 20 字（200dip）恰好放得下，整行留在图片左侧
+        Assert.Single(result.Lines);
+        Assert.Equal(0f, result.Lines[0].X);
+        Assert.Equal(20, result.Lines[0].CharCount);
     }
 
     // 空段落占一个空行高度
@@ -253,7 +270,7 @@ public sealed class FlowLayoutEngineTests
 
         Assert.Equal(0f, result.Floats[0].Rect.X);
         Assert.Equal(150f, result.Floats[0].Rect.Right);
-        Assert.Equal(20f, result.Lines[0].Y);  // 整行被推到浮动底缘之下（无可用段宽）
+        Assert.Equal(21.93f, result.Lines[0].Y, 2);  // 推到排除区之下（宽图视觉底缘 21.93）
     }
 
     // 左/上溢出：钳到原点

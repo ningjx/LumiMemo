@@ -1,4 +1,4 @@
-using LumiText.Core.Documents;
+﻿using LumiText.Core.Documents;
 using LumiText.Core.Editing;
 using LumiText.Core.Layout;
 using Xunit;
@@ -104,9 +104,9 @@ public sealed class CaretNavigationTests
         Assert.Equal(new TextPosition(0, 25),
             CaretNavigator.Vertical(layout, new TextPosition(0, 5), goalX: 54f, down: true));
 
-        // 图右段：第 1 行第 6 字（块内 15）→ 第 2 行图右段同一列（块内 35）
+        // 图右段：第 1 行第 6 字（块内 15，字左缘 X = 196 + 50）→ 第 2 行同列（块内 35）
         Assert.Equal(new TextPosition(0, 35),
-            CaretNavigator.Vertical(layout, new TextPosition(0, 15), goalX: 254f, down: true));
+            CaretNavigator.Vertical(layout, new TextPosition(0, 15), goalX: 246f, down: true));
     }
 
     [Fact]

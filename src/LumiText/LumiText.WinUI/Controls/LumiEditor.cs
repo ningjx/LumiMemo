@@ -1434,7 +1434,7 @@ public sealed class LumiEditor : Grid
         bool withHandles = _dragImageBlock < 0 && _selectedImageBlock >= 0;
         LayoutRect? rect = block >= 0 ? _resizePreview ?? FindFloatRect(block) : null;
 
-        if (rect is not { } r)
+        if (rect is not { } reserved)
         {
             _imageOutline.Visibility = Visibility.Collapsed;
             _imageSizeLabel.Visibility = Visibility.Collapsed;
@@ -1444,6 +1444,10 @@ public sealed class LumiEditor : Grid
             }
             return;
         }
+
+        // 覆盖层贴「看得见的图片」：绘制与排版都用视觉矩形（FloatGeometry.VisualRect），
+        // 选中框/手柄/尺寸标签同用，免得虚线框浮在图片外
+        var r = FloatGeometry.VisualRect(reserved);
 
         Canvas.SetLeft(_imageOutline, r.X);
         Canvas.SetTop(_imageOutline, r.Y);
@@ -1462,8 +1466,8 @@ public sealed class LumiEditor : Grid
         if (_resizePreview is { } preview && _resizeHandle != ImageHandle.None)
         {
             _imageSizeLabelText.Text = $"{preview.Width:0} × {preview.Height:0}";
-            Canvas.SetLeft(_imageSizeLabel, preview.X + preview.Width + 8);
-            Canvas.SetTop(_imageSizeLabel, preview.Y + preview.Height + 6);
+            Canvas.SetLeft(_imageSizeLabel, r.Right + 8);
+            Canvas.SetTop(_imageSizeLabel, r.Bottom + 6);
             _imageSizeLabel.Visibility = Visibility.Visible;
         }
         else

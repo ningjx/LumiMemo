@@ -1,4 +1,4 @@
-using LumiText.Core.Documents;
+﻿using LumiText.Core.Documents;
 using LumiText.Core.Layout;
 
 namespace LumiText.Core.Tests;
@@ -178,8 +178,11 @@ internal static class ReferenceLayout
         var cuts = new SortedSet<float> { 0f };
         foreach (var f in floats)
         {
-            cuts.Add(Math.Max(0f, f.Rect.Y));
-            cuts.Add(Math.Max(0f, f.Rect.Bottom));
+            // 视觉矩形（Phase 3 打磨）：文字流向的边界 = 看得见的那张图——
+            // 与生产引擎共用 FloatGeometry.VisualRect（矩形换算同源，断行/带逻辑仍是独立实现）
+            var rect = FloatGeometry.ExclusionRect(f.Rect, contentWidth);
+            cuts.Add(Math.Max(0f, rect.Y));
+            cuts.Add(Math.Max(0f, rect.Bottom));
         }
         cuts.Add(float.MaxValue);
 
@@ -200,7 +203,7 @@ internal static class ReferenceLayout
         var segments = new List<HInterval> { new(0f, contentWidth) };
         foreach (var f in floats)
         {
-            var rect = f.Rect;
+            var rect = FloatGeometry.ExclusionRect(f.Rect, contentWidth); // 见 BuildBands 注释
             if (!rect.IntersectsVertically(yTop + Epsilon, yBottom - Epsilon))
             {
                 continue;

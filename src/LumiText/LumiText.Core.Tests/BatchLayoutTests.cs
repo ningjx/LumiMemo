@@ -1,4 +1,4 @@
-using LumiText.Core.Documents;
+﻿using LumiText.Core.Documents;
 using LumiText.Core.Layout;
 using Xunit;
 
@@ -131,7 +131,7 @@ public sealed class BatchLayoutTests
 
         // 首行高 40（y=0..40），横跨带 [0,10) 与 [10,40)：交集段 [30,100]（宽 70）→ 6 字符
         // （全宽探测会给 7 字符——交集重探生效的直接证据；且没有因行高 40 被推空留洞）。
-        Assert.Equal(30f, result.Lines[0].X);
+        Assert.Equal(26.4f, result.Lines[0].X);
         Assert.Equal(6, result.Lines[0].CharCount);
         Assert.Equal(40f, result.Lines[0].Height);
         Assert.Equal(32f, result.Lines[0].Baseline);   // 16 × 2

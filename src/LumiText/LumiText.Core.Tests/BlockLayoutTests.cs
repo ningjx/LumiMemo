@@ -1,4 +1,4 @@
-using LumiText.Core.Documents;
+﻿using LumiText.Core.Documents;
 using LumiText.Core.Layout;
 using Xunit;
 
@@ -110,10 +110,10 @@ public sealed class BlockLayoutTests
         Block[] blocks = { new TodoBlock(FakeTextMeasurer.Text(20)) };
         using var result = engine.Layout(blocks, new[] { Left(1, 0, 0, 30, 40) }, W);
 
-        // 带 [0,40)：段 [30,100] 宽 70 → 缩进后 [56,100] 宽 44 → 4 字符/行
-        Assert.Equal(56f, result.Lines[0].X);
+        // 带 [0,40)：段 [26.4,100] 宽 73.6 → 缩进 26 后 [52.4,100] 宽 47.6 → 4 字符/行
+        Assert.Equal(52.4f, result.Lines[0].X);
         Assert.Equal(4, result.Lines[0].CharCount);
-        Assert.Equal(56f, result.Lines[1].X);
+        Assert.Equal(52.4f, result.Lines[1].X);
         // 越过浮动底部：段 [0,100] → 缩进后 [26,100] 宽 74 → 7 字符/行
         Assert.Equal(26f, result.Lines[2].X);
         Assert.Equal(40f, result.Lines[2].Y);
@@ -129,10 +129,10 @@ public sealed class BlockLayoutTests
         Block[] blocks = { new TodoBlock(FakeTextMeasurer.Text(10)) };
         using var result = engine.Layout(blocks, new[] { Left(1, 0, 0, 70, 20) }, W);
 
-        // 带 [0,20)：段 [70,100] 宽 30 → 缩进后宽 4 < 字宽 10 → 放弃，文本推到浮动之下
+        // 带 [0,20)：段 [66,100] 宽 34 → 缩进 26 后宽 8 < 字宽 10 → 放弃，文本推到浮动之下
         // （缩进后宽 74 → 7 字符/行，10 字符分两行；断言要点是 y ≥ 20 且 X = 26、无死循环）
         Assert.Equal(2, result.Lines.Count);
-        Assert.Equal(20f, result.Lines[0].Y);
+        Assert.Equal(20.71f, result.Lines[0].Y, 2);
         Assert.Equal(26f, result.Lines[0].X);
         Assert.Equal(7, result.Lines[0].CharCount);
         Assert.Equal(10, result.Lines.Sum(l => l.CharCount));

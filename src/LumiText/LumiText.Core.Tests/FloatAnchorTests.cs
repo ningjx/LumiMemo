@@ -1,4 +1,4 @@
-using LumiText.Core.Documents;
+﻿using LumiText.Core.Documents;
 using LumiText.Core.Layout;
 using Xunit;
 
@@ -33,8 +33,8 @@ public sealed class FloatAnchorTests
 
         Assert.Equal(0f, result.Floats[0].Rect.X);
         Assert.Equal(0f, result.Floats[0].Rect.Y);
-        // 第二遍排版：浮动 [0,20) 占左 30 → 首行缩进段 [30,100]（7 字符），越过底部恢复全宽
-        Assert.Equal(30f, result.Lines[0].X);
+        // 第二遍排版：浮动占左侧 → 首行缩进段 [26.4,100]（7 字符），越过底部恢复全宽
+        Assert.Equal(26.4f, result.Lines[0].X);
         Assert.Equal(7, result.Lines[0].CharCount);
         Assert.Equal(0f, result.Lines[1].X);
     }

@@ -114,13 +114,13 @@ public sealed class ImageInteractionTests
     [Fact]
     public void AnchoredImage_WithMargin_PushesLineTailRightOfImage()
     {
-        // 对照：同样的锚点带 4dip 边距时，排除区左移，整行放不下 → 尾字被绕到图片右侧
+        // 对照：边距大于视觉缓冲（8 > 4）时，排除区左移，整行放不下 → 尾字被绕到图片右侧
         var engine = new FlowLayoutEngine(new FakeTextMeasurer());
         var blocks = new Block[]
         {
             new ParagraphBlock(FakeTextMeasurer.Text(10)),
             new ImageBlock("img", 60f, 40f,
-                new FloatPlacement(FloatSide.Right, 4f, new FloatAnchor(0, 10), null,
+                new FloatPlacement(FloatSide.Right, 8f, new FloatAnchor(0, 10), null,
                     AnchorToChar: true)),
         };
         using var result = engine.Layout(new Document(blocks), 200f);
@@ -129,8 +129,8 @@ public sealed class ImageInteractionTests
             .Where(l => l.BlockIndex == 0 && l.Y == 0f && l.Kind == PlacedLineKind.Text)
             .ToList();
         Assert.Equal(2, rowLines.Count);          // 行被切成两段
-        Assert.Equal(9, rowLines[0].CharCount);   // 左边只放得下 9 个
-        Assert.Equal(164f, rowLines[1].X);        // 尾字被推到图片右侧
+        Assert.Equal(9, rowLines[0].CharCount);   // 左边只放得下 9 个（排除区右缘 104 − 8 边距 = 96）
+        Assert.Equal(164f, rowLines[1].X);        // 尾字被推到图片右侧（右缘 156 + 8 边距）
     }
 
     [Fact]
@@ -430,11 +430,11 @@ public sealed class ImageInteractionTests
         };
         using var result = engine.Layout(new Document(blocks), 120f);
 
-        // 图片 [40, 80]，首行可用段 = [0,40] 与 [80,120]
+        // 图片 [40, 80]，首行可用段 = [0,44] 与 [76,120]（排除区两侧各内缩 4dip）
         var rowLines = result.Lines.Where(l => l.BlockIndex == 0 && l.Y == 0f).ToList();
         Assert.Equal(2, rowLines.Count);
         Assert.Equal(0f, rowLines[0].X);
-        Assert.Equal(80f, rowLines[1].X);
+        Assert.Equal(76f, rowLines[1].X);
     }
 
     // ---------------- 拖动落点的锚定规则（HitTestFloatAnchor，Phase 3 M4 定稿）----------------

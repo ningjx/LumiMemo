@@ -146,10 +146,14 @@ public sealed class FlowDocumentRenderer
             // （未解码完成/解码失败/S2 调试浮动共用占位路径，位图就绪后由宿主 Invalidate 补画）。
             if (TryGetFloatImage(layout, f, out var bitmap))
             {
+                // 画「视觉矩形」（FloatGeometry.VisualRect）：包络与视觉矩形之间的缓冲带
+                // 排版上也留给了文字（Phase 3 打磨），所以这里画小一点不会与文字打架
+                var v = FloatGeometry.VisualRect(r);
+                var painted = new Windows.Foundation.Rect(v.X, v.Y, v.Width, v.Height);
                 using (session.CreateLayer(1f,
-                    CanvasGeometry.CreateRoundedRectangle(session.Device, rect, 6f, 6f)))
+                    CanvasGeometry.CreateRoundedRectangle(session.Device, painted, 6f, 6f)))
                 {
-                    session.DrawImage(bitmap, rect,
+                    session.DrawImage(bitmap, painted,
                         new Windows.Foundation.Rect(0, 0, bitmap.SizeInPixels.Width, bitmap.SizeInPixels.Height));
                 }
                 // 图片本体不描边（圆角保留）：选中框由编辑器的覆盖层单独画
