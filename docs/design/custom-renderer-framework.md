@@ -1,6 +1,6 @@
 # 自研文本渲染器 — 框架设计方案（v0.1 框架稿）
 
-- 状态：**Phase 0（spike）与 Phase 1（只读渲染器）均已验收；Phase 2（编辑层）待设计**
+- 状态：**Phase 0（spike）、Phase 1（只读渲染器）、Phase 2（编辑层）均已验收；下一步 Phase 3 设计**
 - 进度总览（2026-10-03 更新）：
   - 框架已确认（2026-10-02）；
   - **Phase 0 已验收（条件 Go）**：S1 玻璃自绘文本 / S2 浮动环绕排版——结果见
@@ -11,8 +11,14 @@
     视觉回归对照——Core 测试 54/54 全绿，验收记录
     `src/LumiText/LumiText.Demo/RESULTS-Phase1.md`，
     详细设计 [phase1-readonly-renderer-design.md](phase1-readonly-renderer-design.md)；
-  - 下一步：Phase 2（编辑层：光标、选区、撤销、TSF 输入法）详细设计；
-    遗留优化项见 RESULTS-Phase1 §10.4（窄段预筛/文本封顶/CJK 基准变体等，不阻塞）。
+  - **Phase 2 已验收（总判定 Go，2026-10-03）**：编辑内核（命令/快照撤销/字符级命中几何）+
+    TSF IME + 剪贴板互通（RTF 投影）+ 粘贴插图（O4 浮动锚定降级）+ `.lumi v2` 存储 +
+    主程序直接切换（选 B）——Core 153/153、主程序测试 77/77 全绿，验收记录
+    `src/LumiText/LumiText.Demo/RESULTS-Phase2.md`，
+    详细设计 [phase2-editing-layer-design.md](phase2-editing-layer-design.md)；
+  - 下一步：Phase 3（超越原生：H1–H3、真复选框待办 + 悬停自定义光标 + 勾选动画、
+    行/段落背景、图片浮动环绕、图片拖动时文字流动动画）详细设计；
+    Phase 2 已知遗留见 RESULTS-Phase2 §7.5（行内图片混排/R7 设备丢失/上下方向键，不阻塞）。
 - 日期：2026-10-02
 - 范围：替换 RichEditBox 的便签正文渲染/编辑内核
 - 约束：不破坏现有毛玻璃窗口（`DesktopAcrylicController` 失焦不降级是迁移到 WinUI 的根本原因，属于硬约束）

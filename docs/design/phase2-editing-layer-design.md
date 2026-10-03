@@ -1,9 +1,10 @@
 # Phase 2 详细设计：编辑层（光标/选区/命令/撤销/IME/剪贴板/自动保存）
 
-- 状态：**M0 已完成（2026-10-03），M1 待开工**——
-  O1–O4 已拍板；CsWin32 TSF 覆盖实测通过（RESULTS-Phase2 §1，R-TSF-1 解除）；
-  浮动锚定字符级化已落地（f9f9937）；§15 实施纪律已沉淀（M0 探针教训）。
-  详见 [float-anchor-charlevel-patch.md](float-anchor-charlevel-patch.md)
+- 状态：**Phase 2 全部里程碑（M0–M8）已完成并通过验收（2026-10-03，总判定 Go）**——
+  M1–M8 实施与验收记录见 `src/LumiText/LumiText.Demo/RESULTS-Phase2.md`；
+  视觉回归对照项经用户拍板取消，改「用户直接检查界面」流程；
+  已知遗留（行内图片混排/R7 设备丢失/上下方向键）见 RESULTS-Phase2 §7.5。
+  本稿保留为实施依据与原决策记录（O1–O4、§15 实施纪律）。
 - 前置：
   [custom-renderer-framework.md](custom-renderer-framework.md)（框架稿，已确认）、
   [phase0-spike-design.md](phase0-spike-design.md)（S1/S2 已验收，S3 延后至本期 M0）、
