@@ -600,4 +600,77 @@ public sealed class ImageInteractionTests
         var placed = Assert.Single(result.Floats);
         Assert.Equal(40f, placed.Rect.Y);
     }
+
+    // ---------------- DeleteBlockCommand（选中图片按 Delete/Backspace）----------------
+
+    [Fact]
+    public void DeleteBlock_CaretLandsOnImageAnchor()
+    {
+        // 图锚在块 0 第 2 字之后 → 删完光标落回那里（图占的那一段），不是段尾
+        var state = StateWith(
+            new ParagraphBlock("abcd"),
+            AnchoredImage(anchor: new FloatAnchor(0, 2)),
+            new ParagraphBlock("ef"));
+        var after = new DeleteBlockCommand(1).Apply(state);
+
+        Assert.Equal(2, after.Document.Blocks.Count);
+        Assert.Equal("ef", Assert.IsType<ParagraphBlock>(after.Document.Blocks[1]).PlainText); // 后块上移
+        Assert.Equal(new TextPosition(0, 2), after.Selection.Active);
+    }
+
+    [Fact]
+    public void DeleteBlock_AnchorAfterDeletedBlock_ShiftsBlockIndex()
+    {
+        // 图在块 1、锚在块 2：块 1 摘掉后锚块前移成块 1
+        var state = StateWith(
+            new ParagraphBlock("ab"),
+            AnchoredImage(anchor: new FloatAnchor(2, 1)),
+            new ParagraphBlock("cde"));
+        var after = new DeleteBlockCommand(1).Apply(state);
+
+        Assert.Equal(new TextPosition(1, 1), after.Selection.Active);
+    }
+
+    [Fact]
+    public void DeleteBlock_NoAnchor_FallsBackToPreviousBlockEnd()
+    {
+        // 直给坐标的图（没有锚）：退回前一块末尾
+        var free = new ImageBlock("img", 80f, 60f,
+            new FloatPlacement(FloatSide.Right, 4f, Anchor: null,
+                Position: new FloatPosition(10f, 10f)));
+        var after = new DeleteBlockCommand(1).Apply(StateWith(new ParagraphBlock("ab"), free));
+
+        Assert.Equal(new TextPosition(0, 2), after.Selection.Active);
+    }
+
+    [Fact]
+    public void DeleteBlock_OnlyBlock_LeavesEmptyParagraph()
+    {
+        var after = new DeleteBlockCommand(0).Apply(StateWith(AnchoredImage()));
+
+        var paragraph = Assert.IsType<ParagraphBlock>(Assert.Single(after.Document.Blocks));
+        Assert.Equal(string.Empty, paragraph.PlainText); // 文档不能空
+        Assert.Equal(new TextPosition(0, 0), after.Selection.Active);
+    }
+
+    [Fact]
+    public void DeleteBlock_RemapsAnchors()
+    {
+        // 图 A 在块 1；图 B 在块 2 且锚在块 1（即将被删的那块）上
+        var state = StateWith(
+            new ParagraphBlock("abc"),
+            AnchoredImage(anchor: new FloatAnchor(0, 1)),
+            new ImageBlock("img2", 60f, 40f,
+                new FloatPlacement(FloatSide.Right, 4f, new FloatAnchor(1, 2))));
+        var after = new DeleteBlockCommand(1).Apply(state);
+
+        Assert.Equal(2, after.Document.Blocks.Count);
+        var survivor = Assert.IsType<ImageBlock>(after.Document.Blocks[1]); // 块 2 → 1
+        Assert.Equal(new FloatAnchor(0, 0), survivor.Float!.Anchor);        // 锚所在块被删 → 并到前一块首
+    }
+
+    [Fact]
+    public void DeleteBlock_TextBlock_Throws() =>
+        Assert.Throws<InvalidOperationException>(() =>
+            new DeleteBlockCommand(0).Apply(StateWith(new ParagraphBlock("ab"))));
 }

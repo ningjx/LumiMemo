@@ -179,6 +179,7 @@ public readonly record struct BlockExtent(int BlockIndex, LayoutRect Rect);
 | `SetHeadingLevelCommand(range, level)` | H1/H2/H3 按钮 | level 0=正文，1–3=标题；对齐 ToggleBullet 的批量语义：范围「有非该级」→ 全设该级，全已是该级 → 全回正文（按钮 toggle）；Todo/Bullet 转标题时丢弃标记 |
 | `MoveImageAnchorCommand(blockIndex, FloatAnchor anchor, FloatSide side)` | 图片拖动落点 | 改锚点 + 浮动侧 |
 | `ResizeImageCommand(blockIndex, width, height)` | 缩放提交 | 改显示尺寸 |
+| `DeleteBlockCommand(blockIndex)` | 选中图片按 Delete/Backspace | 整块摘除非文本块（图片/分隔线）；文档不能空（补空段落）；锚点并到前一块首、其后整块前移；光标落**图自己的锚点**（无锚则前一块末尾） |
 
 命令合并/撤销边界：拖动与缩放**期间不走命令**（预览态），提交时各一条命令（§6.3）。
 

@@ -233,7 +233,10 @@ public sealed class LumiEditor : Grid
         _caretBlink.Tick += (_, _) =>
         {
             _caretVisible = !_caretVisible;
-            _surface.Invalidate();
+            if (_selectedImageBlock < 0)
+            {
+                _surface.Invalidate(); // 选中图片时没有光标可闪，别白重绘
+            }
         };
 
         _checkAnimTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16) };
@@ -637,9 +640,10 @@ public sealed class LumiEditor : Grid
         // TSF 接入（M4）：组字期抑制 UserEdited，候选窗定位经屏幕坐标回调
         AttachTsf();
 
-        // 换文档：清掉全部图片交互态（选中/悬停/拖动/缩放预览/吸附动画）
+        // 换文档：清掉全部图片交互态（选中/悬停/拖动/缩放预览/吸附动画/覆盖层）
         _selectedImageBlock = -1;
         _hoverImageBlock = -1;
+        DropImageOverlayNow(); // 旧文档的图已经不在了：覆盖层立刻收，不演淡出
         _dragImageBlock = -1;
         _dragFreeRect = null;
         _resizePreview = null;
@@ -870,6 +874,15 @@ public sealed class LumiEditor : Grid
 
     private void OnCoreSelectionChanged(object? sender, EventArgs e)
     {
+        // 选中图片期间**外部**把选区改了（方向键 / 打字 / 粘贴 / 撤销 / 输入法组字……）→ 退出图片选中：
+        // 图片选中是一种"对象选中"，光标一动就该让位，否则光标被藏起来、看着像卡住。
+        // 选中图片那一刻自己挪光标（MoveCaretToImageAnchor）必须排在 SelectImage 之前——
+        // 那时 _selectedImageBlock 还是 -1，不会被这一条误清。
+        if (_selectedImageBlock >= 0)
+        {
+            SelectImage(-1);
+        }
+
         _caretVisible = true;
         _caretBlink.Stop();
         _caretBlink.Start();
@@ -1054,6 +1067,10 @@ public sealed class LumiEditor : Grid
 
     private void HandleBackspace()
     {
+        if (TryDeleteSelectedImage())
+        {
+            return; // 有选中的图：退格先删它（与 Delete 同一语义，见 TryDeleteSelectedImage）
+        }
         if (_core!.Selection.IsCollapsed)
         {
             var pos = _core.Selection.Active;
@@ -1087,6 +1104,10 @@ public sealed class LumiEditor : Grid
 
     private void HandleDelete()
     {
+        if (TryDeleteSelectedImage())
+        {
+            return; // 有选中的图：Delete 先删它，别去动光标处的字
+        }
         if (_core!.Selection.IsCollapsed)
         {
             var pos = _core.Selection.Active;
@@ -1253,6 +1274,15 @@ public sealed class LumiEditor : Grid
         }
         _scroller.Focus(FocusState.Pointer); // CharacterReceived 需要焦点元素
         var point = e.GetPosition(_surfaceHost); // 宿主坐标即文档坐标（见坐标约定）
+
+        // 点在图片上：选中/拖动那条路（OnPointerPressed）已经处理过了。这里别再落一次光标——
+        // 它会按点击高度把插入点放到图片覆盖到的某一行上，正是"点图片不同高度、光标跑到不同行"的来源
+        if (HitTestImage((float)point.X, (float)point.Y) >= 0)
+        {
+            e.Handled = true;
+            return;
+        }
+
         var hit = _renderer.Current.HitTest((float)point.X, (float)point.Y);
         if (hit.Found)
         {
@@ -1340,6 +1370,9 @@ public sealed class LumiEditor : Grid
         {
             e.Handled = true;
             _contentGrid.CapturePointer(e.Pointer);
+            // 顺序有讲究：先把模型光标放到图的锚点（此时还不算"选中图片"），再进选中态——
+            // 反过来的话，挪光标引发的选区变化会被 OnCoreSelectionChanged 当成"外部改动"清掉选中
+            MoveCaretToImageAnchor(imageBlock);
             SelectImage(imageBlock);
             BeginImageDrag(imageBlock, docX, docY);
             return;
@@ -1715,6 +1748,66 @@ public sealed class LumiEditor : Grid
         }
         _selectedImageBlock = blockIndex;
         UpdateImageOverlay();
+        _surface.Invalidate(); // 光标的显示与否跟着选中态走（选中图片期间不画光标）：得重绘一次
+    }
+
+    /// <summary>
+    /// 把模型光标放到图片的锚点处——图占的就是"锚字符之后"那一段，删除后光标也该落回这里。
+    /// 选中图片期间这个光标不画出来（见 OnRenderViewport），只是让位置对得上。
+    /// </summary>
+    private void MoveCaretToImageAnchor(int blockIndex)
+    {
+        if (_core?.Document.Blocks is not { } blocks
+            || blockIndex < 0 || blockIndex >= blocks.Count
+            || blocks[blockIndex] is not ImageBlock { Float.Anchor: { } anchor }
+            || anchor.BlockIndex < 0 || anchor.BlockIndex >= blocks.Count)
+        {
+            return;
+        }
+
+        var position = new TextPosition(anchor.BlockIndex,
+            Math.Clamp(anchor.CharIndex, 0, BlockTextOps.GetTextLength(blocks[anchor.BlockIndex])));
+        _core.SetSelection(TextRange.Collapse(position));
+    }
+
+    /// <summary>
+    /// 选中图片时的 Delete / Backspace：把这张图整块删掉。
+    /// 返回 false = 现在没有选中的图，按键照常走文本删除那条路。
+    /// </summary>
+    /// <remarks>
+    /// 删除态只活在编辑器侧（Core 的光标区间表达不了"这张图被选中"），所以按键在这里认领、
+    /// 删除交给 <see cref="DeleteBlockCommand"/>。删之前先把选中/悬停/覆盖层目标一起清掉：
+    /// 块一摘走，后面的块索引整体前移，覆盖层会认到"同号的下一个块"（比如紧挨着的另一张图）上去。
+    /// 清掉之后覆盖层没有目标，就停在图原处正常淡出。
+    /// </remarks>
+    private bool TryDeleteSelectedImage()
+    {
+        if (_core is null || _selectedImageBlock < 0)
+        {
+            return false;
+        }
+
+        // 有文本选区时让位：那是更晚、更具体的一次意图（选中图之后再 Shift 扩选文字），
+        // Delete 该删文字，图继续选中着
+        if (!_core.Selection.IsCollapsed)
+        {
+            return false;
+        }
+
+        var blocks = _core.Document.Blocks;
+        int index = _selectedImageBlock;
+        if (index >= blocks.Count || blocks[index] is not ImageBlock)
+        {
+            SelectImage(-1); // 选中的块已经不是图了（文档被改过）：收掉选中态，按键按文本处理
+            return false;
+        }
+
+        _selectedImageBlock = -1;
+        _hoverImageBlock = -1;
+        DropImageOverlayNow();
+
+        _core.ApplyCommand(new DeleteBlockCommand(index));
+        return true;
     }
 
     /// <summary>
@@ -1722,11 +1815,14 @@ public sealed class LumiEditor : Grid
     /// 可见性另按意图（拖动 / 选中 / 悬停）决定。
     /// </summary>
     /// <remarks>
-    /// ★ 不变量（动这里之前先读）：<c>_overlayImageBlock &gt;= 0</c> ⟺ 覆盖层还在屏幕上
-    /// （可见，或正在淡出）。意图没了 ≠ 覆盖层立刻消失：淡出要等 1.5s 才开始、再 0.5s 才跑完，
-    /// 这一整段它都还在屏幕上，所以几何必须继续跟着原来那张图走。少了这半句的后果：
-    /// 淡出期间一改文本，图片被重排挪走了、手柄却停在旧位置（2026-10-04 报的就是它）。
-    /// 淡出跑完、可见性收起时，才把 <c>_overlayImageBlock</c> 清掉。
+    /// ★ 不变量（动这里之前先读）：**只要覆盖层还在屏幕上、它显示的那张图还在版面里，
+    /// 几何就必须跟着那张图走**。意图没了 ≠ 覆盖层立刻消失：淡出要等
+    /// <see cref="HandleFadeOutDelayMs"/> 才开始、再 <see cref="HandleFadeMs"/> 才跑完，
+    /// 这一整段它都还在屏幕上。少了这半句的后果：淡出期间一改文本，图片被重排挪走了、
+    /// 手柄却停在旧位置（2026-10-04 报的就是它）。
+    /// <c>_overlayImageBlock</c> 记着"正在显示哪张图"，淡出跑完、可见性收起时才清掉；
+    /// 唯一提前清掉的情形是**目标被删**（<see cref="TryDeleteSelectedImage"/>）：图都没了，
+    /// 无处可跟，就让它停在原处淡出——顺带避免索引前移后认到同号的下一块上。
     /// </remarks>
     private void UpdateImageOverlay()
     {
@@ -1743,8 +1839,12 @@ public sealed class LumiEditor : Grid
         // FindFloatRect 拿到的已是跟手位置）——只在真的没有目标时收起
         if (rect is not { } reserved)
         {
-            // 目标在版面里没了（图片被删之类）：连壳一起收起，别留个停在旧位置的空架子
-            HideImageOverlay();
+            // 目标在版面里没了（图被删 / 索引已经指到别的块上）：连意图一起清掉，并**立刻**收——
+            // 留着它会照着淡出的 1s 延迟继续挂在原处，看着就是"手柄没跟着图一起消失"
+            _dragImageBlock = -1;
+            _selectedImageBlock = -1;
+            _hoverImageBlock = -1;
+            DropImageOverlayNow();
             return;
         }
 
@@ -1802,6 +1902,26 @@ public sealed class LumiEditor : Grid
         _overlayShown = false;
         // 注意：不能 Stop 淡入动画——那会把不透明度退回基准值（= 0），画面会瞬间消失而不是淡出
         _handleFadeOut.Begin();
+    }
+
+    /// <summary>
+    /// 立刻收掉覆盖层、不演淡出：目标图**已经没了**（被删 / 换文档）时用。
+    /// 那 1s 延迟 + 300ms 淡出是给"指针离开图片"用的——图都删了还挂在原处慢慢淡，
+    /// 看着就是"手柄没跟着一起消失"。
+    /// </summary>
+    private void DropImageOverlayNow()
+    {
+        _handleFadeIn.Stop();
+        _handleFadeOut.Stop();
+        _overlayShown = false;
+        _overlayImageBlock = -1;
+        _imageSizeLabel.Visibility = Visibility.Collapsed;
+        SetHandleVisualsVisibility(Visibility.Collapsed);
+        foreach (Border hit in _imageHandles.Values)
+        {
+            hit.Visibility = Visibility.Collapsed;
+        }
+        _imageOverlay.Visibility = Visibility.Collapsed;
     }
 
     /// <summary>
@@ -2280,6 +2400,7 @@ public sealed class LumiEditor : Grid
         e.Handled = true;
         box.CapturePointer(e.Pointer);
         CancelImageSnap(); // 同上：缩放手势接手前先停掉在演的吸附
+        MoveCaretToImageAnchor(block); // 同点击选中：模型光标放到图的锚点（选中期间不画出来）
         SelectImage(block); // 顺手选中：松手提交按选中块走
         _resizeHandle = handle;
         _resizeStartRect = rect;
@@ -2495,8 +2616,9 @@ public sealed class LumiEditor : Grid
             }
         }
 
-        // 光标（最上层）
-        if (_core is not null && _caretVisible)
+        // 光标（最上层）：选中图片期间不画——那会儿"选中的是图"，
+        // 光标留在图上会让人以为文字里还有个插入点（模型上的落点是图的锚点，见 MoveCaretToImageAnchor）
+        if (_core is not null && _caretVisible && _selectedImageBlock < 0)
         {
             var caret = CaretGeometryCalculator.GetCaret(_renderer.Current, _core.Selection.Active);
             if (caret is { } c)
