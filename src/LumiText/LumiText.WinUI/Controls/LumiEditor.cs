@@ -576,6 +576,13 @@ public sealed class LumiEditor : Grid
         FocusEditor();
     }
 
+    /// <summary>
+    /// 选区文字的行内底色是否**全部**是 <paramref name="color"/>
+    /// （工具栏"再点一次取消"的判据；选区坍缩时恒为 false）。
+    /// </summary>
+    public bool SelectionHasBackground(Color32 color) =>
+        _core is not null && BlockTextOps.AllRunsHaveBackground(_core.Document.Blocks, _core.Selection, color);
+
     /// <summary>释放 TSF / surface / 图片资源（窗口关闭协议调用；与 Unloaded 清理互补）。</summary>
     public void Dispose()
     {
@@ -2592,7 +2599,10 @@ public sealed class LumiEditor : Grid
             return;
         }
 
-        // 选区高亮（文字下层，§4.5）→ 文字底色（Phase 3 打磨）→ 浮动/文字
+        // 文字底色（Phase 3 打磨）→ 选区高亮 → 浮动/文字。
+        // 底色必须画在选区**之下**，否则有底色的文字一选中就看不出选到哪了（2026-10-04 实机）。
+        _renderer.RenderTextBackgrounds(session, _renderer.Current, viewport);
+
         if (_core is not null && !_core.Selection.IsCollapsed)
         {
             var rects = CaretGeometryCalculator.GetSelectionRects(_renderer.Current, _core.Selection);
@@ -2602,7 +2612,6 @@ public sealed class LumiEditor : Grid
             }
         }
 
-        _renderer.RenderTextBackgrounds(session, _renderer.Current, viewport);
         _renderer.Render(session, _renderer.Current, viewport, InkColor, DebugOverlay,
             includeTextBackgrounds: false);
 

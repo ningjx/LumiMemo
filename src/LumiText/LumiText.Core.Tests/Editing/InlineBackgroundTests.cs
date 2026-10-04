@@ -127,4 +127,33 @@ public sealed class InlineBackgroundTests
         Assert.Equal("abc", string.Concat(runs.Select(r => r.Text)));
         Assert.Equal(Highlight, runs[^1].Style!.Background);
     }
+
+    // ---------------- AllRunsHaveBackground（工具栏"再点一次取消"的判据）----------------
+
+    [Fact]
+    public void AllRunsHaveBackground_TrueWhenWholeSelectionIsTheColor()
+    {
+        var state = StateWith(new ParagraphBlock([
+            new TextRun("ab", new InlineStyle(Background: Highlight)),
+            new TextRun("cd", new InlineStyle(Background: Highlight)),
+        ]));
+
+        Assert.True(BlockTextOps.AllRunsHaveBackground(state.Document.Blocks, Range(0, 0, 4), Highlight));
+        Assert.False(BlockTextOps.AllRunsHaveBackground(state.Document.Blocks, Range(0, 0, 4), Other));
+    }
+
+    [Fact]
+    public void AllRunsHaveBackground_FalseWhenMixedOrCollapsed()
+    {
+        var state = StateWith(new ParagraphBlock([
+            new TextRun("ab", new InlineStyle(Background: Highlight)),
+            new TextRun("cd"),
+        ]));
+
+        // 选区里混着一个没底色的 run → 不算"已经是这个色"
+        Assert.False(BlockTextOps.AllRunsHaveBackground(state.Document.Blocks, Range(0, 0, 4), Highlight));
+        // 选区坍缩 → 永远 false（没有文字可上色，谈不上"已是"）
+        Assert.False(BlockTextOps.AllRunsHaveBackground(state.Document.Blocks,
+            new TextRange(new TextPosition(0, 1), new TextPosition(0, 1)), Highlight));
+    }
 }

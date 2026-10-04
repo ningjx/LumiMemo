@@ -224,4 +224,44 @@ public static class BlockTextOps
             runs.Add(new TextRun(text, style));
         }
     }
+
+    /// <summary>
+    /// 区间内所有 run 的行内底色是否**都**等于 <paramref name="background"/>
+    /// （工具栏"再点一次取消"的判据）。区间坍缩、或区间内没有文字时返回 false。
+    /// </summary>
+    public static bool AllRunsHaveBackground(IReadOnlyList<Block> blocks, TextRange range, Color32 background)
+    {
+        if (range.IsCollapsed)
+        {
+            return false;
+        }
+
+        var (start, end) = (range.Start, range.End);
+        bool any = false;
+        for (int i = start.BlockIndex; i <= end.BlockIndex && i < blocks.Count; i++)
+        {
+            if (!IsTextBlock(blocks[i]))
+            {
+                continue;
+            }
+
+            int blockStart = i == start.BlockIndex ? start.CharIndex : 0;
+            int blockEnd = i == end.BlockIndex ? end.CharIndex : GetTextLength(blocks[i]);
+            int count = blockEnd - blockStart;
+            if (count <= 0)
+            {
+                continue;
+            }
+
+            foreach (TextRun run in SliceRuns(blocks[i], blockStart, count))
+            {
+                any = true;
+                if (run.Style?.Background != background)
+                {
+                    return false;
+                }
+            }
+        }
+        return any;
+    }
 }

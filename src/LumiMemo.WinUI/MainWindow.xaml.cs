@@ -313,7 +313,14 @@ public sealed partial class MainWindow : Window
     /// （高亮面积小，实色不影响毛玻璃观感）。
     /// 没选中文字时 <c>SetInlineBackground</c> 自己会忽略——这时只更新"当前色"（按钮换色），不报错。
     /// </remarks>
-    private void OnHighlightClick(object sender, RoutedEventArgs e) => ApplyHighlight(_highlightColor);
+    /// <summary>
+    /// 左键：选中文字**已经是当前色** → 再点一次＝取消（按钮保留当前色，方便再刷回来）；否则刷成当前色。
+    /// </summary>
+    private void OnHighlightClick(object sender, RoutedEventArgs e)
+    {
+        var color = ToColor32(_highlightColor);
+        _editor.SetInlineBackground(_editor.SelectionHasBackground(color) ? null : color);
+    }
 
     /// <summary>右键：色带在按钮栏里向右展开（右侧按钮被推开），方块缩小、滑到当前色的位置上当滑块。</summary>
     private void OnHighlightRightTapped(object sender, RightTappedRoutedEventArgs e)
@@ -332,14 +339,17 @@ public sealed partial class MainWindow : Window
         e.Handled = true;
     }
 
-    /// <summary>色带松手 / 左键点击的落点：记住当前色、按钮换色、刷到选中文字。</summary>
+    /// <summary>色带松手：记住当前色、按钮换色、刷到选中文字。</summary>
     private void ApplyHighlight(Windows.UI.Color color)
     {
         _highlightColor = color;
         UpdateHighlightButtonFill();
-        _editor.SetInlineBackground(
-            new LumiText.Core.Documents.Color32(0xFF, color.R, color.G, color.B));
+        _editor.SetInlineBackground(ToColor32(color));
     }
+
+    /// <summary>底色一律按不透明实色送进文档（RTF 颜色表没有 alpha 通道）。</summary>
+    private static LumiText.Core.Documents.Color32 ToColor32(Windows.UI.Color color) =>
+        new(0xFF, color.R, color.G, color.B);
 
     private void UpdateHighlightButtonFill() =>
         HighlightButtonFill.Background = new SolidColorBrush(_highlightColor);
