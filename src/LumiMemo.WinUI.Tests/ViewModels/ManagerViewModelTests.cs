@@ -236,8 +236,10 @@ public sealed class ManagerViewModelTests
             _autoSave = new AutoSaveService(
                 new ManualUiTimerFactory(), NullLogger<AutoSaveService>.Instance);
 
+            var toolbar = new ToolbarPreferences(
+                new AppSettings(), new FakeSettingsStore(), NullLogger<ToolbarPreferences>.Instance);
             var factory = new NoteWindowFactory(
-                Storage, Clock, Layouts, _autoSave, _titles, NullLoggerFactory.Instance);
+                Storage, Clock, Layouts, _autoSave, _titles, toolbar, NullLoggerFactory.Instance);
             Windows = new NoteWindowManager(Notes, Storage, Trash, Layouts, _titles, factory);
 
             ViewModel = new ManagerViewModel(

@@ -37,6 +37,11 @@ public sealed class JsonSettingsStoreTests
         Assert.Equal(150, settings.SearchDebounceMs);
         Assert.Equal(NoteColor.Yellow, settings.DefaultColor);
 
+        // 工具栏那两个「当前值」：常用标题默认 H2；文字底色没设置过＝空字符串，
+        // 由界面回退到便签黄纸色（ToolbarPreferences）。
+        Assert.Equal(2, settings.DefaultHeadingLevel);
+        Assert.Equal("", settings.TextHighlightColor);
+
         // 「显示桌面后把便签拉回来」默认开（§13.6）：用户按 Win+D 想要的是桌面，
         // 不是「便签消失了」，所以新装默认就是开着的。
         Assert.True(settings.RestoreAfterShowDesktop);
@@ -65,6 +70,8 @@ public sealed class JsonSettingsStoreTests
             DefaultColor = NoteColor.Purple,
             DefaultWidth = 400.5,
             DefaultHeight = 500.25,
+            DefaultHeadingLevel = 3,
+            TextHighlightColor = "#FF598CD6",
             ShowStatusBar = false,
             RestoreAfterShowDesktop = false,
             StartWithWindows = true,
@@ -90,6 +97,8 @@ public sealed class JsonSettingsStoreTests
         Assert.Equal(saved.DefaultColor, loaded.DefaultColor);
         Assert.Equal(saved.DefaultWidth, loaded.DefaultWidth);
         Assert.Equal(saved.DefaultHeight, loaded.DefaultHeight);
+        Assert.Equal(saved.DefaultHeadingLevel, loaded.DefaultHeadingLevel);
+        Assert.Equal(saved.TextHighlightColor, loaded.TextHighlightColor);
         Assert.Equal(saved.ShowStatusBar, loaded.ShowStatusBar);
         Assert.Equal(saved.RestoreAfterShowDesktop, loaded.RestoreAfterShowDesktop);
         Assert.Equal(saved.StartWithWindows, loaded.StartWithWindows);
@@ -203,6 +212,26 @@ public sealed class JsonSettingsStoreTests
             Ct);
 
         Assert.Equal(expected, (await store.LoadAsync(Ct)).SearchDebounceMs);
+    }
+
+    [Theory]
+    [InlineData(0, 1)]
+    [InlineData(-3, 1)]
+    [InlineData(4, 3)]
+    [InlineData(9, 3)]
+    [InlineData(1, 1)]
+    [InlineData(3, 3)]
+    public async Task 常用标题级别被钳进合法区间(int written, int expected)
+    {
+        using var local = new TempDirectory();
+        var (store, paths) = CreateStore(local);
+
+        await File.WriteAllTextAsync(
+            paths.SettingsFile,
+            $$"""{ "version": 1, "defaultHeadingLevel": {{written}} }""",
+            Ct);
+
+        Assert.Equal(expected, (await store.LoadAsync(Ct)).DefaultHeadingLevel);
     }
 
     [Fact]

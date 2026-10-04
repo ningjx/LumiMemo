@@ -209,15 +209,72 @@
                             Width="0"
                             Margin="-3,0,-3,0" />
                     <Rectangle Width="1" Height="18" Margin="3,0" Fill="#5075697C" />
-                    <ToggleButton x:Name="Heading1Button" Style="{StaticResource GlassToggleButtonStyle}" Width="30" Height="30" Click="OnHeading1Click" ToolTipService.ToolTip="标题 1">
-                        <FontIcon FontFamily="{StaticResource LumiIconFont}" FontSize="{StaticResource LumiIconSizeToolbar}" Glyph="&#xF7EF;" />
-                    </ToggleButton>
-                    <ToggleButton x:Name="Heading2Button" Style="{StaticResource GlassToggleButtonStyle}" Width="30" Height="30" Click="OnHeading2Click" ToolTipService.ToolTip="标题 2">
-                        <FontIcon FontFamily="{StaticResource LumiIconFont}" FontSize="{StaticResource LumiIconSizeToolbar}" Glyph="&#xF7F0;" />
-                    </ToggleButton>
-                    <ToggleButton x:Name="Heading3Button" Style="{StaticResource GlassToggleButtonStyle}" Width="30" Height="30" Click="OnHeading3Click" ToolTipService.ToolTip="标题 3">
-                        <FontIcon FontFamily="{StaticResource LumiIconFont}" FontSize="{StaticResource LumiIconSizeToolbar}" Glyph="&#xF7F1;" />
-                    </ToggleButton>
+                    <!-- 常用标题（2026-10-04 由三个按钮合并而来，且**全局保存**）：
+                         面上＝H + **下角标**数字（H₂ 的读法，常用级别）；左键＝把它套用到光标所在块——
+                         与合并前那三个按钮的逻辑一样（命令自带 toggle，再来一下即回正文）；
+                         右键＝1/2/3 在 H 右边向右展开，点一个即改常用级别并收起（不动正文）。
+                         这个级别与左边的文字底色一样跟着**应用**走（ToolbarPreferences → settings.json），
+                         新建便签、重开程序都沿用。 -->
+                    <Button x:Name="HeadingButton"
+                            Style="{StaticResource GlassButtonStyle}"
+                            Width="30" Height="30"
+                            Click="OnHeadingClick"
+                            RightTapped="OnHeadingRightTapped"
+                            ToolTipService.ToolTip="常用标题（左键＝套用到当前段落；右键＝改常用级别）">
+                        <!-- 整块自动宽度：角标紧跟在 H 后面、沉到基线以下（下角标）。
+                             这里这个是**看不见的占位**（Opacity 0）：它只干两件事——撑住 H 的位置、
+                             以及让角标知道"收起时该停在哪儿"。看得见的那个角标是浮层上的
+                             HeadingBadge（展开时它要飞出去，待在按钮里飞不出去）。
+                             想更贴就把左边距往负调、想更沉就把下边距往负调；字号同理——都是光学值。 -->
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center" HorizontalAlignment="Center">
+                            <TextBlock Text="H" FontSize="17" FontWeight="SemiBold" />
+                            <TextBlock x:Name="HeadingFaceLevelSlot"
+                                       Text="2"
+                                       Width="7"
+                                       FontSize="11" FontWeight="SemiBold"
+                                       TextAlignment="Center"
+                                       VerticalAlignment="Bottom"
+                                       Margin="1,0,0,1"
+                                       Opacity="0" />
+                        </StackPanel>
+                    </Button>
+                    <!-- 选项帘子：宽 0 → 42 做动画，里面的按钮**原位**被逐段露出来（不是被压扁）。
+                         必须配矩形裁剪——WinUI 没有 ClipToBounds，0 宽的外框照样把溢出的子元素画出来；
+                         裁剪框随实际宽度走（见 code-behind 的 SizeChanged）。
+                         与 H 按钮**贴死**（负外边距把按钮栏的 Spacing 抵消掉，还往 H 的右余白里塞进 3dip）、
+                         格子之间**零间距**，圆角只留两端——合起来是"主按钮 + 三个窄选项"的一条
+                         （见 code-behind 的角半径处理）。选项自己的数字在被角标选中的那一刻会让位。 -->
+                    <Border x:Name="HeadingChoiceHost"
+                            Width="0"
+                            Margin="-14,1.5,0,0"
+                            VerticalAlignment="Center"
+                            SizeChanged="OnHeadingChoiceHostSizeChanged">
+                        <Border.Clip>
+                            <RectangleGeometry x:Name="HeadingChoiceClip" Rect="0,0,0,0" />
+                        </Border.Clip>
+                        <!-- Spacing＝三个选项彼此的距离（0＝紧贴）。改了不用动代码：
+                             帘子展开宽度与角标落点都是按"格子宽 + Spacing"自己算的。 -->
+                        <StackPanel x:Name="HeadingChoiceStrip" Orientation="Horizontal" Spacing="0">
+                            <ToggleButton x:Name="HeadingChoice1" Style="{StaticResource GlassToggleButtonStyle}"
+                                          Width="12" Height="30" Tag="1" CornerRadius="0"
+                                          Click="OnHeadingChoiceClick"
+                                          ToolTipService.ToolTip="常用标题设为 1">
+                                <TextBlock x:Name="HeadingChoiceText1" Text="1" FontSize="13" FontWeight="SemiBold" />
+                            </ToggleButton>
+                            <ToggleButton x:Name="HeadingChoice2" Style="{StaticResource GlassToggleButtonStyle}"
+                                          Width="12" Height="30" Tag="2" CornerRadius="0"
+                                          Click="OnHeadingChoiceClick"
+                                          ToolTipService.ToolTip="常用标题设为 2">
+                                <TextBlock x:Name="HeadingChoiceText2" Text="2" FontSize="13" FontWeight="SemiBold" />
+                            </ToggleButton>
+                            <ToggleButton x:Name="HeadingChoice3" Style="{StaticResource GlassToggleButtonStyle}"
+                                          Width="12" Height="30" Tag="3" CornerRadius="0,6,6,0"
+                                          Click="OnHeadingChoiceClick"
+                                          ToolTipService.ToolTip="常用标题设为 3">
+                                <TextBlock x:Name="HeadingChoiceText3" Text="3" FontSize="13" FontWeight="SemiBold" />
+                            </ToggleButton>
+                        </StackPanel>
+                    </Border>
                 </StackPanel>
                 <StackPanel Grid.Column="1"
                             Orientation="Horizontal"
@@ -245,6 +302,31 @@
                                Foreground="#FF75697C"
                                Visibility="Collapsed" />
                 </StackPanel>
+
+                <!-- 看得见的那一个角标数字：收起时它停在 H 的右下角（正好盖住面里那个占位），
+                     展开时**滑到当前选中的选项上**——选项自己的数字那一刻让位，看起来就是角标飞了过去。
+                     它是工具栏之上的一层（排在最后＝z 序最高，且不吃指针），
+                     位置用 TranslateTransform 驱动（Canvas.Left/Top 不能做动画）。
+                     外框是**固定 14×30（＝选项格子一样大）**、数字在框里居中：这样"摆到某格上"
+                     就是把两个等大的框对齐，不用去问文字的实测宽度（那个数会随数字/字体变，
+                     首帧还可能读到 0——摆偏一点点，看起来就是"飞过头"）。 -->
+                <Canvas x:Name="HeadingBadgeLayer" Grid.ColumnSpan="2" IsHitTestVisible="False">
+                    <Border x:Name="HeadingBadge"
+                            Width="14" Height="30"
+                            Opacity="0"
+                            RenderTransformOrigin="0.5,0.5">
+                        <Border.RenderTransform>
+                            <TransformGroup>
+                                <ScaleTransform x:Name="HeadingBadgeScale" />
+                                <TranslateTransform x:Name="HeadingBadgeShift" />
+                            </TransformGroup>
+                        </Border.RenderTransform>
+                        <TextBlock x:Name="HeadingBadgeText"
+                                   FontSize="13" FontWeight="SemiBold"
+                                   HorizontalAlignment="Center"
+                                   VerticalAlignment="Center" />
+                    </Border>
+                </Canvas>
             </Grid>
         </Border>
 

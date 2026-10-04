@@ -18,6 +18,7 @@ public sealed class NoteWindowFactory(
     ILayoutStore layouts,
     AutoSaveService autoSave,
     NoteTitleCoordinator titles,
+    ToolbarPreferences toolbarPreferences,
     ILoggerFactory loggerFactory)
 {
     public MainWindow Create(
@@ -38,6 +39,6 @@ public sealed class NoteWindowFactory(
             onNoteChanged,
             loggerFactory.CreateLogger<NoteViewModel>());
 
-        return new MainWindow(viewModel, layout, layouts, onClosed, actions);
+        return new MainWindow(viewModel, layout, layouts, onClosed, actions, toolbarPreferences);
     }
 }

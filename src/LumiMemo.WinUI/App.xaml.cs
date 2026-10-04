@@ -277,6 +277,9 @@ public partial class App : Application
         services.AddSingleton<IClock>(clock);
         services.AddSingleton<ISettingsStore>(settingsStore);
         services.AddSingleton<ILayoutStore>(layoutStore);
+
+        // 工具栏那两个「当前值」（文字底色、常用标题级别）：全局一份、随设置落盘，多窗口共享。
+        services.AddSingleton<ToolbarPreferences>();
         services.AddSingleton<INoteStorage>(storage);
         services.AddSingleton<ITrashStore>(trash);
 

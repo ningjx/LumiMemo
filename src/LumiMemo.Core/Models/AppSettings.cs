@@ -48,6 +48,30 @@ public sealed class AppSettings
     [JsonPropertyName("defaultHeight")]
     public double DefaultHeight { get; set; } = 420;
 
+    /// <summary>
+    /// 工具栏「常用标题」级别（<strong>1–3</strong>，默认 2 = H2）：左键点工具栏那个 H 按钮时
+    /// 套用到光标所在块的那一档，右键展开的 1/2/3 改的就是它。
+    /// </summary>
+    /// <remarks>
+    /// 跟应用走、不跟便签走：这是「我平时用几级标题」这个习惯，不是某张便签的属性——
+    /// 所以它躺在设置里，新建便签、重开程序都沿用上一次选的。
+    /// 读入时钳制到 1–3（§9.3），范围外的值不生效但也不报错。
+    /// </remarks>
+    [JsonPropertyName("defaultHeadingLevel")]
+    public int DefaultHeadingLevel { get; set; } = 2;
+
+    /// <summary>
+    /// 工具栏「文字底色」的当前颜色，<c>#AARRGGBB</c>。空字符串＝还没设置过，
+    /// 界面回退到便签黄纸色（见 <c>ToolbarPreferences</c>）。
+    /// </summary>
+    /// <remarks>
+    /// 同样跟应用走：上次调好的底色，新建便签、重开程序接着用。
+    /// 用字符串而不是整数：这个文件是给用户手改的（§8.4），<c>"#FFFDF3C4"</c> 改得动，
+    /// 一个 <c>4294966724</c> 改不动。
+    /// </remarks>
+    [JsonPropertyName("textHighlightColor")]
+    public string TextHighlightColor { get; set; } = "";
+
     /// <summary>便签底部的「已保存 / 字数」状态条是否显示（§15.2）。</summary>
     [JsonPropertyName("showStatusBar")]
     public bool ShowStatusBar { get; set; } = true;

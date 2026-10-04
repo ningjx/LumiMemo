@@ -38,6 +38,12 @@ public sealed class JsonSettingsStore : ISettingsStore
     /// <summary>搜索去抖时长的合法上界（§9.3）。</summary>
     public const int MaxSearchDebounceMs = 500;
 
+    /// <summary>「常用标题」级别的合法下界：1 = H1（正文不是一档「常用标题」，所以下界不是 0）。</summary>
+    public const int MinHeadingLevel = 1;
+
+    /// <summary>「常用标题」级别的合法上界：3 = H3（编辑器只支持三级标题）。</summary>
+    public const int MaxHeadingLevel = 3;
+
     /// <summary>附件目录名的兜底值，也是 <see cref="AppSettings.AttachmentsFolderName"/> 的默认值。</summary>
     private const string DefaultAttachmentsFolderName = "attachments";
 
@@ -189,6 +195,13 @@ public sealed class JsonSettingsStore : ISettingsStore
             MinSearchDebounceMs,
             MaxSearchDebounceMs,
             nameof(AppSettings.SearchDebounceMs),
+            path);
+
+        settings.DefaultHeadingLevel = Clamp(
+            settings.DefaultHeadingLevel,
+            MinHeadingLevel,
+            MaxHeadingLevel,
+            nameof(AppSettings.DefaultHeadingLevel),
             path);
 
         settings.AttachmentsFolderName = SanitizeAttachmentsFolderName(
