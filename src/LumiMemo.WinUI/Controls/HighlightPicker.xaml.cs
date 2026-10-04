@@ -65,6 +65,7 @@ internal sealed partial class HighlightPicker : UserControl
 
     private const int ExpandMs = 250;   // 进场（≈ ControlNormalAnimationDuration）
     private const int CollapseMs = 167; // 退场（≈ ControlFastAnimationDuration）
+    private const int GlideMs = 120;    // 点色带取色后，滑块滑到落点的时长（让人看清选了哪个色）
 
     private FrameworkElement? _strip;  // 工具栏里的色带（AttachStrip 给，Open 时读它的位置与宽高）
     private Border? _stripHost;
@@ -149,10 +150,21 @@ internal sealed partial class HighlightPicker : UserControl
             shift.X = squareRect.X - stripLeft;
         }
 
+        // 色带的窗口坐标在展开那一刻量一次——展开期间它的左缘不动。
         var stripOrigin = strip.TransformToVisual(Layer).TransformPoint(new Point(0, 0));
         _stripLeft = stripOrigin.X;
         _stripTop = stripOrigin.Y;
         _stripHeight = strip.ActualHeight;
+
+        // 命中带：带子上下各留 14——细带只有 6dip 高，按视觉位置点很容易点空，
+        // 点空会走"点别处＝取消"那条路（颜色没改就收起）。左右**不外扩**：右边紧邻分隔线/H1，
+        // 外扩会盖住它们的边缘。滑块在它上面，事件都走同一套处理。
+        const double hitPadY = 14d;
+        HitZone.Width = StripWidthDips;
+        HitZone.Height = _stripHeight + (hitPadY * 2d);
+        HitZoneShift.X = _stripLeft;
+        HitZoneShift.Y = _stripTop - hitPadY;
+        HitZone.Visibility = Visibility.Visible;
 
         // 基准值先设成**终态**：动画只负责过程，某条没跑成也不会留下坏状态。
         // （同一帧里 Begin() 就挂上了动画，所以不会闪终态——首帧读到的仍是 From。）
@@ -234,6 +246,36 @@ internal sealed partial class HighlightPicker : UserControl
         }
     }
 
+    /// <summary>
+    /// 松手：滑块还没到落点就先短促地滑过去（≤ <see cref="GlideMs"/>，让人看清选了哪个色），
+    /// 到了再收起；拖拽期间滑块本来就跟着指针，直接收。
+    /// </summary>
+    private void GlideThenClose()
+    {
+        if (_strip is null)
+        {
+            return;
+        }
+
+        double target = KnobCenterXFor(_pending) - (CollapsedKnobSize / 2);
+        if (Math.Abs(KnobShift.X - target) < 0.5)
+        {
+            Close(apply: true);
+            return;
+        }
+
+        var story = new Storyboard();
+        Add(story, KnobShift, "X", KnobShift.X, target, GlideMs);
+        story.Completed += (_, _) =>
+        {
+            Finish(story, () => SetKnobVisual(KnobCenterXFor(_pending)));
+            Close(apply: true);
+        };
+        _running?.Stop();
+        _running = story;
+        story.Begin();
+    }
+
     private void BakeExpanded()
     {
         if (_strip is { } strip)
@@ -265,6 +307,7 @@ internal sealed partial class HighlightPicker : UserControl
         KnobScale.ScaleX = 1d; // 收起＝原尺寸（18）
         KnobScale.ScaleY = 1d;
         Knob.Opacity = 0;
+        HitZone.Visibility = Visibility.Collapsed;
         Layer.Visibility = Visibility.Collapsed;
     }
 
@@ -301,7 +344,7 @@ internal sealed partial class HighlightPicker : UserControl
         }
         e.Handled = true;
         Layer.ReleasePointerCapture(e.Pointer);
-        Close(apply: true); // 松手：色带缩回、方块复原，并把新颜色交回宿主
+        GlideThenClose(); // 松手：滑块先滑到落点（让人看清选了哪个色），到了再收起
     }
 
     private void OnAnyPointerCaptureLost(object sender, PointerRoutedEventArgs e)

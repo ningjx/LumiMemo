@@ -12,8 +12,19 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 
     <Canvas x:Name="Layer" Visibility="Collapsed">
+        <!-- 色带周边的透明命中带：细带只有 6dip 高，按视觉位置点很容易点空（点空就走"点别处＝取消"，
+             颜色没改就收起了）。这一段（带子左右各留一点、上下各留一圈）都算"点在色带上"。
+             务必给 Background：没有画刷的 Border 不参与命中测试。 -->
+        <Border x:Name="HitZone"
+                Background="Transparent"
+                Visibility="Collapsed">
+            <Border.RenderTransform>
+                <TranslateTransform x:Name="HitZoneShift" />
+            </Border.RenderTransform>
+        </Border>
+
         <!-- 滑块＝工具栏上那个圆角方块：展开期间由这里接管（方块本身隐藏，视觉上就是"它滑过去了"）。
-             元素尺寸＝**收起**尺寸（与工具栏方块一致）；展开时缩放成更小一圈（见 .xaml.cs 的常量）。
+             元素尺寸＝**收起**尺寸；展开时缩放成更小一圈（见 .xaml.cs 的常量）。
              变换顺序必须先缩放后平移，且原点在中心——反过来写的话平移量会被缩放放大。 -->
         <Border x:Name="Knob"
                 Width="18"
