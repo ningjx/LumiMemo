@@ -267,16 +267,21 @@ public sealed class ImageInteractionTests
     [Fact]
     public void Resize_ClampsToMinEdgeAndMaxWidth()
     {
-        var image = Image(0f, 0f, 100f, 50f);
-        // 拖到图片内很远：等比缩放到最小边长 24
-        var rectMin = ImageResizeGeometry.Resize(image, ImageHandle.BottomRight, 1f, 1f, 400f);
-        Assert.Equal(48f, rectMin.Width);  // 等比：100×(24/50)=48 ≥ 24
-        Assert.Equal(24f, rectMin.Height);
+        var image = Image(0f, 0f, 400f, 200f);
+        // 四角拖到图片内很远：等比缩到最小边长（50）——短边先触底，长边按比例跟着
+        var rectMin = ImageResizeGeometry.Resize(image, ImageHandle.BottomRight, 1f, 1f, 800f);
+        Assert.Equal(100f, rectMin.Width);  // 等比：400×(50/200)=100 ≥ 50
+        Assert.Equal(50f, rectMin.Height);
+
+        // 单边手柄：下边拖到最小高度，宽度不动
+        var rectShort = ImageResizeGeometry.Resize(image, ImageHandle.Bottom, 999f, 1f, 800f);
+        Assert.Equal(400f, rectShort.Width);
+        Assert.Equal(50f, rectShort.Height);
 
         // 超过内容区宽：钳到 maxWidth
-        var rectMax = ImageResizeGeometry.Resize(image, ImageHandle.Right, 900f, 25f, 300f);
+        var rectMax = ImageResizeGeometry.Resize(image, ImageHandle.Right, 900f, 100f, 300f);
         Assert.Equal(300f, rectMax.Width);
-        Assert.Equal(50f, rectMax.Height);
+        Assert.Equal(200f, rectMax.Height);
     }
 
     // ---------------- 缩放松手的重锚落位（左/上侧手柄，Phase 3 M4）----------------

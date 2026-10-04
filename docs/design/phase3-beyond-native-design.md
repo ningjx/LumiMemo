@@ -238,7 +238,8 @@ public readonly record struct BlockExtent(int BlockIndex, LayoutRect Rect);
 - 覆盖层用 **XAML 元素层**（移植旧 `ImageAdorner` 骨架：虚线框 + 8 手柄 + 尺寸标签），
   挂在 `LumiEditor` 滚动内容里、surface 之上（空白处不吃指针＝旧方案已验证的纪律）；
 - 几何用**纯函数移植**（`ImageResizeGeometry`）：四角等比（取两轴变化较大者）、
-  四边单轴、最小边长 24 dip、宽上限 = 内容区宽；**对边/对角固定**——
+  四边单轴、最小边长 50 dip（2026-10-04 由 24 提高——太小八个手柄挤在一起抓不住）、
+  宽上限 = 内容区宽；**对边/对角固定**——
   左/上侧手柄动左/上边缘（右下边缘不动），右/下侧手柄动右/下边缘；
 - **左/上侧手柄的左上角移动** → 松手按新左上角重锚（与拖动落点同一规则），
   并把**右下边缘钉回原位**（`ResolveAnchoredResize`：锚点决定落位，重锚后尺寸跟着让）；

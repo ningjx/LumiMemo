@@ -21,12 +21,15 @@ public enum ImageHandle
 /// 图片缩放手柄几何（纯函数，可无头测试）：手柄中心点、坐标命中、拖动 → 新尺寸。
 /// 交互契约沿用旧产品（Phase 2 验收过的缩放手感，旧内核已在 Phase 4 退役）：
 /// 四角等比（取两轴相对变化的较大者，保证图片不缩到指针内侧）、四边只动单轴；
-/// 最小边长 24dip、宽不超过内容区宽。
+/// 最小边长 50dip、宽不超过内容区宽。
 /// </summary>
 public static class ImageResizeGeometry
 {
-    /// <summary>图片可缩到的最小边长（dip，与旧产品一致）。</summary>
-    public const float MinEdge = 24f;
+    /// <summary>
+    /// 图片可缩到的最小边长（dip）：再小八个手柄就挤在一起、抓不住了
+    /// （2026-10-04 由 24 提到 50）。
+    /// </summary>
+    public const float MinEdge = 50f;
 
     /// <summary>手柄命中半径（比可视手柄略大，好点）。</summary>
     public const float HandleHitRadius = 11f;
