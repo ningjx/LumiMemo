@@ -44,7 +44,7 @@ public sealed partial class MainWindow : Window
 
     /// <summary>工具栏「常用标题」按钮的悬停提示（与 MainWindow.xaml 里那串字保持一致）：
     /// 展开期间要摘掉——那时它已经不是"一个按钮"了，提示会浮在刚露出来的 1/2/3 上面。</summary>
-    private const string HeadingButtonTip = "常用标题（左键＝套用到当前段落；右键＝改常用级别）";
+    private const string HeadingButtonTip = "常用标题（左键＝选中文字则放大成该级字号／否则整段设为该级标题；右键＝改常用级别）";
 
     public MainWindow(
         NoteViewModel viewModel,
@@ -364,8 +364,8 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>
-    /// 左键点 H 本体：把**常用级别**套用到光标所在块——与合并之前那三个按钮的逻辑完全一样
-    /// （命令自带 toggle 语义：已经在这一档就回正文）。展开期间点它＝收起。
+    /// 左键点 H 本体：把**常用级别**应用一次（选了字＝放大选中的文字；没选＝整段设为该级标题）。
+    /// 展开期间点它＝收起。
     /// </summary>
     private void OnHeadingClick(object sender, RoutedEventArgs e)
     {
@@ -375,12 +375,28 @@ public sealed partial class MainWindow : Window
             return;
         }
 
+        ApplyHeadingLevel();
+    }
+
+    /// <summary>
+    /// 把常用级别应用一次：**选了字**就把选中的文字放大成这一档标题的字号（行内字号比，段落类型不变）；
+    /// **没选字**就把整段设成这一级标题。两条路都跟"点一下 H"完全一样——右键菜单里选完一档
+    /// 也走这里（与底色按钮"选完就刷上去"一致）。两条命令自带 toggle 语义：已经在这一档就回退。
+    /// </summary>
+    private void ApplyHeadingLevel()
+    {
+        if (_editor.HasSelection)
+        {
+            _editor.ApplyInlineHeadingSize(_toolbar.HeadingLevel);
+            return;
+        }
+
         _editor.ExecuteCommand($"h{_toolbar.HeadingLevel}");
     }
 
     /// <summary>
-    /// 左键点选项：把它设为**常用级别**（全局保存，下次打开/新建便签还是它），然后收起。
-    /// 不动正文——套用是左键点 H 那一下的事，这里只管"平时用几级"。
+    /// 左键点选项：把它设为**常用级别**（全局保存，下次打开/新建便签还是它），
+    /// 然后**顺手应用一次**——跟底色按钮"选完就刷上去"一致，不用再点一下 H。
     /// </summary>
     private void OnHeadingChoiceClick(object sender, RoutedEventArgs e)
     {
@@ -388,6 +404,7 @@ public sealed partial class MainWindow : Window
             && int.TryParse(level, out int parsed))
         {
             _toolbar.SetHeadingLevel(parsed);
+            ApplyHeadingLevel();
         }
         CollapseHeadingChoices();
     }

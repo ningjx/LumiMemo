@@ -44,12 +44,33 @@ public sealed record HeadingBlock : Block
     /// <summary>字号预设（O1，2026-10-02 确认）：H1/H2/H3 = 22/18/16 dip，字体继承默认；
     /// 加粗（Phase 3 M2 §3.2）：三档标题均为段落级加粗。</summary>
     [JsonIgnore]
-    public TextStyle EffectiveStyle => new(TextStyle.Default.FontFamily, Level switch
+    public TextStyle EffectiveStyle => new(TextStyle.Default.FontFamily, LevelSize(Level), Bold: true);
+
+    /// <summary>
+    /// 某一级的字号（dip，相对正文 14）。**字号只在这一处定义**——块级标题的
+    /// <see cref="EffectiveStyle"/> 与"把选中文字放大成标题那么大"的
+    /// <see cref="SizeRatioOf"/> 都从它换算，改标题字号不会两边不一致。
+    /// </summary>
+    public static float LevelSize(int level) => level switch
     {
         1 => 22f,
         2 => 18f,
         _ => 16f,
-    }, Bold: true);
+    };
+
+    /// <summary>
+    /// 该级别的字号**相对正文的倍数**（22/18/16 ÷ 14）：行内字号比用它，
+    /// 见 <see cref="Editing.Commands.SetInlineFontSizeRatioCommand"/>。
+    /// </summary>
+    public static float SizeRatioOf(int level)
+    {
+        if (level is < 1 or > 3)
+        {
+            throw new ArgumentOutOfRangeException(nameof(level), level, "标题级别只支持 1–3。");
+        }
+
+        return LevelSize(level) / TextStyle.Default.FontSize;
+    }
 
     /// <summary>
     /// 段前距（dip，Phase 3 M2 §3.3）：H1/H2/H3 = 12/10/8。

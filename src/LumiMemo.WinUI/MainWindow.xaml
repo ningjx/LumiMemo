@@ -209,7 +209,7 @@
                             Style="{StaticResource LumiToolbarButtonStyle}"
                             Click="OnHeadingClick"
                             RightTapped="OnHeadingRightTapped"
-                            ToolTipService.ToolTip="常用标题（左键＝套用到当前段落；右键＝改常用级别）">
+                            ToolTipService.ToolTip="常用标题（左键＝选中文字则放大成该级字号／否则整段设为该级标题；右键＝改常用级别）">
                         <!-- 整块自动宽度：角标紧跟在 H 后面、沉到基线以下（下角标）。
                              这里这个是**看不见的占位**（Opacity 0）：它只干两件事——撑住 H 的位置、
                              以及让角标知道"收起时该停在哪儿"。看得见的那个角标是浮层上的

@@ -534,6 +534,29 @@ public sealed class LumiEditor : Grid
     /// <summary>把键盘焦点交还编辑区（工具栏点完按钮后必须调，否则回车会重复触发按钮）。</summary>
     public void FocusEditor() => _scroller.Focus(FocusState.Programmatic);
 
+    /// <summary>
+    /// 当前是否选了至少一个字符（折叠光标＝false）。工具栏据此区分
+    /// "把选中的文字放大"与"整段设成某一级标题"。
+    /// </summary>
+    public bool HasSelection => _core is not null && !_core.Selection.IsCollapsed;
+
+    /// <summary>
+    /// 把**选中的文字**放大成某一档标题的字号（<b>行内字号比</b>，段落类型不变）。
+    /// 再点同一档＝取消（回到段落字号）——切换语义在命令里（见 <see cref="SetInlineFontSizeRatioCommand"/>）。
+    /// 字号取自 <see cref="HeadingBlock.LevelSize"/>，与块级标题同一处定义。
+    /// </summary>
+    public void ApplyInlineHeadingSize(int level)
+    {
+        if (_core is null)
+        {
+            return;
+        }
+
+        _core.ApplyCommand(new SetInlineFontSizeRatioCommand(
+            _core.Selection, HeadingBlock.SizeRatioOf(level)));
+        FocusEditor();
+    }
+
     /// <summary>光标所在块（无文档时为 null）。</summary>
     private Block? CaretBlock
     {
