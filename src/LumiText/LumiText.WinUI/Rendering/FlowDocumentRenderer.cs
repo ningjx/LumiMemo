@@ -35,6 +35,12 @@ public sealed class FlowDocumentRenderer
     /// <summary>Todo 复选框悬停高亮底色（Phase 3 M3，墨色低 alpha）。</summary>
     private static readonly Color CheckboxHoverFill = Color.FromArgb(0x28, 40, 32, 48);
 
+    /// <summary>Todo 复选框边长 = 行高 × 这个比例，上限 20dip。★ 随手感调。</summary>
+    private const float BoxHeightRatio = 0.7f;
+
+    /// <summary>已勾选的待办：正文压暗到原 alpha 的这个比例（"做完了"的观感）。★ 随手感调。</summary>
+    private const float CheckedTodoInkOpacity = 0.6f;
+
     /// <summary>悬停中的 todo 块索引（-1 = 无）：方框外圈画高亮底（Phase 3 M3）。</summary>
     public int HoverTodoBlockIndex { get; set; } = -1;
 
@@ -193,12 +199,14 @@ public sealed class FlowDocumentRenderer
             var last = lines[j - 1];
             if (first.Batch?.NativeLayout is CanvasTextLayout native)
             {
+                // 已勾选的待办：本段文字压暗一点（"做完了"的语义）；方框与对勾保持原色
+                Color groupInk = IsCheckedTodo(layout, first.BlockIndex) ? Dimmed(textColor) : textColor;
                 float originY = first.Y - first.LineOffsetY;
                 var clip = new Windows.Foundation.Rect(
                     first.X, first.Y, 1_000_000, last.Y + last.Height - first.Y);
                 using (session.CreateLayer(1f, clip))
                 {
-                    session.DrawTextLayout(native, first.X, originY, textColor);
+                    session.DrawTextLayout(native, first.X, originY, groupInk);
                 }
             }
 
@@ -349,50 +357,76 @@ public sealed class FlowDocumentRenderer
         return true;
     }
 
+    /// <summary>该块是不是"已勾选的待办"（渲染层据此压暗正文）。</summary>
+    private static bool IsCheckedTodo(LayoutResult layout, int blockIndex) =>
+        layout.Blocks is { } blocks && blockIndex >= 0 && blockIndex < blocks.Count
+        && blocks[blockIndex] is TodoBlock { Checked: true };
+
+    /// <summary>压暗：按 <see cref="CheckedTodoInkOpacity"/> 降 alpha——在玻璃上叠出来的就是"灰一点"，
+    /// 比写死一个灰值稳（深色主题那轮也不用改这里）。</summary>
+    private static Color Dimmed(Color color) =>
+        Color.FromArgb((byte)Math.Round(color.A * CheckedTodoInkOpacity), color.R, color.G, color.B);
+
+    /// <summary>对勾的描边样式：圆头 + 圆角接头（方头在小方框里看着生硬）。</summary>
+    private static readonly CanvasStrokeStyle CheckStroke = new()
+    {
+        StartCap = CanvasCapStyle.Round,
+        EndCap = CanvasCapStyle.Round,
+        LineJoin = CanvasLineJoin.Round,
+    };
+
     /// <summary>
     /// Todo 矢量复选框（§6.2/O2 + Phase 3 M3）：首行行盒左侧缩进区内、垂直居中于行盒；
-    /// 1.5px 描边 2px 圆角，已勾选时两条线段画对勾；颜色随主题墨色。
+    /// 2px 描边、圆角给足（内圈也要看得出圆），已勾选时画圆头对勾；颜色随主题墨色。
     /// M3 追加：悬停时方框外圈画高亮底；勾选动画按进度（0–1）从起点描出对勾，
     /// 方框随之轻微缩放（1 → 1.06 → 1）；<paramref name="animationProgress"/> &lt; 0 = 不播动画。
     /// </summary>
+    /// <remarks>
+    /// 边长**随行高走**（行高的 <c>BoxHeightRatio</c>，上限 20）：正文行高只有 20 出头，
+    /// 写死 20 的框会比行还高，上下相邻的待办框就贴在一起了（2026-10-04 实机截图）。
+    /// 对勾三点按框宽高取比例，换尺寸不用重算；横向上框在缩进区里居中，不侵进正文。
+    /// 圆角取 <c>0.25 × 边长</c>：描边是**居中**画的，半径太小的话外圈看着圆、内圈还是尖的。
+    /// </remarks>
     private static void DrawCheckbox(CanvasDrawingSession session, PlacedLine line, TodoBlock todo,
         Color ink, bool hovered, float animationProgress)
     {
-        const float boxSize = 20f;
-        float centerX = line.X - todo.LeftIndent + boxSize / 2f;
-        float centerY = line.Y + line.Height / 2f;
+        float boxSize = MathF.Min(20f, line.Height * BoxHeightRatio);
+        float centerX = line.X - (todo.LeftIndent / 2f);
+        float centerY = line.Y + (line.Height / 2f);
 
         float scale = animationProgress < 0f
             ? 1f
             : 1f + 0.06f * MathF.Sin(MathF.PI * animationProgress);
         float half = boxSize / 2f * scale;
         var rect = new Windows.Foundation.Rect(centerX - half, centerY - half, half * 2f, half * 2f);
+        float radius = boxSize * 0.25f;
 
         if (hovered)
         {
             // 悬停高亮：画在方框之下，不遮描边
+            float pad = boxSize * 0.15f;
             session.FillRoundedRectangle(
-                new Windows.Foundation.Rect(rect.X - 3f, rect.Y - 3f, rect.Width + 6f, rect.Height + 6f),
-                5, 5, CheckboxHoverFill);
+                new Windows.Foundation.Rect(rect.X - pad, rect.Y - pad, rect.Width + (pad * 2f), rect.Height + (pad * 2f)),
+                radius * 1.6f, radius * 1.6f, CheckboxHoverFill);
         }
 
-        session.DrawRoundedRectangle(rect, 2, 2, ink, 1.5f);
+        session.DrawRoundedRectangle(rect, radius, radius, ink, 2f);
         if (!todo.Checked)
         {
             return;
         }
 
-        // 对勾三点（方框左上角起的固定比例坐标，随缩放）
+        // 对勾三点：按框宽高的固定比例取（原先是 20px 框的绝对坐标，换尺寸就得重算）
         float left = (float)rect.X;
         float top = (float)rect.Y;
-        float x0 = left + (4.5f * scale), y0 = top + (10.5f * scale);
-        float x1 = left + (8.5f * scale), y1 = top + (14.5f * scale);
-        float x2 = left + (15.5f * scale), y2 = top + (5.5f * scale);
+        float x0 = left + (0.225f * (float)rect.Width), y0 = top + (0.525f * (float)rect.Height);
+        float x1 = left + (0.425f * (float)rect.Width), y1 = top + (0.725f * (float)rect.Height);
+        float x2 = left + (0.775f * (float)rect.Width), y2 = top + (0.275f * (float)rect.Height);
 
         if (animationProgress < 0f)
         {
-            session.DrawLine(x0, y0, x1, y1, ink, 2f);
-            session.DrawLine(x1, y1, x2, y2, ink, 2f);
+            session.DrawLine(x0, y0, x1, y1, ink, 2f, CheckStroke);
+            session.DrawLine(x1, y1, x2, y2, ink, 2f, CheckStroke);
             return;
         }
 
@@ -407,12 +441,12 @@ public sealed class FlowDocumentRenderer
         if (drawn <= length1)
         {
             float t = drawn / length1;
-            session.DrawLine(x0, y0, x0 + ((x1 - x0) * t), y0 + ((y1 - y0) * t), ink, 2f);
+            session.DrawLine(x0, y0, x0 + ((x1 - x0) * t), y0 + ((y1 - y0) * t), ink, 2f, CheckStroke);
             return;
         }
-        session.DrawLine(x0, y0, x1, y1, ink, 2f);
+        session.DrawLine(x0, y0, x1, y1, ink, 2f, CheckStroke);
         float t2 = (drawn - length1) / length2;
-        session.DrawLine(x1, y1, x1 + ((x2 - x1) * t2), y1 + ((y2 - y1) * t2), ink, 2f);
+        session.DrawLine(x1, y1, x1 + ((x2 - x1) * t2), y1 + ((y2 - y1) * t2), ink, 2f, CheckStroke);
     }
 
     /// <summary>
