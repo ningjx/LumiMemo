@@ -1,5 +1,6 @@
 using LumiMemo.WinUI.Controls;
 using LumiMemo.WinUI.ViewModels;
+using LumiText.WinUI.Controls;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 

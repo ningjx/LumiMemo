@@ -6,8 +6,11 @@
     刻意不放任何 VisualState：系统"始终显示滚动条"设置会让模板状态变成常驻细条，
     绕开它的办法就是不用状态机。模板保留 ScrollBar 代码需要的全部 16 个命名部件
     （缺一个模板就会应用失败）。
-    在 App.xaml 合并：每个滚动条的宿主（编辑器/列表/设置页）Loaded 后调
-    ScrollBarReveal.AttachTo 才有显隐行为；否则滑块会一直处于"收起"位。
+    在 App.xaml 合并（视觉面）；显隐行为在 LumiText.WinUI.Controls.ScrollBarReveal
+    （行为面，靠 VerticalThumb 的 Tag="vthumb" 认这套模板，不是它就整体 no-op）：
+    编辑器与只读宿主（LumiEditor / LumiDocumentView）Loaded 时自带；
+    列表页、设置页、回收站页各自 Loaded 后调 AttachTo。
+    没人挂的宿主滑块会一直停在"收起"位。
 -->
 <ResourceDictionary
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"

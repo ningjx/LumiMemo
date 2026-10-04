@@ -54,7 +54,9 @@ public sealed partial class MainWindow : Window
         _onClosed = onClosed;
         _actions = actions;
 
-        _editor = new LumiEditor { HostWindow = this };
+        // 正文左右内边距 12（旧内核时代的便签是 18/16 四边，这里调窄了些，只做左右）：
+        // 文字不贴窗口边，右边也给滚动条让出位置
+        _editor = new LumiEditor { HostWindow = this, ContentInset = 12 };
         _editor.CaretBlockChanged += OnCaretBlockChanged;
         EditorHost.Children.Add(_editor);
         _viewModel.AttachDocument(new LumiEditorDocument(_editor));

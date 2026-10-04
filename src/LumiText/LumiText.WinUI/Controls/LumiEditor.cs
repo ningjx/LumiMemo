@@ -2,6 +2,7 @@
 using Microsoft.UI;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Animation;
@@ -170,9 +171,15 @@ public sealed class LumiEditor : Grid
             // CharacterReceived 只发给焦点元素，焦点不落上字符输入永远不触发。
             IsTabStop = true,
         };
-        _contentGrid = new Grid();
         // 命中测试铁律（S2 RESULTS §4.1）：Background 必须设全透明画刷，null 不参与命中测试——
-        // PointerPressed/Moved/Released 挂在 _surfaceHost 上，没有画刷指针事件永远不触发。
+        // 指针事件挂在 _contentGrid 上，没有画刷就永远不触发。
+        // 挂在内容网格而不是 _surfaceHost：正文左右有内边距（ContentInset），宿主只覆盖文字那一栏，
+        // 贴边点空白（很常见的落光标手势）本来会落到死区里；网格铺满整个内容区，
+        // 落在内边距上的按下照样按"宿主的文档坐标"算（X 为负），交给 HitTest 的空白区兜底取最近行。
+        _contentGrid = new Grid
+        {
+            Background = new SolidColorBrush(Colors.Transparent),
+        };
         _surfaceHost = new Grid
         {
             HorizontalAlignment = HorizontalAlignment.Stretch,
@@ -216,6 +223,9 @@ public sealed class LumiEditor : Grid
 
         Loaded += OnLoaded;
         SizeChanged += OnSizeChanged;
+        // 内容区宽会变（滚动条 Auto 出现/消失、窗口缩放）：正文宽度按内容区算（见 ContentWidth），
+        // 所以这里也要重排——不然滚动条一露面就压住右边那几列字。
+        _contentGrid.SizeChanged += (_, _) => Relayout();
         _scroller.ViewChanged += OnViewChanged;
         // 编辑器得焦时也重设 TSF 焦点：点击进入文本、XAML 焦点恢复都会走这里，
         // 与窗口 Activated 的重设形成多层兜底（Phase 3 修复：重开窗口后 IME 绕开本店）。
@@ -225,11 +235,11 @@ public sealed class LumiEditor : Grid
         PreviewKeyDown += OnPreviewKeyDownHandler;
         _scroller.CharacterReceived += OnCharacterReceivedHandler;
         // 鼠标：按下/拖动/松开走指针事件（拖动选择），单击走 Tapped
-        _surfaceHost.PointerPressed += OnPointerPressed;
-        _surfaceHost.PointerMoved += OnPointerMoved;
-        _surfaceHost.PointerReleased += OnPointerReleased;
-        // 指针移出编辑器：清悬停态（手型光标/高亮复位）
-        _surfaceHost.PointerExited += (_, _) => UpdateHover(-1f, -1f);
+        _contentGrid.PointerPressed += OnPointerPressed;
+        _contentGrid.PointerMoved += OnPointerMoved;
+        _contentGrid.PointerReleased += OnPointerReleased;
+        // 指针移出内容区：清悬停态（手型光标/高亮复位）
+        _contentGrid.PointerExited += (_, _) => UpdateHover(-1f, -1f);
         Tapped += OnTappedHandler;
         Unloaded += (_, _) =>
         {
@@ -250,6 +260,62 @@ public sealed class LumiEditor : Grid
 
     /// <summary>行盒/带/段调试框线。</summary>
     public bool DebugOverlay { get; set; }
+
+    /// <summary>
+    /// 正文左右内边距（DIP）：正文与图片覆盖层**一起**内缩，不贴窗口边；排版宽度同步扣掉两侧。
+    /// 默认 0（与内容区齐平）；便签窗口设 12（旧内核时代的便签是 18/16 四边，现在调窄了些）。
+    /// </summary>
+    /// <remarks>
+    /// 右边这个内边距同时是滚动条的让位：排版宽度取滚动内容区宽（<c>ViewportWidth</c>，
+    /// 已经扣掉滚动条那一列）再让出内边距，滑块滑出/变粗都压不到文字。
+    /// </remarks>
+    public double ContentInset
+    {
+        get => _contentInset;
+        set
+        {
+            double inset = Math.Max(0, value);
+            if (Math.Abs(inset - _contentInset) < 0.01)
+            {
+                return;
+            }
+
+            _contentInset = inset;
+            ApplyContentInset();
+            Relayout();
+        }
+    }
+
+    private double _contentInset;
+
+    /// <summary>内边距落实处：宿主与覆盖层共用同一个文档坐标系，必须一起缩。</summary>
+    private void ApplyContentInset()
+    {
+        var margin = new Thickness(_contentInset, 0, _contentInset, 0);
+        _surfaceHost.Margin = margin;
+        _imageOverlay.Margin = margin;
+    }
+
+    /// <summary>
+    /// 正文排版宽度（DIP）：滚动内容区宽（已扣掉滚动条那一列）再让出左右内边距。
+    /// 首帧还量不出来时逐级退到内容网格宽、控件宽。
+    /// </summary>
+    private float ContentWidth
+    {
+        get
+        {
+            double viewport = _scroller.ViewportWidth;
+            if (!(viewport > 1))
+            {
+                viewport = _contentGrid.ActualWidth;
+            }
+            if (!(viewport > 1))
+            {
+                viewport = ActualWidth;
+            }
+            return (float)Math.Max(1.0, viewport - (_contentInset * 2));
+        }
+    }
 
     /// <summary>
     /// 宿主窗口（IME 候选窗屏幕定位用）。<see cref="TransformToVisual"/> 只给相对 XAML island
@@ -553,7 +619,30 @@ public sealed class LumiEditor : Grid
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
         _surface.Attach(_surfaceHost);
+        ApplyScrollBarChrome();
         Relayout();
+    }
+
+    /// <summary>
+    /// 滚动条的两件事（旧内核时代的接线，Phase 4 随 RichEditorHost 一起掉了，这里补回）：
+    /// 全程序通用的滑出/收起行为，以及箭头光标。
+    /// </summary>
+    /// <remarks>
+    /// 光标这步不能省：编辑器整块是 I 形光标（<see cref="UIElement.ProtectedCursor"/>），
+    /// 滚动条会继承过去——指针落在滑块上顶着文本光标很怪。滚动条自己的模板不设光标，
+    /// 所以只能由这里逐个盖掉。挂在 Loaded；模板万一还没应用就先 <c>ApplyTemplate</c> 逼一下。
+    /// </remarks>
+    private void ApplyScrollBarChrome()
+    {
+        // 先逼模板应用：Loaded 早于首次布局的情况是有的，那时滚动条还没现形，
+        // FindAll 找不到就静默 no-op——这种"偶尔不生效"最难查。
+        _scroller.ApplyTemplate();
+        ScrollBarReveal.AttachTo(_scroller);
+
+        foreach (ScrollBar bar in ScrollBarReveal.FindAll<ScrollBar>(_scroller))
+        {
+            CursorShapes.SetShape(bar, Microsoft.UI.Input.InputSystemCursorShape.Arrow);
+        }
     }
 
     private async Task WarmupImagesAsync(Document document)
@@ -578,6 +667,9 @@ public sealed class LumiEditor : Grid
         {
             return;
         }
+
+        // 正文宽度按**内容区**算（含滚动条让位与内边距，见 ContentWidth）
+        float width = ContentWidth;
         // 拖动改锚点期间：该图片以「自由矩形」参与排版（Rect 直给路径，跟手移动）；
         // 松手时按其左上角命中的字符写回锚点 + 横向自由偏移，之后重排跟着锚点走。
         var floats = _document.GetFloats();
@@ -597,13 +689,13 @@ public sealed class LumiEditor : Grid
                 ? f with { Anchor = null, AnchorToChar = false, Rect = resizeRect }
                 : f)];
         }
-        var result = _renderer.UpdateLayout(_document.Blocks, floats, (float)ActualWidth);
+        var result = _renderer.UpdateLayout(_document.Blocks, floats, width);
         _contentGrid.Height = Math.Max(result.TotalHeight, ActualHeight);
         // 宿主 = 文档面：铺满**整个滚动内容**，不是视口高。
         // 只给视口高的话，滚动后视口底部那一条（= 滚动量那么多）不是宿主，
         // 指针事件压根不进来，那片文字点不动也拖不了。
         _surfaceHost.Height = _contentGrid.Height;
-        _surface.SetMetrics((float)ActualWidth, (float)ActualHeight, result.TotalHeight);
+        _surface.SetMetrics(width, (float)ActualHeight, result.TotalHeight);
         UpdateImageOverlay();
         LayoutStatsChanged?.Invoke(_renderer.LastLayoutDuration.TotalMilliseconds);
     }
@@ -1184,7 +1276,7 @@ public sealed class LumiEditor : Grid
             && imageBlock >= 0)
         {
             e.Handled = true;
-            _surfaceHost.CapturePointer(e.Pointer);
+            _contentGrid.CapturePointer(e.Pointer);
             SelectImage(imageBlock);
             BeginImageDrag(imageBlock, docX, docY);
             return;
@@ -1200,7 +1292,7 @@ public sealed class LumiEditor : Grid
             return;
         }
         e.Handled = true;
-        _surfaceHost.CapturePointer(e.Pointer);
+        _contentGrid.CapturePointer(e.Pointer);
 
         long now = Environment.TickCount64;
         bool inWindow = now - _lastPressTimestamp <= MultiClickMs
@@ -1307,14 +1399,14 @@ public sealed class LumiEditor : Grid
         if (_dragImageBlock >= 0)
         {
             EndImageDrag();
-            _surfaceHost.ReleasePointerCapture(e.Pointer);
+            _contentGrid.ReleasePointerCapture(e.Pointer);
             e.Handled = true;
             return;
         }
         if (_isDraggingSelection)
         {
             _isDraggingSelection = false;
-            _surfaceHost.ReleasePointerCapture(e.Pointer);
+            _contentGrid.ReleasePointerCapture(e.Pointer);
             e.Handled = true;
         }
     }
@@ -1862,7 +1954,7 @@ public sealed class LumiEditor : Grid
             // 用「去掉这张图」的自然版面：预览版面里文字已被图片挤开一截，会差一个字。
             var natural = _core.Document.GetFloats().Where(f => f.Id != block).ToArray();
             LayoutResult anchorLayout = _renderer.LayoutTransient(
-                _core.Document.Blocks, natural, (float)ActualWidth);
+                _core.Document.Blocks, natural, ContentWidth);
             HitTestResult hit;
             using (anchorLayout)
             {
@@ -1872,7 +1964,7 @@ public sealed class LumiEditor : Grid
             {
                 _pendingAnchor = new FloatAnchor(hit.BlockIndex, hit.CharIndex);
             }
-            _pendingSide = rect.X + (rect.Width / 2f) < ActualWidth / 2.0
+            _pendingSide = rect.X + (rect.Width / 2f) < ContentWidth / 2f
                 ? FloatSide.Left
                 : FloatSide.Right;
             // AnchorToChar：图片紧跟锚字符之后——横纵位置都由锚字符决定，随文字重排一起走
@@ -1948,7 +2040,7 @@ public sealed class LumiEditor : Grid
         }
         e.Handled = true;
         var point = e.GetCurrentPoint(_imageOverlay).Position;
-        float maxWidth = Math.Max(ImageResizeGeometry.MinEdge, (float)ActualWidth);
+        float maxWidth = Math.Max(ImageResizeGeometry.MinEdge, ContentWidth);
         // 自由矩形：对边/对角固定——左/上侧手柄动左/上边缘（右下边缘不动），预览逐像素跟手。
         // 左/上侧手柄松手时还要按新左上角重锚，落位会吸到字符/行上（见 OnImageHandleReleased）。
         _resizePreview = ImageResizeGeometry.Resize(
@@ -1977,7 +2069,7 @@ public sealed class LumiEditor : Grid
             LayoutRect committed = preview;
             if (HandleMovesTopLeft(handle)
                 && NaturalLayoutForResize() is { } natural
-                && ImageResizeGeometry.ResolveAnchoredResize(natural, preview, (float)ActualWidth)
+                && ImageResizeGeometry.ResolveAnchoredResize(natural, preview, ContentWidth)
                     is { } landed)
             {
                 anchor = landed.Anchor;
@@ -2022,7 +2114,7 @@ public sealed class LumiEditor : Grid
             .Where(f => f.Id != _selectedImageBlock)
             .ToArray();
         _resizeNaturalLayout = _renderer.LayoutTransient(
-            _core.Document.Blocks, floats, (float)ActualWidth);
+            _core.Document.Blocks, floats, ContentWidth);
         return _resizeNaturalLayout;
     }
 

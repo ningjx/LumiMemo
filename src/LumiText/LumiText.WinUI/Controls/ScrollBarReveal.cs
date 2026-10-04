@@ -5,19 +5,23 @@ using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Animation;
 
-namespace LumiMemo.WinUI.Controls;
+namespace LumiText.WinUI.Controls;
 
 /// <summary>
 /// 滚动条的"滑出/收起"行为：闲置藏于右缘、滚动时细条滑出指示进度、停下向右缘滑回；
 /// 悬停变粗（8px）、离开后再收起。
 /// </summary>
 /// <remarks>
-/// 配套模板见 <c>ScrollBarStyle.xaml</c>（App 级隐式样式，全程序通用）——那套模板
-/// 刻意没有 VisualState，显隐/宽细全部由这里驱动，系统"始终显示滚动条"设置影响不到。
-/// 用法：在宿主（编辑器、列表等）Loaded 之后调 <see cref="AttachTo"/>；
-/// 一个滚动条只挂一次（用 Tag 做标记）。
+/// <para>配套模板见应用侧的 <c>ScrollBarStyle.xaml</c>（App 级隐式样式，全程序通用）——那套模板
+/// 刻意没有 VisualState，显隐/宽细全部由这里驱动，系统"始终显示滚动条"设置影响不到。</para>
+/// <para><b>只认自家的模板</b>：认门标志是模板里 VerticalThumb 的 <c>Tag="vthumb"</c>。
+/// 拿不到这个滑块就整体 no-op——不然换个宿主（没合并该样式的场景）会把默认模板的滑块
+/// 也平移到右缘外、宽度动画照改，砸了别人家的滚动条。</para>
+/// <para>用法：编辑器与只读宿主（<see cref="LumiEditor"/> / <see cref="LumiDocumentView"/>）
+/// 在 Loaded 里自带；列表、设置页等其它宿主各自 Loaded 后调 <see cref="AttachTo"/>。
+/// 一个滚动条只挂一次（用 Tag 做标记）。</para>
 /// </remarks>
-internal static class ScrollBarReveal
+public static class ScrollBarReveal
 {
     private const double ThinWidth = 4;
     private const double ThickWidth = 8;
@@ -26,6 +30,9 @@ internal static class ScrollBarReveal
     private const double RetractedShift = 12;
 
     private const string AttachedMarker = "scroll-reveal";
+
+    /// <summary>自家模板的标志物：ScrollBarStyle.xaml 里 VerticalThumb 的 Tag。</summary>
+    private const string OurThumbMarker = "vthumb";
 
     /// <summary>滚动停止后滑块收起的等待时长。</summary>
     private static readonly TimeSpan HideDelay = TimeSpan.FromMilliseconds(800);
@@ -59,9 +66,10 @@ internal static class ScrollBarReveal
         bool pointerOver = false;
 
         // 滑块不在装载时解析：那时候滚动条自己的模板还没应用，找 Thumb 只会拿到 null。
+        // 只认 Tag=vthumb 的滑块（自家模板的标志）：不是自家模板就全程 no-op，
+        // 免得把默认样式的滑块也平移到右缘外。
         Thumb? GetThumb() => thumb ??= FindAll<Thumb>(bar)
-            .FirstOrDefault(static candidate => candidate.Name == "VerticalThumb"
-                || (candidate.Tag as string) == "vthumb");
+            .FirstOrDefault(static candidate => (candidate.Tag as string) == OurThumbMarker);
 
         TranslateTransform? GetShift() => GetThumb()?.RenderTransform as TranslateTransform;
 

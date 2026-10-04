@@ -3,6 +3,7 @@ using Microsoft.Graphics.Canvas;
 using Microsoft.UI;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Media;
 using LumiText.Core.Documents;
 using LumiText.WinUI.Rendering;
@@ -56,6 +57,8 @@ public sealed class LumiDocumentView : Grid
 
         Loaded += OnLoaded;
         SizeChanged += OnSizeChanged;
+        // 内容区宽会变（滚动条 Auto 出现/消失、窗口缩放）：正文宽度按内容区算（见 ContentWidth）
+        _contentGrid.SizeChanged += (_, _) => Relayout();
         _scroller.ViewChanged += OnViewChanged;
         Unloaded += (_, _) =>
         {
@@ -98,7 +101,20 @@ public sealed class LumiDocumentView : Grid
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
         _surface.Attach(_surfaceHost);
+        ApplyScrollBarChrome();
         Relayout();
+    }
+
+    /// <summary>滚动条：全程序通用的滑出/收起行为 + 箭头光标（只读宿主同样不该顶着 I 形光标）。</summary>
+    private void ApplyScrollBarChrome()
+    {
+        _scroller.ApplyTemplate(); // 同 LumiEditor：Loaded 早于首次布局时滚动条可能还没现形
+        ScrollBarReveal.AttachTo(_scroller);
+
+        foreach (ScrollBar bar in ScrollBarReveal.FindAll<ScrollBar>(_scroller))
+        {
+            CursorShapes.SetShape(bar, Microsoft.UI.Input.InputSystemCursorShape.Arrow);
+        }
     }
 
     private async Task WarmupImagesAsync(Document document)
@@ -123,11 +139,32 @@ public sealed class LumiDocumentView : Grid
         {
             return;
         }
-        var result = _renderer.UpdateLayout(_document, (float)ActualWidth);
+        var result = _renderer.UpdateLayout(_document, ContentWidth);
         _contentGrid.Height = Math.Max(result.TotalHeight, ActualHeight);
-        _surfaceHost.Height = ActualHeight;
-        _surface.SetMetrics((float)ActualWidth, (float)ActualHeight, result.TotalHeight);
+        _surfaceHost.Height = _contentGrid.Height;
+        _surface.SetMetrics(ContentWidth, (float)ActualHeight, result.TotalHeight);
         LayoutStatsChanged?.Invoke(_renderer.LastLayoutDuration.TotalMilliseconds);
+    }
+
+    /// <summary>
+    /// 正文排版宽度（DIP）：滚动内容区宽（已扣掉滚动条那一列）——按控件整宽排的话，
+    /// 滚动条一露面就压住右边那几列字。首帧量不出来时退到内容网格宽、控件宽。
+    /// </summary>
+    private float ContentWidth
+    {
+        get
+        {
+            double viewport = _scroller.ViewportWidth;
+            if (!(viewport > 1))
+            {
+                viewport = _contentGrid.ActualWidth;
+            }
+            if (!(viewport > 1))
+            {
+                viewport = ActualWidth;
+            }
+            return (float)Math.Max(1.0, viewport);
+        }
     }
 
     private void OnRenderViewport(CanvasDrawingSession session, Windows.Foundation.Rect viewport, float scale)
