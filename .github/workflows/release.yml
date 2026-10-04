@@ -1,0 +1,84 @@
+name: Release
+
+# 推 v*.*.* 标签自动发版；也可以在 Actions 页手动触发（填版本号，标签由工作流创建）
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "发布版本号（不带 v，例如 0.2.0）"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and release
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Resolve release version
+        id: version
+        shell: pwsh
+        env:
+          # 标签推送用标签名；手动触发用输入的版本号
+          RAW_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
+        run: |
+          $version = "$env:RAW_VERSION" -replace '^v', ''
+
+          if ($version -notmatch '^\d+\.\d+\.\d+([-.][0-9A-Za-z.-]+)?$') {
+            throw "Version '$env:RAW_VERSION' is not a supported version. Use a version such as 1.2.3."
+          }
+
+          "value=$version" >> $env:GITHUB_OUTPUT
+          "tag=v$version" >> $env:GITHUB_OUTPUT
+
+      - name: Restore dependencies
+        shell: pwsh
+        run: dotnet restore src/LumiMemo.WinUI/LumiMemo.WinUI.csproj -r win-x64
+
+      - name: Publish single-file executable
+        shell: pwsh
+        run: |
+          $publishDirectory = Join-Path $env:RUNNER_TEMP "LumiMemo-publish"
+          $releaseDirectory = Join-Path $env:GITHUB_WORKSPACE "release"
+
+          # win-x64-singlefile 发布配置：自包含 + 单文件（WindowsAppSDK 一并打进 exe）
+          dotnet publish src/LumiMemo.WinUI/LumiMemo.WinUI.csproj `
+            -c Release `
+            --no-restore `
+            -p:PublishProfile=win-x64-singlefile `
+            -p:Version="${{ steps.version.outputs.value }}" `
+            -o $publishDirectory
+
+          $publishedExecutable = Join-Path $publishDirectory "LumiMemo.WinUI.exe"
+          if (-not (Test-Path -LiteralPath $publishedExecutable)) {
+            throw "Published executable was not found at '$publishedExecutable'."
+          }
+
+          # 只带走 exe：引用工程的 pdb 不进发布资产
+          New-Item -ItemType Directory -Path $releaseDirectory -Force | Out-Null
+          Copy-Item `
+            -LiteralPath $publishedExecutable `
+            -Destination (Join-Path $releaseDirectory "LumiMemo-win-x64.exe")
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v3
+        with:
+          name: LumiMemo ${{ steps.version.outputs.tag }}
+          # 手动触发时由本步骤创建标签（指向触发时所在的分支）；标签推送时就是已有标签
+          tag_name: ${{ steps.version.outputs.tag }}
+          generate_release_notes: true
+          files: release/LumiMemo-win-x64.exe
