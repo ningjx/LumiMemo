@@ -71,11 +71,17 @@ public sealed class LumiEditor : Grid
     // 只有 8 个透明命中区吃事件——覆盖层的一贯纪律。
     private readonly Canvas _imageOverlay = new();
 
-    /// <summary>四角手柄：与图片圆角同弧度的 1/4 圆弧（弧线与图片圆角边缘重合，描边天然半内半外）。</summary>
-    private readonly Dictionary<ImageHandle, XamlPath> _cornerHandles = [];
+    /// <summary>
+    /// 四角手柄：与图片圆角同弧度的 1/4 圆弧（弧线与图片圆角边缘重合，描边天然半内半外）。
+    /// 每项两层：先白边后本色（Halo 在下、Stroke 在上）。
+    /// </summary>
+    private readonly Dictionary<ImageHandle, (XamlPath Halo, XamlPath Stroke)> _cornerHandles = [];
 
-    /// <summary>四边手柄：边中点的一段线段（描边以图片边缘为中线，半内半外）。</summary>
-    private readonly Dictionary<ImageHandle, Line> _edgeHandles = [];
+    /// <summary>
+    /// 四边手柄：边中点的一段线段（描边以图片边缘为中线，半内半外）。
+    /// 每项两层：先白边后本色（Halo 在下、Stroke 在上）。
+    /// </summary>
+    private readonly Dictionary<ImageHandle, (Line Halo, Line Stroke)> _edgeHandles = [];
 
     /// <summary>八个透明命中区（只管事件与光标；视觉由上面的圆弧/线段负责）。</summary>
     private readonly Dictionary<ImageHandle, Border> _imageHandles = [];
@@ -115,6 +121,9 @@ public sealed class LumiEditor : Grid
     private float _pointerViewportY;
     private float _pointerDocX;
 
+    /// <summary>指针是否在内容区里（滚动时按新文档位置重算悬停用，见 OnViewChanged）。</summary>
+    private bool _pointerInside;
+
     // 拖动时抓取点相对图片左上角的偏移与图片尺寸（跟手移动用）
     private float _dragGrabOffsetX;
     private float _dragGrabOffsetY;
@@ -152,12 +161,19 @@ public sealed class LumiEditor : Grid
     private const float HandleHitSize = 22f;
 
     /// <summary>淡入/淡出时长（毫秒）。</summary>
-    private const int HandleFadeMs = 500;
+    private const int HandleFadeMs = 300;
 
     /// <summary>鼠标离开图片后等这么久再淡出（期间回到图片上就不淡了）。</summary>
-    private const int HandleFadeOutDelayMs = 1500;
+    private const int HandleFadeOutDelayMs = 1000;
 
-    private static readonly Color HandleStrokeColor = Color.FromArgb(0xB3, 0x9B, 0x8C, 0xE8);
+    /// <summary>手柄描边色：天蓝 #87CEEB，不透明（透明了压在浅色图片上就看不清）。</summary>
+    private static readonly Color HandleStrokeColor = Color.FromArgb(0xFF, 0x87, 0xCE, 0xEB);
+
+    /// <summary>手柄垫底的白色描边：比本色粗 <see cref="HandleHaloExtra"/>，两侧各露 1px 当白边。</summary>
+    private static readonly Color HandleHaloColor = Colors.White;
+
+    /// <summary>白边比本色每边多出的宽度（dip）：halo 线宽 = 本色 + 2 × 它。</summary>
+    private const float HandleHaloExtra = 1f;
     private static readonly Color SizeLabelBackground = Color.FromArgb(0xCC, 0x33, 0x30, 0x3B);
 
     public LumiEditor()
@@ -238,8 +254,13 @@ public sealed class LumiEditor : Grid
         _contentGrid.PointerPressed += OnPointerPressed;
         _contentGrid.PointerMoved += OnPointerMoved;
         _contentGrid.PointerReleased += OnPointerReleased;
-        // 指针移出内容区：清悬停态（手型光标/高亮复位）
-        _contentGrid.PointerExited += (_, _) => UpdateHover(-1f, -1f);
+        // 指针进出内容区：清悬停态（手型光标/高亮复位）；_pointerInside 供滚动时重算悬停
+        _contentGrid.PointerEntered += (_, _) => _pointerInside = true;
+        _contentGrid.PointerExited += (_, _) =>
+        {
+            _pointerInside = false;
+            UpdateHover(-1f, -1f);
+        };
         Tapped += OnTappedHandler;
         Unloaded += (_, _) =>
         {
@@ -658,8 +679,17 @@ public sealed class LumiEditor : Grid
         Relayout();
     }
 
-    private void OnViewChanged(object? sender, ScrollViewerViewChangedEventArgs e) =>
+    private void OnViewChanged(object? sender, ScrollViewerViewChangedEventArgs e)
+    {
         _surface.OnScroll((float)_scroller.VerticalOffset);
+
+        // 滚动改的是「指针底下的**文档**坐标」——指针没动，指针事件不会来。悬停态得按新位置重算，
+        // 否则滚轮一滚（或打字让内容从指针底下流过），悬停高亮/手柄还挂在早就跑掉的那张图上。
+        if (_pointerInside)
+        {
+            UpdateHover(_pointerDocX, _pointerViewportY + (float)_scroller.VerticalOffset);
+        }
+    }
 
     private void Relayout()
     {
@@ -696,6 +726,12 @@ public sealed class LumiEditor : Grid
         // 指针事件压根不进来，那片文字点不动也拖不了。
         _surfaceHost.Height = _contentGrid.Height;
         _surface.SetMetrics(width, (float)ActualHeight, result.TotalHeight);
+        // 版面一变，指针底下的东西也变了（指针本身没动）→ 悬停按新版面重算，再刷覆盖层。
+        // 悬停是派生状态：指针动了、滚动改了指针的文档位置、版面变了，这三处都要重算（见 UpdateHover）。
+        if (_pointerInside)
+        {
+            UpdateHover(_pointerDocX, _pointerViewportY + (float)_scroller.VerticalOffset);
+        }
         UpdateImageOverlay();
         LayoutStatsChanged?.Invoke(_renderer.LastLayoutDuration.TotalMilliseconds);
     }
@@ -1454,9 +1490,14 @@ public sealed class LumiEditor : Grid
     }
 
     /// <summary>
-    /// 悬停态（Phase 3 M3/M4）：命中待办复选框或浮动图片 → 手型光标 + 对应高亮；
-    /// 移出恢复 I 形。todo 命中优先于图片（复选框区域在图片外，互斥即可）。
+    /// 悬停态（Phase 3 M3/M4）：按「指针在**文档坐标系**里的位置」重算——命中待办复选框或浮动图片
+    /// → 手型光标 + 对应高亮；移出恢复 I 形。todo 命中优先于图片（复选框区域在图片外，互斥即可）。
     /// </summary>
+    /// <remarks>
+    /// 悬停是**派生状态**：只由「指针的文档位置」+「当前版面」决定，缓存起来就会跟现实脱节。
+    /// 所以三处都要重算：指针动了（OnPointerMoved）、滚动改了指针的文档位置（OnViewChanged）、
+    /// 版面变了（Relayout）——少一处就会看到"悬停/手柄挂在早就跑掉的东西上"。
+    /// </remarks>
     private void UpdateHover(float docX, float docY)
     {
         int todo = _renderer.Current?.HitTestTodoCheckbox(docX, docY) ?? -1;
@@ -1510,14 +1551,28 @@ public sealed class LumiEditor : Grid
     private void BuildImageOverlay()
     {
         var handleBrush = new SolidColorBrush(HandleStrokeColor);
+        var haloBrush = new SolidColorBrush(HandleHaloColor);
+        float haloWidth = HandleStrokeWidth + (HandleHaloExtra * 2f);
 
-        // 四角：与图片圆角同弧度的 1/4 圆弧（几何固定，随图片位置平移；描边半内半外）
+        // 四角：与图片圆角同弧度的 1/4 圆弧（几何固定，随图片位置平移；描边半内半外）。
+        // 每个手柄两层：白边（粗一圈）垫底 + 本色压在上面——图片若是同色/浅色，白边负责托住轮廓。
         foreach (ImageHandle handle in ImageResizeGeometry.AllHandles)
         {
             if (!ImageResizeGeometry.IsCorner(handle))
             {
                 continue;
             }
+            var halo = new XamlPath
+            {
+                Data = CornerArcGeometry(handle),
+                Stroke = haloBrush,
+                StrokeThickness = haloWidth,
+                StrokeLineJoin = PenLineJoin.Round,
+                StrokeStartLineCap = PenLineCap.Round,
+                StrokeEndLineCap = PenLineCap.Round,
+                IsHitTestVisible = false,
+                Visibility = Visibility.Collapsed,
+            };
             var arc = new XamlPath
             {
                 Data = CornerArcGeometry(handle),
@@ -1529,17 +1584,27 @@ public sealed class LumiEditor : Grid
                 IsHitTestVisible = false,
                 Visibility = Visibility.Collapsed,
             };
-            _cornerHandles[handle] = arc;
+            _cornerHandles[handle] = (halo, arc);
+            _imageOverlay.Children.Add(halo); // 垫底先入树：z 序在下
             _imageOverlay.Children.Add(arc);
         }
 
-        // 四边：边中点的一段线段（Stroke 以几何为中线 → 线宽天然一半在图片内、一半在外）
+        // 四边：边中点的一段线段（Stroke 以几何为中线 → 线宽天然一半在图片内、一半在外），同样白边垫底
         foreach (ImageHandle handle in ImageResizeGeometry.AllHandles)
         {
             if (ImageResizeGeometry.IsCorner(handle))
             {
                 continue;
             }
+            var halo = new Line
+            {
+                Stroke = haloBrush,
+                StrokeThickness = haloWidth,
+                StrokeStartLineCap = PenLineCap.Round,
+                StrokeEndLineCap = PenLineCap.Round,
+                IsHitTestVisible = false,
+                Visibility = Visibility.Collapsed,
+            };
             var line = new Line
             {
                 Stroke = handleBrush,
@@ -1549,7 +1614,8 @@ public sealed class LumiEditor : Grid
                 IsHitTestVisible = false,
                 Visibility = Visibility.Collapsed,
             };
-            _edgeHandles[handle] = line;
+            _edgeHandles[handle] = (halo, line);
+            _imageOverlay.Children.Add(halo);
             _imageOverlay.Children.Add(line);
         }
 
@@ -1624,18 +1690,33 @@ public sealed class LumiEditor : Grid
         UpdateImageOverlay();
     }
 
-    /// <summary>按当前状态刷新覆盖层几何：拖动/选中 → 框（+手柄）；仅悬停 → 细框。</summary>
+    /// <summary>
+    /// 按当前状态刷新覆盖层：几何永远取「正在显示的那张图在**当前版面**里的矩形」，
+    /// 可见性另按意图（拖动 / 选中 / 悬停）决定。
+    /// </summary>
+    /// <remarks>
+    /// ★ 不变量（动这里之前先读）：<c>_overlayImageBlock &gt;= 0</c> ⟺ 覆盖层还在屏幕上
+    /// （可见，或正在淡出）。意图没了 ≠ 覆盖层立刻消失：淡出要等 1.5s 才开始、再 0.5s 才跑完，
+    /// 这一整段它都还在屏幕上，所以几何必须继续跟着原来那张图走。少了这半句的后果：
+    /// 淡出期间一改文本，图片被重排挪走了、手柄却停在旧位置（2026-10-04 报的就是它）。
+    /// 淡出跑完、可见性收起时，才把 <c>_overlayImageBlock</c> 清掉。
+    /// </remarks>
     private void UpdateImageOverlay()
     {
-        int block = _dragImageBlock >= 0
+        // 意图：拖动 > 选中 > 悬停；-1 = 三者都没有（可能还在淡出）
+        int intent = _dragImageBlock >= 0
             ? _dragImageBlock
             : _selectedImageBlock >= 0 ? _selectedImageBlock : _hoverImageBlock;
-        LayoutRect? rect = block >= 0 ? _resizePreview ?? FindFloatRect(block) : null;
+
+        // 几何跟的是「正在显示的那张」：有意图就是意图那张，没意图就继续跟淡出中的那张
+        int shown = intent >= 0 ? intent : _overlayImageBlock;
+        LayoutRect? rect = shown >= 0 ? _resizePreview ?? FindFloatRect(shown) : null;
 
         // 拖动图片本体时手柄跟着走（拖动期间排版就是按直给矩形实时重排的，
         // FindFloatRect 拿到的已是跟手位置）——只在真的没有目标时收起
         if (rect is not { } reserved)
         {
+            // 目标在版面里没了（图片被删之类）：连壳一起收起，别留个停在旧位置的空架子
             HideImageOverlay();
             return;
         }
@@ -1643,7 +1724,14 @@ public sealed class LumiEditor : Grid
         // 贴「看得见的图片」：绘制与排版都用视觉矩形（FloatGeometry.VisualRect）
         var box = FloatGeometry.VisualRect(reserved);
         UpdateHandleGeometry(box);
-        _overlayImageBlock = block;
+        _overlayImageBlock = shown;
+
+        if (intent < 0)
+        {
+            // 没人要它了：几何已按上面同步过，接着走淡出（HideImageOverlay 只管起步动画与标签）
+            HideImageOverlay();
+            return;
+        }
 
         if (!_overlayShown)
         {
@@ -1657,14 +1745,7 @@ public sealed class LumiEditor : Grid
                 _handleFadeIn.Begin();
             }
         }
-        foreach (XamlPath arc in _cornerHandles.Values)
-        {
-            arc.Visibility = Visibility.Visible;
-        }
-        foreach (Line line in _edgeHandles.Values)
-        {
-            line.Visibility = Visibility.Visible;
-        }
+        SetHandleVisualsVisibility(Visibility.Visible);
         foreach (Border hit in _imageHandles.Values)
         {
             hit.Visibility = Visibility.Visible;
@@ -1714,6 +1795,7 @@ public sealed class LumiEditor : Grid
     /// <summary>
     /// 按图片的视觉矩形摆放八向手柄：四角是与图片圆角同弧度的 1/4 圆弧（弧线压在图片圆角上，
     /// 描边半内半外），四边是边中点的一段线段（描边以图片边缘为中线）。
+    /// 每个手柄两层（白边 + 本色）几何完全一致——这里必须一起摆，漏一层就是"白边留在原地"。
     /// </summary>
     private void UpdateHandleGeometry(LayoutRect box)
     {
@@ -1722,7 +1804,7 @@ public sealed class LumiEditor : Grid
         float centerX = (box.X + box.Right) / 2f;
         float centerY = (box.Y + box.Bottom) / 2f;
 
-        foreach ((ImageHandle handle, XamlPath arc) in _cornerHandles)
+        foreach ((ImageHandle handle, (XamlPath halo, XamlPath stroke)) in _cornerHandles)
         {
             (float ax, float ay) = handle switch
             {
@@ -1731,19 +1813,23 @@ public sealed class LumiEditor : Grid
                 ImageHandle.BottomRight => (box.Right - radius, box.Bottom - radius),
                 _ => (box.X, box.Bottom - radius), // BottomLeft
             };
-            Canvas.SetLeft(arc, ax);
-            Canvas.SetTop(arc, ay);
+            Canvas.SetLeft(halo, ax);
+            Canvas.SetTop(halo, ay);
+            Canvas.SetLeft(stroke, ax);
+            Canvas.SetTop(stroke, ay);
         }
 
-        foreach ((ImageHandle handle, Line line) in _edgeHandles)
+        foreach ((ImageHandle handle, (Line halo, Line stroke)) in _edgeHandles)
         {
-            (line.X1, line.Y1, line.X2, line.Y2) = handle switch
+            (float x1, float y1, float x2, float y2) = handle switch
             {
                 ImageHandle.Top => (centerX - half, box.Y, centerX + half, box.Y),
                 ImageHandle.Bottom => (centerX - half, box.Bottom, centerX + half, box.Bottom),
                 ImageHandle.Left => (box.X, centerY - half, box.X, centerY + half),
                 _ => (box.Right, centerY - half, box.Right, centerY + half), // Right
             };
+            (halo.X1, halo.Y1, halo.X2, halo.Y2) = (x1, y1, x2, y2);
+            (stroke.X1, stroke.Y1, stroke.X2, stroke.Y2) = (x1, y1, x2, y2);
         }
 
         foreach ((ImageHandle handle, Border hit) in _imageHandles)
@@ -1751,6 +1837,22 @@ public sealed class LumiEditor : Grid
             (float cx, float cy) = ImageResizeGeometry.HandleCenter(box, handle);
             Canvas.SetLeft(hit, cx - (HandleHitSize / 2f));
             Canvas.SetTop(hit, cy - (HandleHitSize / 2f));
+        }
+    }
+
+    /// <summary>整组手柄的视觉（白边 + 本色）一起显示/收起；命中区另算（它们只管事件）。</summary>
+    private void SetHandleVisualsVisibility(Visibility visibility)
+    {
+        foreach ((XamlPath halo, XamlPath stroke) in _cornerHandles.Values)
+        {
+            halo.Visibility = visibility;
+            stroke.Visibility = visibility;
+        }
+
+        foreach ((Line halo, Line stroke) in _edgeHandles.Values)
+        {
+            halo.Visibility = visibility;
+            stroke.Visibility = visibility;
         }
     }
 
@@ -1830,15 +1932,11 @@ public sealed class LumiEditor : Grid
         _handleFadeOut.Children.Add(fadeOut);
         _handleFadeOut.Completed += (_, _) =>
         {
+            // 覆盖层真正离屏，才把"正在显示哪张图"清掉——两者同生共死，
+            // 这是 UpdateImageOverlay 那条不变量的另一半（见那里的注释）
+            _overlayImageBlock = -1;
             _imageOverlay.Visibility = Visibility.Collapsed;
-            foreach (XamlPath arc in _cornerHandles.Values)
-            {
-                arc.Visibility = Visibility.Collapsed;
-            }
-            foreach (Line line in _edgeHandles.Values)
-            {
-                line.Visibility = Visibility.Collapsed;
-            }
+            SetHandleVisualsVisibility(Visibility.Collapsed);
             foreach (Border hit in _imageHandles.Values)
             {
                 hit.Visibility = Visibility.Collapsed;
