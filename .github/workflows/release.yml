@@ -56,13 +56,15 @@ jobs:
           $publishDirectory = Join-Path $env:RUNNER_TEMP "LumiMemo"
           $releaseDirectory = Join-Path $env:GITHUB_WORKSPACE "release"
 
-          # win-x64 发布配置：自包含（Windows App SDK 随包），**不能用单文件**——
-          # WinUI 3 不支持 PublishSingleFile（原生依赖必须与 exe 同目录，单文件会在启动时
-          # 静默失败），见 win-x64-singlefile.pubxml 顶部注释
+          # 自包含文件夹发布。属性全部写在命令行上：Properties/PublishProfiles/*.pubxml
+          # 除 single-file 那个外都被 .gitignore 忽略，CI 检出里没有它们。
+          # EnableMsixTooling 必须开：否则发布目录会缺应用自己的 LumiMemo.WinUI.pri
           dotnet publish src/LumiMemo.WinUI/LumiMemo.WinUI.csproj `
             -c Release `
             --no-restore `
-            -p:PublishProfile=win-x64 `
+            -p:SelfContained=true `
+            -p:PublishSingleFile=false `
+            -p:EnableMsixTooling=true `
             -p:Version="${{ steps.version.outputs.value }}" `
             -o $publishDirectory
 
@@ -70,12 +72,28 @@ jobs:
           Get-ChildItem -LiteralPath $publishDirectory -Recurse -Filter *.pdb |
             Remove-Item -Force
 
-          # 主 exe 换个对用户友好的名字：单实例锁与资源都不依赖文件名
+          # dotnet publish（CLI）会把应用自己的编译 XAML（*.xbf）与 Assets 落下——
+          # 应用会因缺 XAML 在启动时静默失败（无日志、无事件记录；2026-10-04 实测）。
+          # 从构建输出补齐，使发布目录与「VS 里能跑」的输出逐文件一致。
+          $buildDirectory = Get-ChildItem `
+            -LiteralPath (Join-Path $env:GITHUB_WORKSPACE "src/LumiMemo.WinUI/bin/Release") `
+            -Recurse -Directory |
+            Where-Object { $_.Name -eq "win-x64" } |
+            Select-Object -First 1 -ExpandProperty FullName
+          if (-not $buildDirectory) {
+            throw "Build output directory (bin/Release/**/win-x64) was not found."
+          }
+          Copy-Item -Path (Join-Path $buildDirectory "*.xbf") -Destination $publishDirectory -Force
+          Copy-Item -Path (Join-Path $buildDirectory "Assets") -Destination $publishDirectory -Recurse -Force
+          Copy-Item -Path (Join-Path $buildDirectory "LumiMemo.WinUI.pri") -Destination $publishDirectory -Force
+
+          # 主 exe **不要改名**：MRT 资源管理器按可执行文件名找 `<同名>.pri`，
+          # 改成别的名字会让 LumiMemo.WinUI.pri 配不上对，XAML 初始化直接抛
+          # stowed exception（0xc000027b，2026-10-04 实测踩过一次）
           $publishedExecutable = Join-Path $publishDirectory "LumiMemo.WinUI.exe"
           if (-not (Test-Path -LiteralPath $publishedExecutable)) {
             throw "Published executable was not found at '$publishedExecutable'."
           }
-          Rename-Item -LiteralPath $publishedExecutable -NewName "LumiMemo.exe"
 
           # 打 zip（含 LumiMemo 这一层目录）
           New-Item -ItemType Directory -Path $releaseDirectory -Force | Out-Null

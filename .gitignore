@@ -52,3 +52,6 @@ $RECYCLE.BIN/
 # ---- 崩溃转储 ----
 *.dmp
 *.mdmp
+
+# VS 发布配置的用户态文件（含本机路径）
+*.pubxml.user
