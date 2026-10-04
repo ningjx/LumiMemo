@@ -74,11 +74,39 @@ jobs:
             -LiteralPath $publishedExecutable `
             -Destination (Join-Path $releaseDirectory "LumiMemo-win-x64.exe")
 
+      - name: Extract release notes from CHANGELOG
+        id: notes
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          $bodyPath = Join-Path $env:RUNNER_TEMP "release-body.md"
+          $body = "本版本细节见仓库 CHANGELOG.md。"
+
+          if (Test-Path -LiteralPath "CHANGELOG.md") {
+            $changelog = Get-Content -LiteralPath "CHANGELOG.md" -Raw -Encoding utf8
+            # 摘出「## [<版本>]」那一段（到下一个二级标题为止）
+            $pattern = "(?ms)^##\s*\[?$([regex]::Escape($env:VERSION))\]?.*?(?=^##\s|\z)"
+            if ($changelog -match $pattern) {
+              # 去掉标题行本身，只留正文
+              $lines = $Matches[0] -split "`r?`n"
+              $body = ($lines | Select-Object -Skip 1) -join "`n"
+              $body = $body.Trim()
+            }
+          }
+
+          Set-Content -LiteralPath $bodyPath -Value $body -Encoding utf8
+          "path=$bodyPath" >> $env:GITHUB_OUTPUT
+
       - name: Create GitHub release
         uses: softprops/action-gh-release@v3
         with:
           name: LumiMemo ${{ steps.version.outputs.tag }}
           # 手动触发时由本步骤创建标签（指向触发时所在的分支）；标签推送时就是已有标签
           tag_name: ${{ steps.version.outputs.tag }}
+          # 带 - 的版本号（如 0.0.1-beta）自动标为预发布
+          prerelease: ${{ contains(steps.version.outputs.value, '-') }}
+          # 发布说明取自 CHANGELOG 对应段落，再追加 GitHub 自动生成的新旧提交对比
+          body_path: ${{ steps.notes.outputs.path }}
           generate_release_notes: true
           files: release/LumiMemo-win-x64.exe
