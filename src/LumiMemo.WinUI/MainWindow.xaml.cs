@@ -42,6 +42,10 @@ public sealed partial class MainWindow : Window
     /// 展开色带期间要摘掉——它悬在按钮上方，会挡住刚铺开的色带。</summary>
     private const string HighlightButtonTip = "文字底色（左键＝用当前色刷选中文字；右键＝展开色带取色）";
 
+    /// <summary>工具栏「常用标题」按钮的悬停提示（与 MainWindow.xaml 里那串字保持一致）：
+    /// 展开期间要摘掉——那时它已经不是"一个按钮"了，提示会浮在刚露出来的 1/2/3 上面。</summary>
+    private const string HeadingButtonTip = "常用标题（左键＝套用到当前段落；右键＝改常用级别）";
+
     public MainWindow(
         NoteViewModel viewModel,
         NoteLayout layout,
@@ -93,12 +97,16 @@ public sealed partial class MainWindow : Window
         // 底色与常用标题级别都是**全局**值：别的便签窗口改了，这里也要跟上
         _toolbar.HighlightColorChanged += OnToolbarHighlightColorChanged;
         _toolbar.HeadingLevelChanged += OnToolbarHeadingLevelChanged;
-        _headingButtonCorners = HeadingButton.CornerRadius; // 样式里的值，收起态要恢复成它
         _headingBadgeRestingScale = HeadingFaceLevelSlot.FontSize / HeadingBadgeText.FontSize;
 
         // 角标是浮层上的元素，位置得自己算：每次布局完校一次——它要跟着 H 一起被推走
         // （底色色带展开时整组会右移），展开期间还要停在选中的那个格子上。
-        HeadingBadgeLayer.LayoutUpdated += (_, _) => SyncHeadingBadge();
+        // 顺序有讲究：先把展开的那一排对齐到"下角标"的高度，再校角标位置（它量的是那一排）。
+        HeadingBadgeLayer.LayoutUpdated += (_, _) =>
+        {
+            AlignHeadingChoicesWithSubscript();
+            SyncHeadingBadge();
+        };
         UpdateHighlightButtonFill();
         UpdateHeadingVisuals();
         // 右下角保存状态：VM 报一次就换一次图标（StatusText 连带字数、标题一起报）
@@ -336,14 +344,14 @@ public sealed partial class MainWindow : Window
     /// <summary>正在跑的展开/收起动画：Storyboard 播完会**保持**动画值、盖住之后的直接赋值，所以要记账。</summary>
     private Storyboard? _headingStory;
 
-    /// <summary>H 按钮在样式里的角半径（收起态用；展开时右边两角要改成直角，见 <see cref="OpenHeadingChoices"/>）。</summary>
-    private readonly CornerRadius _headingButtonCorners;
-
     /// <summary>角标停在收起位（H 的下角标）时的缩放：与面里那个占位数字的字号对齐（两个字号都来自 XAML）。</summary>
     private readonly double _headingBadgeRestingScale;
 
     /// <summary>角标正被动画驱动：既别让 <see cref="SyncHeadingBadge"/> 改写它的位置，也别换它的数字。</summary>
     private bool _headingBadgeAnimating;
+
+    /// <summary>角标已"入库"（展开落定后把数字交还给了格子）。这时它是藏着的、位置无所谓，收起时会重新摆。</summary>
+    private bool _headingBadgeParked;
 
     /// <summary>上次把角标摆到哪儿了（没变就不写变换，免得每次布局都白重画一遍）。</summary>
     private (double X, double Y, double Scale) _headingBadgePlaced = (double.NaN, double.NaN, double.NaN);
@@ -419,10 +427,12 @@ public sealed partial class MainWindow : Window
         _headingOpen = true;
         UpdateHeadingVisuals();  // 起飞前先对齐（角标的数字此刻就是当前级别）
         _headingBadgeAnimating = true;
+        _headingBadgeParked = false; // 上一次展开落定时它入过库；收起那一趟已经把它摆回家并露出来了
 
-        // 与第一个选项贴死的那条边改成直角（左边两角保持圆角）——H 与 1/2/3 连成一条"连体条"
-        HeadingButton.CornerRadius = new CornerRadius(
-            _headingButtonCorners.TopLeft, 0, 0, _headingButtonCorners.BottomLeft);
+        // 展开期间 H **不画自己的背景**（悬停/按下的底色、边框、焦点框全熄掉）——跟左边那个
+        // 底色按钮一个思路：这一排露出来的是"H + 1/2/3"一整套，H 上再挂一圈悬停框就不成一体了。
+        // 但它**仍然可点**（点一下＝收起），所以不能像底色按钮那样把命中测试整个关掉。
+        SetHeadingButtonActive(true);
 
         SyncHeadingChoiceDigits(); // 选中那格的数字让位给要飞过来的角标
 
@@ -446,6 +456,12 @@ public sealed partial class MainWindow : Window
             PlaceHeadingBadge(badgeTarget, 1d);
             _headingBadgeAnimating = false;
             StopTrackingHeadingClip();
+
+            // 落地：把数字**交还给格子自己**（角标退场）。角标与格子里的数字是两条渲染路径，
+            // 差不到 1dip 的那点永远消不掉；交了之后"选中的数字"和旁边两个就是同一种元素，差多少都看不出来。
+            // 同一帧里"亮回数字 + 藏起角标"，看不出交接。
+            ShowAllHeadingChoiceDigits();
+            ParkHeadingBadge();
         });
     }
 
@@ -464,6 +480,12 @@ public sealed partial class MainWindow : Window
         UpdateHeadingVisuals();
         StartTrackingHeadingClip();
 
+        // 起飞前把它**瞬移**到要离开的那一格上：落地后它一直"入库"藏着、位置停在家里，
+        // 而格子自己的数字正显示着——同帧里"藏数字 + 摆角标 + 露角标"，看见的就是"它本来就在那儿"。
+        _headingBadgeParked = false;
+        SyncHeadingChoiceDigits();
+        PlaceHeadingBadge(HeadingChoiceCenter(_toolbar.HeadingLevel), 1d);
+
         Point badgeTarget = HeadingFaceLevelSlotCenter();
 
         var story = new Storyboard();
@@ -473,7 +495,7 @@ public sealed partial class MainWindow : Window
         RunHeadingAnimation(story, () =>
         {
             HeadingChoiceHost.Width = 0d;
-            HeadingButton.CornerRadius = _headingButtonCorners; // 选项没了，H 恢复成一个独立的圆角按钮
+            SetHeadingButtonActive(false); // 选项没了，H 恢复成一个普通按钮（悬停底色/提示都回来）
             PlaceHeadingBadge(badgeTarget, _headingBadgeRestingScale);
             _headingBadgeAnimating = false;
             UpdateHeadingBadgeText();          // 到家了才换新数字
@@ -515,14 +537,30 @@ public sealed partial class MainWindow : Window
         HeadingBadgeScale.ScaleY = scale;
         _headingBadgePlaced = (x, y, scale);
 
-        // 量到位置之后才露出来（否则头一帧它会闪在工具栏左上角）
-        HeadingBadge.Opacity = 1;
+        // 量到位置之后才露出来（否则头一帧它会闪在工具栏左上角）；"入库"时就该是藏着的
+        HeadingBadge.Opacity = _headingBadgeParked ? 0 : 1;
+    }
+
+    /// <summary>
+    /// 角标"入库"：展开落定后把数字**交还给格子自己的 TextBlock**，角标藏起来。
+    /// </summary>
+    /// <remarks>
+    /// 角标和格子里的数字是**两个不同元素、两条渲染路径**——哪怕两边都居中、哪怕量的是数字自己，
+    /// 也总会差不到 1dip（实机反复出现，而且随字号/框大小变）。落定后让格子自己画，
+    /// 就等于"和旁边两个一模一样"，差多少都为零，**以后怎么调都不跑偏**。
+    /// 收起时再把它瞬移回目标格上起飞（见 <see cref="CollapseHeadingChoices"/>）。
+    /// </remarks>
+    private void ParkHeadingBadge()
+    {
+        _headingBadgeParked = true;
+        HeadingBadge.Opacity = 0;
     }
 
     /// <summary>每次布局完校一次角标与选项数字——位置/选中项变了就自己跟上。</summary>
     private void SyncHeadingBadge()
     {
-        if (_headingBadgeAnimating)
+        // 入库期间不用管它（藏着的，位置无所谓）；收起时会重新摆
+        if (_headingBadgeAnimating || _headingBadgeParked)
         {
             return;
         }
@@ -538,24 +576,69 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// 把展开的 1/2/3 整排**对到 H 那个下角标的高度**上。
+    /// </summary>
+    /// <remarks>
+    /// 为什么要对：角标从"下角标"飞到"选项格子里"，两端高度一致时它就是**纯横向平移**
+    /// （高度全程不变），看着才像"那个数字挪了个位置"，而不是边飞边长边上下跳。
+    /// 用 <see cref="HeadingChoiceHostShift"/> 那个 `TranslateTransform` 调、不动外框的 `Margin`：
+    /// 位移**精确**（居中排布下 Margin 会被打对折），而且每次布局按实测重算——
+    /// 字号、行高、下角标位置、格子大小怎么改都不会跑偏。
+    /// </remarks>
+    private void AlignHeadingChoicesWithSubscript()
+    {
+        double current = HeadingChoiceHostShift.Y;
+
+        // 量到的位置里已经含了当前位移，先减掉它，得到"位移为 0 时"的位置，再定目标
+        double digitY = CenterOf(HeadingChoiceText1).Y - current;
+        double target = HeadingFaceLevelSlotCenter().Y - digitY;
+
+        if (Math.Abs(current - target) < 0.01)
+        {
+            return;
+        }
+
+        HeadingChoiceHostShift.Y = target;
+    }
+
     /// <summary>收起时角标停在哪儿：面里那个看不见的占位数字的中心。</summary>
     private Point HeadingFaceLevelSlotCenter() => CenterOf(HeadingFaceLevelSlot);
 
     /// <summary>
-    /// 展开时角标停在哪儿：选中的那一格的**正中**。
+    /// 落点再往下压一点点（dip）。**现在是 0**——两边的渲染已经对齐了，不需要补。
     /// </summary>
     /// <remarks>
-    /// 直接量那一格自己的位置——别按"帘子左缘 + 格宽 × (级别 − 0.5)"去推：格子宽窄、间距、
-    /// 外边距怎么调，推算都可能差一点点（差一点点看着就是"没落正"）。
-    /// 前提是量的时候帘子宽度**已经是终态**（<see cref="OpenHeadingChoices"/> 里先写宽度、
+    /// 早先这里要补 0.42（两点标定：0 偏高、0.85 偏低），根因是**两边走了两条渲染路径**：
+    /// 格子里的数字是按钮 `ContentPresenter` 的直接内容，`LineHeight` 被它顶掉（数字在框里偏低 0.85dip），
+    /// 而角标是浮层 `Border` 的直接子元素、样式正常生效（居中）。
+    /// 现在两边结构一样（数字都套了一层容器 + `VerticalAlignment=Center`），落点自然对得上。
+    /// **真要再微调就动这个数**：正数往下、负数往上；只作用于"展开时飞过去停在哪儿"，
+    /// 收起时那个下角标走另一条路（量占位），不受影响。
+    /// </remarks>
+    private const double HeadingChoiceLandingDrop = 0;
+
+    /// <summary>
+    /// 展开时角标停在哪儿：**选中那一格里的那个数字**的中心，再按
+    /// <see cref="HeadingChoiceLandingDrop"/> 压一点。
+    /// </summary>
+    /// <remarks>
+    /// 量的是数字、不是格子：格子是 16×16，而 13 号数字的行框比它高——两者"居中"的位置差着半格。
+    /// 量数字就与"那一格自己怎么摆这个数字"无关了。
+    /// 前提：量之前帘子宽度必须已是终态（<see cref="OpenHeadingChoices"/> 里先写宽度、
     /// <c>UpdateLayout()</c> 之后再量），否则量到的是"还挤在 0 宽里"的位置。
     /// </remarks>
-    private Point HeadingChoiceCenter(int level) => CenterOf(level switch
+    private Point HeadingChoiceCenter(int level)
     {
-        1 => HeadingChoice1,
-        2 => HeadingChoice2,
-        _ => HeadingChoice3,
-    });
+        Point center = CenterOf(level switch
+        {
+            1 => HeadingChoiceText1,
+            2 => HeadingChoiceText2,
+            _ => HeadingChoiceText3,
+        });
+
+        return new Point(center.X, center.Y + HeadingChoiceLandingDrop);
+    }
 
     /// <summary>元素在角标覆盖层坐标系里的中心（覆盖层与工具栏同格，量的是元素实际排版的位置）。</summary>
     private Point CenterOf(FrameworkElement element)
@@ -748,40 +831,74 @@ public sealed partial class MainWindow : Window
         HighlightButtonFill.Background = new SolidColorBrush(_toolbar.HighlightColor);
 
     /// <summary>
-    /// 展开期间把原按钮"熄灭"：悬停/按下的底色与边框改成透明，并摘掉悬停提示与焦点框。
-    /// 光设 <c>IsHitTestVisible = false</c> 不够——指针**已经**在按钮上，PointerOver 是**粘住的**
-    /// （元素不再收输入，也就等不到 PtrExited 来复位），那圈边框会一直画在色带上面（截图里那个圆角空框）。
-    /// 所以把模板取的那几个画刷在元素级覆盖成透明，状态还在也不显形。
-    /// 顺带把**焦点视觉**也关掉：WinUI 的 FocusVisual 同样是"外扩一圈圆角框"，Tab 到这里也会露出来。
+    /// 把按钮"熄灭"：悬停/按下的底色与边框、悬停时的前景、焦点框全在**元素级**覆盖成常量，
+    /// 一直保持到 <paramref name="idle"/>=false 收回来。
     /// </summary>
-    private void SetHighlightButtonIdle(bool idle)
+    /// <remarks>
+    /// 为什么非要元素级覆盖：光设 <c>IsHitTestVisible = false</c> 不够——指针**已经**在按钮上，
+    /// PointerOver 是**粘住的**（元素不再收输入，也就等不到 PtrExited 来复位），那圈边框会一直
+    /// 画在刚展开的东西上面（截图里那个圆角空框）。焦点视觉同理：WinUI 的 FocusVisual 也是
+    /// "外扩一圈圆角框"，Tab 过来就会露出来。
+    /// </remarks>
+    private static void SetButtonIdle(ButtonBase button, bool idle)
     {
         if (idle)
         {
             var transparent = new SolidColorBrush(Windows.UI.Color.FromArgb(0, 0, 0, 0));
-            HighlightButton.Resources["ButtonBackgroundPointerOver"] = transparent;
-            HighlightButton.Resources["ButtonBackgroundPressed"] = transparent;
-            HighlightButton.Resources["ButtonBorderBrushPointerOver"] = transparent;
-            HighlightButton.Resources["ButtonBorderBrushPressed"] = transparent;
-            HighlightButton.Resources["FocusVisualPrimaryBrush"] = transparent;
-            HighlightButton.Resources["FocusVisualSecondaryBrush"] = transparent;
-            HighlightButton.IsHitTestVisible = false;
-            HighlightButton.UseSystemFocusVisuals = false;
-            VisualStateManager.GoToState(HighlightButton, "Normal", false);
-            ToolTipService.SetToolTip(HighlightButton, null);
+            var ink = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 0, 0, 0));
+
+            foreach (string key in IdleOverriddenBrushKeys)
+            {
+                button.Resources[key] = transparent;
+            }
+
+            // 悬停/按下时模板还会把前景换一档（图标跟着变色）——一并按住，否则熄灭的按钮会"变浅"
+            button.Resources["ButtonForegroundPointerOver"] = ink;
+            button.Resources["ButtonForegroundPressed"] = ink;
+
+            button.UseSystemFocusVisuals = false;
+            VisualStateManager.GoToState(button, "Normal", false);
         }
         else
         {
-            HighlightButton.Resources.Remove("ButtonBackgroundPointerOver");
-            HighlightButton.Resources.Remove("ButtonBackgroundPressed");
-            HighlightButton.Resources.Remove("ButtonBorderBrushPointerOver");
-            HighlightButton.Resources.Remove("ButtonBorderBrushPressed");
-            HighlightButton.Resources.Remove("FocusVisualPrimaryBrush");
-            HighlightButton.Resources.Remove("FocusVisualSecondaryBrush");
-            HighlightButton.IsHitTestVisible = true;
-            HighlightButton.UseSystemFocusVisuals = true;
-            ToolTipService.SetToolTip(HighlightButton, HighlightButtonTip);
+            foreach (string key in IdleOverriddenBrushKeys)
+            {
+                button.Resources.Remove(key);
+            }
+
+            button.Resources.Remove("ButtonForegroundPointerOver");
+            button.Resources.Remove("ButtonForegroundPressed");
+            button.UseSystemFocusVisuals = true;
         }
+    }
+
+    /// <summary><see cref="SetButtonIdle"/> 覆盖成透明的那些模板画刷键。</summary>
+    private static readonly string[] IdleOverriddenBrushKeys =
+    [
+        "ButtonBackgroundPointerOver",
+        "ButtonBackgroundPressed",
+        "ButtonBorderBrushPointerOver",
+        "ButtonBorderBrushPressed",
+        "FocusVisualPrimaryBrush",
+        "FocusVisualSecondaryBrush",
+    ];
+
+    /// <summary>展开色带期间把底色按钮整个让位（连命中测试一起关掉：那时候点它就是"点别处"）。</summary>
+    private void SetHighlightButtonIdle(bool idle)
+    {
+        SetButtonIdle(HighlightButton, idle);
+        HighlightButton.IsHitTestVisible = !idle;
+        ToolTipService.SetToolTip(HighlightButton, idle ? null : HighlightButtonTip);
+    }
+
+    /// <summary>
+    /// 展开 1/2/3 期间把 H "熄灭"（背景/边框/焦点框都不画）。
+    /// 与底色按钮的区别：**它仍然可点**——点一下＝收起，所以命中测试照旧开着。
+    /// </summary>
+    private void SetHeadingButtonActive(bool active)
+    {
+        SetButtonIdle(HeadingButton, active);
+        ToolTipService.SetToolTip(HeadingButton, active ? null : HeadingButtonTip);
     }
 
     /// <summary>点亮别处＝取消取色（色带收起，不套用）；标题选项同理（收起，不改级别）。</summary>

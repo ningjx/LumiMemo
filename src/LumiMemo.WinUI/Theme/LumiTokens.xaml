@@ -1,0 +1,122 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+    工具栏与图标的 token 层（设计稿 §2.1 的落地，第一刀见 §2.3）。
+
+    这里只放**具名**东西：尺寸、墨色、图标字体、按钮/图标的具名样式。
+    **不碰 `ButtonBackground` 这类主题键**——那是窗口级的覆盖（便签窗口在 MainWindow 的
+    Grid.Resources 里自己声明），搬到 App 级会把管理器与对话框的常规按钮一起改掉。
+
+    主题：现在**不分主题**（深色模式已推迟，见 D5）。深色那一轮再拆进 ThemeDictionaries，
+    届时要改成 `{ThemeResource}` 引用（`{StaticResource}` 取不到主题字典里的键）。
+-->
+<ResourceDictionary
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- ── 图标字体：Fluent UI System Icons（微软，MIT）的 Regular 变体，随应用走 ──
+         码位（名字→码位）见 LumiIcons.cs；XAML 里直接写 Glyph="&#xE47B;" 这样的字面量。
+         字体里每个图标按尺寸各存一份字形（12/16/20/24/28/32/48）：
+         取 20 的字形就必须配 20 的字号，否则光学重量不对。 -->
+    <FontFamily x:Key="LumiIconFont">ms-appx:///Assets/FluentSystemIcons-Regular.ttf#FluentSystemIcons-Regular</FontFamily>
+    <x:Double x:Key="LumiIconSizeToolbar">20</x:Double>
+    <x:Double x:Key="LumiIconSizeChrome">16</x:Double>
+
+    <!-- ── 尺寸与墨色 ── -->
+    <x:Double x:Key="LumiToolbarControlSize">30</x:Double>
+    <SolidColorBrush x:Key="LumiIconInk" Color="#FF000000" />
+
+    <!-- ── 玻璃上的按钮：透明底无边框，悬停/激活的底色由默认模板给 ── -->
+    <Style x:Key="GlassButtonStyle" TargetType="Button">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderBrush" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="6" />
+        <Setter Property="Padding" Value="0" />
+    </Style>
+    <Style x:Key="GlassToggleButtonStyle" TargetType="ToggleButton">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderBrush" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="6" />
+        <Setter Property="Padding" Value="0" />
+    </Style>
+
+    <!-- ── 工具栏：30×30 的玻璃按钮，墨色＝图标黑 ──
+         墨色设在**按钮**上（不是图标上）：悬停/按下时模板会把 ContentPresenter 的前景色换成
+         主题里那一档，图标跟着变；要是把 Foreground 钉在 FontIcon 自己身上，那点悬停反馈就没了。 -->
+    <Style x:Key="LumiToolbarButtonStyle" TargetType="Button" BasedOn="{StaticResource GlassButtonStyle}">
+        <Setter Property="Width" Value="{StaticResource LumiToolbarControlSize}" />
+        <Setter Property="Height" Value="{StaticResource LumiToolbarControlSize}" />
+        <Setter Property="Foreground" Value="{StaticResource LumiIconInk}" />
+    </Style>
+    <Style x:Key="LumiToolbarToggleStyle" TargetType="ToggleButton" BasedOn="{StaticResource GlassToggleButtonStyle}">
+        <Setter Property="Width" Value="{StaticResource LumiToolbarControlSize}" />
+        <Setter Property="Height" Value="{StaticResource LumiToolbarControlSize}" />
+        <Setter Property="Foreground" Value="{StaticResource LumiIconInk}" />
+    </Style>
+
+    <!-- ── 常用标题的 1/2/3 选项：**三个格子共用这一套参数** ──
+         框的大小（Width/Height）、圆角都在这儿；三个格子只差 Tag 与字。
+         （悬停/选中的**底色与边框**不在这儿，走窗口级那几条 `ToggleButton*` 主题键——
+         因为那套"玻璃白叠加"是全局共用的。） -->
+    <Style x:Key="LumiChoiceStyle" TargetType="ToggleButton" BasedOn="{StaticResource GlassToggleButtonStyle}">
+        <Setter Property="Width" Value="16" />
+        <Setter Property="Height" Value="16" />
+        <Setter Property="CornerRadius" Value="4" />
+    </Style>
+
+    <!-- ── 标题控件里的那个数字（13 号；选项格子与飞过去的角标共用）──
+         **行高按公式压到"墨迹正好居中"**，别用 Margin 去补：
+         文字默认按**行框**居中，而行框下方留着降部空间（给 g/y 的下探用），数字和汉字用不到——
+         于是墨迹在行框里恒定偏下（13 号字：行框 17.3dip、墨迹才 9.1dip，偏下 0.83dip）。
+         把行框压成"墨迹那么高"（还要让基线落在正确的位置）它自然就居中了，
+         而且这个数是**精确生效**的（Margin 在居中排布下会被打对折，补不准）。
+
+         公式：行高 = 字号 × (cap/em) × (asc+desc)/(asc−desc)
+         Segoe UI 的一组：cap/em = 0.7002、asc = 1.0791em、desc = 0.2510em → 系数 1.1247
+         13 号 → 14.62。**改字号要按同一个公式重算**；偏一点点就改这个数（每 0.1 ≈ 0.08dip）。
+         必须配 BlockLineHeight：默认的 MaxHeight 会取"自然行高和这个数里大的那个"，压不下去。 -->
+    <Style x:Key="LumiDigitStyle" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="13" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="LineHeight" Value="14.62" />
+        <Setter Property="LineStackingStrategy" Value="BlockLineHeight" />
+        <!-- 墨色钉在**数字自己**身上：按钮模板在"选中"状态下会把内容的前景色换成主题里那一档
+             （实机上看到的就是"当前那一项变成白色"）。钉在这一层才压得住那一档。 -->
+        <Setter Property="Foreground" Value="{StaticResource LumiIconInk}" />
+    </Style>
+
+    <!-- ── 工具栏图标 ──
+         字体、字号、**墨迹微调**一处定，改这里全场跟着变。
+
+         微调是干吗的：图标字体的下限是 0（hhea asc=500 / **desc=0**），**基线就在行框底边**，
+         所有图标的墨迹都画在基线以上——按行框居中时墨迹会偏下一点（20px 约 0.5~1dip）。
+
+         **实测（2026-10-04）**：这个上边距是**全额生效**的（不是"居中打对折"）。
+         第一版给到 -2 就明显上移过头了（旁边那个绿方块是"正好居中"的零基准，一眼就能看出图标偏高）。
+         现在 -1；看着还偏就 ±0.5 地调这一个数。 -->
+    <Style x:Key="LumiToolbarIconStyle" TargetType="FontIcon">
+        <Setter Property="FontFamily" Value="{StaticResource LumiIconFont}" />
+        <Setter Property="FontSize" Value="{StaticResource LumiIconSizeToolbar}" />
+        <Setter Property="Margin" Value="0,0,0,0" />
+    </Style>
+
+    <!-- ── 标题栏/管理器那档 16px 图标 ──
+         同样偏下，但偏得少（行框占按钮的比例小），那一排没有实心块当参照，先不动。 -->
+    <Style x:Key="LumiChromeIconStyle" TargetType="FontIcon">
+        <Setter Property="FontFamily" Value="{StaticResource LumiIconFont}" />
+        <Setter Property="FontSize" Value="{StaticResource LumiIconSizeChrome}" />
+    </Style>
+
+    <!-- ── 标题栏的四个按钮（32×30，比工具栏略宽）── -->
+    <Style x:Key="LumiChromeButtonStyle" TargetType="Button" BasedOn="{StaticResource GlassButtonStyle}">
+        <Setter Property="Width" Value="32" />
+        <Setter Property="Height" Value="30" />
+        <Setter Property="Foreground" Value="{StaticResource LumiIconInk}" />
+    </Style>
+    <Style x:Key="LumiChromeToggleStyle" TargetType="ToggleButton" BasedOn="{StaticResource GlassToggleButtonStyle}">
+        <Setter Property="Width" Value="32" />
+        <Setter Property="Height" Value="30" />
+        <Setter Property="Foreground" Value="{StaticResource LumiIconInk}" />
+    </Style>
+</ResourceDictionary>

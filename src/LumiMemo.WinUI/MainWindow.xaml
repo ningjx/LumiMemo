@@ -8,6 +8,11 @@
 
     <Grid x:Name="Root" Background="Transparent" PreviewKeyDown="OnRootPreviewKeyDown">
     <Grid.Resources>
+        <!--
+            这十条是**窗口级**的主题键覆盖：把玻璃窗口上的按钮底色/描边换成"白色叠加"那一套。
+            留在窗口里（不搬去 App 级）——搬上去会把管理器与对话框的常规按钮一起改掉。
+            具名样式（GlassButtonStyle 等）已搬去 Theme/LumiTokens.xaml。
+        -->
         <SolidColorBrush x:Key="ButtonBackground" Color="Transparent" />
         <SolidColorBrush x:Key="ButtonBackgroundPointerOver" Color="#14FFFFFF" />
         <SolidColorBrush x:Key="ButtonBackgroundPressed" Color="#24FFFFFF" />
@@ -23,21 +28,6 @@
         <SolidColorBrush x:Key="ToggleButtonBorderBrushPointerOver" Color="#58FFFFFF" />
         <SolidColorBrush x:Key="ToggleButtonBorderBrushPressed" Color="#78FFFFFF" />
         <SolidColorBrush x:Key="ToggleButtonBorderBrushChecked" Color="#68FFFFFF" />
-
-        <Style x:Key="GlassButtonStyle" TargetType="Button">
-            <Setter Property="Background" Value="Transparent" />
-            <Setter Property="BorderBrush" Value="Transparent" />
-            <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="CornerRadius" Value="6" />
-            <Setter Property="Padding" Value="0" />
-        </Style>
-        <Style x:Key="GlassToggleButtonStyle" TargetType="ToggleButton">
-            <Setter Property="Background" Value="Transparent" />
-            <Setter Property="BorderBrush" Value="Transparent" />
-            <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="CornerRadius" Value="6" />
-            <Setter Property="Padding" Value="0" />
-        </Style>
     </Grid.Resources>
         <Grid.RowDefinitions>
             <RowDefinition Height="40" />
@@ -92,7 +82,7 @@
                                 IsEnabled="{x:Bind ViewModel.CanRegenerateTitle, Mode=OneWay}"
                                 Click="OnRefreshTitleClick"
                                 ToolTipService.ToolTip="重新生成标题">
-                            <FontIcon FontFamily="{StaticResource LumiIconFont}" FontSize="{StaticResource LumiIconSizeChrome}" Glyph="&#xE0AA;" />
+                            <FontIcon Style="{StaticResource LumiChromeIconStyle}" Glyph="&#xE0AA;" />
                         </Button>
                     </StackPanel>
                 </Grid>
@@ -100,36 +90,32 @@
                 <StackPanel x:Name="ToolsPanel" Grid.Column="1" Orientation="Horizontal" Spacing="3"
                             VerticalAlignment="Center">
                     <Button x:Name="NewNoteButton"
-                            Width="32" Height="30"
-                            Style="{StaticResource GlassButtonStyle}"
+                            Style="{StaticResource LumiChromeButtonStyle}"
                             VerticalAlignment="Center"
                             Click="OnNewNoteClick"
                             ToolTipService.ToolTip="新建便笺">
-                        <FontIcon FontFamily="{StaticResource LumiIconFont}" FontSize="{StaticResource LumiIconSizeChrome}" Glyph="&#xF56D;" />
+                        <FontIcon Style="{StaticResource LumiChromeIconStyle}" Glyph="&#xF56D;" />
                     </Button>
                     <ToggleButton x:Name="PinButton"
-                                  Style="{StaticResource GlassToggleButtonStyle}"
-                                  Width="32" Height="30"
+                                  Style="{StaticResource LumiChromeToggleStyle}"
                                   VerticalAlignment="Center"
                                   IsChecked="{x:Bind ViewModel.IsTopMost, Mode=TwoWay}"
                                   ToolTipService.ToolTip="置顶">
-                        <FontIcon FontFamily="{StaticResource LumiIconFont}" FontSize="{StaticResource LumiIconSizeChrome}" Glyph="&#xF600;" />
+                        <FontIcon Style="{StaticResource LumiChromeIconStyle}" Glyph="&#xF600;" />
                     </ToggleButton>
                     <Button x:Name="DeleteNoteButton"
-                            Width="32" Height="30"
-                            Style="{StaticResource GlassButtonStyle}"
+                            Style="{StaticResource LumiChromeButtonStyle}"
                             VerticalAlignment="Center"
                             Click="OnDeleteNoteClick"
                             ToolTipService.ToolTip="删除便签">
-                        <FontIcon FontFamily="{StaticResource LumiIconFont}" FontSize="{StaticResource LumiIconSizeChrome}" Glyph="&#xE47B;" />
+                        <FontIcon Style="{StaticResource LumiChromeIconStyle}" Glyph="&#xE47B;" />
                     </Button>
                     <Button x:Name="CloseButton"
-                            Width="32" Height="30"
-                            Style="{StaticResource GlassButtonStyle}"
+                            Style="{StaticResource LumiChromeButtonStyle}"
                             VerticalAlignment="Center"
                             Click="OnCloseClick"
                             ToolTipService.ToolTip="关闭">
-                        <FontIcon FontFamily="{StaticResource LumiIconFont}" FontSize="{StaticResource LumiIconSizeChrome}" Glyph="&#xF368;" />
+                        <FontIcon Style="{StaticResource LumiChromeIconStyle}" Glyph="&#xF368;" />
                     </Button>
                 </StackPanel>
             </Grid>
@@ -167,39 +153,43 @@
                     </Border.RenderTransform>
                 </Border>
                 <StackPanel Orientation="Horizontal" Spacing="3" VerticalAlignment="Center">
-                    <!-- 图标一律取自 Fluent UI System Icons（字体与尺寸见 App.xaml 的 LumiIconFont /
-                         LumiIconSizeToolbar；名字→码位见 LumiIcons.cs）。工具栏统一 20px 字形。 -->
-                    <Button Style="{StaticResource GlassButtonStyle}" Width="30" Height="30" Click="OnBoldClick" ToolTipService.ToolTip="粗体">
-                        <FontIcon FontFamily="{StaticResource LumiIconFont}" FontSize="{StaticResource LumiIconSizeToolbar}" Glyph="&#xF7A4;" />
+                    <!-- 图标一律取自 Fluent UI System Icons。字体/字号/墨迹微调/按钮尺寸都收在
+                         Theme/LumiTokens.xaml 的具名样式里（名字→码位见 LumiIcons.cs）。 -->
+                    <Button Style="{StaticResource LumiToolbarButtonStyle}" Click="OnBoldClick" ToolTipService.ToolTip="粗体">
+                        <FontIcon Style="{StaticResource LumiToolbarIconStyle}" Glyph="&#xF7A4;" />
                     </Button>
-                    <Button Style="{StaticResource GlassButtonStyle}" Width="30" Height="30" Click="OnItalicClick" ToolTipService.ToolTip="斜体">
-                        <FontIcon FontFamily="{StaticResource LumiIconFont}" FontSize="{StaticResource LumiIconSizeToolbar}" Glyph="&#xF7F4;" />
+                    <Button Style="{StaticResource LumiToolbarButtonStyle}" Click="OnItalicClick" ToolTipService.ToolTip="斜体">
+                        <FontIcon Style="{StaticResource LumiToolbarIconStyle}" Glyph="&#xF7F4;" />
                     </Button>
-                    <Button Style="{StaticResource GlassButtonStyle}" Width="30" Height="30" Click="OnUnderlineClick" ToolTipService.ToolTip="下划线">
-                        <FontIcon FontFamily="{StaticResource LumiIconFont}" FontSize="{StaticResource LumiIconSizeToolbar}" Glyph="&#xF80A;" />
+                    <Button Style="{StaticResource LumiToolbarButtonStyle}" Click="OnUnderlineClick" ToolTipService.ToolTip="下划线">
+                        <FontIcon Style="{StaticResource LumiToolbarIconStyle}" Glyph="&#xF80A;" />
                     </Button>
-                    <Button Style="{StaticResource GlassButtonStyle}" Width="30" Height="30" Click="OnStrikeClick" ToolTipService.ToolTip="删除线">
-                        <FontIcon FontFamily="{StaticResource LumiIconFont}" FontSize="{StaticResource LumiIconSizeToolbar}" Glyph="&#xED5F;" />
+                    <Button Style="{StaticResource LumiToolbarButtonStyle}" Click="OnStrikeClick" ToolTipService.ToolTip="删除线">
+                        <FontIcon Style="{StaticResource LumiToolbarIconStyle}" Glyph="&#xED5F;" />
                     </Button>
                     <Rectangle Width="1" Height="18" Margin="3,0" Fill="#5075697C" />
-                    <ToggleButton x:Name="BulletButton" Style="{StaticResource GlassToggleButtonStyle}" Width="30" Height="30" Click="OnBulletClick" ToolTipService.ToolTip="分点列表（再按一次取消；Esc 也行）">
-                        <FontIcon FontFamily="{StaticResource LumiIconFont}" FontSize="{StaticResource LumiIconSizeToolbar}" Glyph="&#xF0290;" />
+                    <ToggleButton x:Name="BulletButton" Style="{StaticResource LumiToolbarToggleStyle}" Click="OnBulletClick" ToolTipService.ToolTip="分点列表（再按一次取消；Esc 也行）">
+                        <FontIcon Style="{StaticResource LumiToolbarIconStyle}" Glyph="&#xF0290;" />
                     </ToggleButton>
-                    <ToggleButton x:Name="TodoButton" Style="{StaticResource GlassToggleButtonStyle}" Width="30" Height="30" Click="OnTodoClick" ToolTipService.ToolTip="待办勾选（再按一次取消；Esc 也行）">
-                        <FontIcon FontFamily="{StaticResource LumiIconFont}" FontSize="{StaticResource LumiIconSizeToolbar}" Glyph="&#xF28D;" />
+                    <ToggleButton x:Name="TodoButton" Style="{StaticResource LumiToolbarToggleStyle}" Click="OnTodoClick" ToolTipService.ToolTip="待办勾选（再按一次取消；Esc 也行）">
+                        <FontIcon Style="{StaticResource LumiToolbarIconStyle}" Glyph="&#xF28D;" />
                     </ToggleButton>
                     <Rectangle Width="1" Height="18" Margin="3,0" Fill="#5075697C" />
                     <!-- 文字底色：圆角方块就是按钮本体（底色＝当前色）。
-                         左键＝把当前色刷到选中文字；右键＝展开色带取色（HighlightPicker）。 -->
+                         方块 16×16：与图标的墨迹（17dip）同一个量级。原来 18 是刻意大一圈，
+                         2026-10-04 实机看着比图标重，收成一样大。
+                         圆角 4＝**正文里待办勾选框的那条规则**（FlowDocumentRenderer：0.25 × 边长），
+                         这样方块和正文里的勾选框看着是一套。
+                         **改尺寸/圆角都要同步 HighlightPicker 的 CollapsedKnobSize 与 Knob 的圆角**
+                         （滑块从它手里接管，对不上会在接管那一瞬间跳一下）。 -->
                     <Button x:Name="HighlightButton"
-                            Style="{StaticResource GlassButtonStyle}"
-                            Width="30" Height="30"
+                            Style="{StaticResource LumiToolbarButtonStyle}"
                             Click="OnHighlightClick"
                             RightTapped="OnHighlightRightTapped"
                             ToolTipService.ToolTip="文字底色（左键＝用当前色刷选中文字；右键＝展开色带取色）">
-                        <Border x:Name="HighlightButtonFill"
-                                Width="18" Height="18"
-                                CornerRadius="5"
+            <Border x:Name="HighlightButtonFill" Margin="0,-1,0,0"
+                                Width="16" Height="16"
+                                CornerRadius="4"
                                 BorderBrush="#8075697C"
                                 BorderThickness="1" />
                     </Button>
@@ -216,8 +206,7 @@
                          这个级别与左边的文字底色一样跟着**应用**走（ToolbarPreferences → settings.json），
                          新建便签、重开程序都沿用。 -->
                     <Button x:Name="HeadingButton"
-                            Style="{StaticResource GlassButtonStyle}"
-                            Width="30" Height="30"
+                            Style="{StaticResource LumiToolbarButtonStyle}"
                             Click="OnHeadingClick"
                             RightTapped="OnHeadingRightTapped"
                             ToolTipService.ToolTip="常用标题（左键＝套用到当前段落；右键＝改常用级别）">
@@ -226,52 +215,92 @@
                              以及让角标知道"收起时该停在哪儿"。看得见的那个角标是浮层上的
                              HeadingBadge（展开时它要飞出去，待在按钮里飞不出去）。
                              想更贴就把左边距往负调、想更沉就把下边距往负调；字号同理——都是光学值。 -->
-                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center" HorizontalAlignment="Center">
-                            <TextBlock Text="H" FontSize="17" FontWeight="SemiBold" />
+                        <!-- 上移 1.2dip：H 的墨迹是 cap height，在行框里本来就偏下，跟图标和色块比会显得低。
+                             这个 Margin 是**全额生效**的（实测；不是"居中打对折"）。 -->
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center" HorizontalAlignment="Center"
+                                    Margin="0,-3,0,0">
+                            <!-- 19 是"重量"对齐值：旁边图标的墨迹有 17dip，而 H 的墨迹只有 0.7×字号，
+                                 17 号只有 11.9dip（看着比图标小一圈）。 -->
+                            <TextBlock Text="H" FontSize="19" FontWeight="SemiBold" />
+                            <!-- 看不见的占位：撑住 H 的位置，并给角标当"收起时停在哪儿"的锚。
+                                 字号**必须与角标、与选项里的数字一致（13）**：角标收起时就是它本身，
+                                 不缩放——角标缩放动画的幅度 = 占位字号 ÷ 角标字号，这里相等就是 0。
+                                 （想让收起的下角标更小，就把这个字号调小：缩放会自己回来。）
+                                 最后一个 Margin 数是"底边距"（Bottom 对齐下精确生效，加大＝往上）：
+                                 它把**看得见的那个数字**停在原来的位置（字号 11→13 后重心会上移，这里补掉）。 -->
                             <TextBlock x:Name="HeadingFaceLevelSlot"
                                        Text="2"
                                        Width="7"
-                                       FontSize="11" FontWeight="SemiBold"
+                                       FontSize="13" FontWeight="SemiBold"
                                        TextAlignment="Center"
                                        VerticalAlignment="Bottom"
-                                       Margin="1,0,0,1"
+                                       Margin="1,0,0,-0.335"
                                        Opacity="0" />
                         </StackPanel>
                     </Button>
                     <!-- 选项帘子：宽 0 → 42 做动画，里面的按钮**原位**被逐段露出来（不是被压扁）。
                          必须配矩形裁剪——WinUI 没有 ClipToBounds，0 宽的外框照样把溢出的子元素画出来；
                          裁剪框随实际宽度走（见 code-behind 的 SizeChanged）。
-                         与 H 按钮**贴死**（负外边距把按钮栏的 Spacing 抵消掉，还往 H 的右余白里塞进 3dip）、
-                         格子之间**零间距**，圆角只留两端——合起来是"主按钮 + 三个窄选项"的一条
-                         （见 code-behind 的角半径处理）。选项自己的数字在被角标选中的那一刻会让位。 -->
+                         与 H 贴多近由下面这个负外边距定（往 H 的右余白里塞）。
+                         展开期间 H 不画自己的背景（见 code-behind 的 SetHeadingButtonActive）——
+                         露出来的就是"H + 1/2/3"一整套，H 上再挂一圈悬停框就不成一体了。
+                         选项自己被选中的那一刻：数字让位给飞过来的角标，同时亮起那个矮指示框。 -->
                     <Border x:Name="HeadingChoiceHost"
                             Width="0"
-                            Margin="-14,1.5,0,0"
+                            Margin="-14,0,0,0"
                             VerticalAlignment="Center"
                             SizeChanged="OnHeadingChoiceHostSizeChanged">
                         <Border.Clip>
                             <RectangleGeometry x:Name="HeadingChoiceClip" Rect="0,0,0,0" />
                         </Border.Clip>
+                        <!-- 整排的高度不靠 Margin 调：由 code-behind 的 AlignHeadingChoicesWithSubscript
+                             按实测把这一排对到"H 下角标"的高度上（角标飞过去于是**只走横向**）。
+                             Margin 只管"与 H 贴多近"（第一个数）——它的上下分量已经不起作用了。 -->
+                        <Border.RenderTransform>
+                            <TranslateTransform x:Name="HeadingChoiceHostShift" />
+                        </Border.RenderTransform>
                         <!-- Spacing＝三个选项彼此的距离（0＝紧贴）。改了不用动代码：
-                             帘子展开宽度与角标落点都是按"格子宽 + Spacing"自己算的。 -->
+                             展开宽度与角标落点都是按"格子宽 + Spacing"自己算的。
+                             **格子本身就是那个框**：悬停／选中的底色和边框都走模板，所以
+                             框的大小＝格子的 Width/Height、框的圆角＝CornerRadius——各只有一个数要调。
+                             选中的底色/边框取的是主题里那两档（#20FFFFFF 底 + #68FFFFFF 边）。
+
+                             数字走 LumiDigitStyle（Theme/LumiTokens.xaml）：字号 + **压过的行高**，
+                             让墨迹在框里正中（文字默认按行框居中，数字会偏低约 0.85dip）。
+                             角标照**数字**量落点，跟着一起走，不用另调。 -->
                         <StackPanel x:Name="HeadingChoiceStrip" Orientation="Horizontal" Spacing="0">
-                            <ToggleButton x:Name="HeadingChoice1" Style="{StaticResource GlassToggleButtonStyle}"
-                                          Width="12" Height="30" Tag="1" CornerRadius="0"
+                            <ToggleButton x:Name="HeadingChoice1" Style="{StaticResource LumiChoiceStyle}"
+                                          Tag="1"
                                           Click="OnHeadingChoiceClick"
                                           ToolTipService.ToolTip="常用标题设为 1">
-                                <TextBlock x:Name="HeadingChoiceText1" Text="1" FontSize="13" FontWeight="SemiBold" />
+                                <!-- 数字**必须套一层容器**：不能让它是按钮 ContentPresenter 的直接内容——
+                                     那会把样式的 LineHeight 顶掉（ContentPresenter 把自己的一套文字属性按局部值
+                                     强加给内容），行高压不下去，数字就在框里偏低约 0.85dip。 -->
+                                <Grid>
+                                    <TextBlock x:Name="HeadingChoiceText1" Text="1"
+                                               Style="{StaticResource LumiDigitStyle}"
+                                               HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                </Grid>
                             </ToggleButton>
-                            <ToggleButton x:Name="HeadingChoice2" Style="{StaticResource GlassToggleButtonStyle}"
-                                          Width="12" Height="30" Tag="2" CornerRadius="0"
+                            <ToggleButton x:Name="HeadingChoice2" Style="{StaticResource LumiChoiceStyle}"
+                                          Tag="2"
                                           Click="OnHeadingChoiceClick"
                                           ToolTipService.ToolTip="常用标题设为 2">
-                                <TextBlock x:Name="HeadingChoiceText2" Text="2" FontSize="13" FontWeight="SemiBold" />
+                                <Grid>
+                                    <TextBlock x:Name="HeadingChoiceText2" Text="2"
+                                               Style="{StaticResource LumiDigitStyle}"
+                                               HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                </Grid>
                             </ToggleButton>
-                            <ToggleButton x:Name="HeadingChoice3" Style="{StaticResource GlassToggleButtonStyle}"
-                                          Width="12" Height="30" Tag="3" CornerRadius="0,6,6,0"
+                            <ToggleButton x:Name="HeadingChoice3" Style="{StaticResource LumiChoiceStyle}"
+                                          Tag="3"
                                           Click="OnHeadingChoiceClick"
                                           ToolTipService.ToolTip="常用标题设为 3">
-                                <TextBlock x:Name="HeadingChoiceText3" Text="3" FontSize="13" FontWeight="SemiBold" />
+                                <Grid>
+                                    <TextBlock x:Name="HeadingChoiceText3" Text="3"
+                                               Style="{StaticResource LumiDigitStyle}"
+                                               HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                </Grid>
                             </ToggleButton>
                         </StackPanel>
                     </Border>
@@ -288,8 +317,7 @@
                                   IsActive="False"
                                   Visibility="Collapsed" />
                     <FontIcon x:Name="StatusIcon"
-                              FontFamily="{StaticResource LumiIconFont}"
-                              FontSize="{StaticResource LumiIconSizeChrome}"
+                              Style="{StaticResource LumiChromeIconStyle}"
                               Glyph="&#xE305;"
                               Foreground="#FF75697C" />
                     <TextBlock x:Name="StatusCountText"
@@ -322,7 +350,7 @@
                             </TransformGroup>
                         </Border.RenderTransform>
                         <TextBlock x:Name="HeadingBadgeText"
-                                   FontSize="13" FontWeight="SemiBold"
+                                   Style="{StaticResource LumiDigitStyle}"
                                    HorizontalAlignment="Center"
                                    VerticalAlignment="Center" />
                     </Border>

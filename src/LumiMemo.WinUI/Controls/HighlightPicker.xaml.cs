@@ -53,13 +53,16 @@ internal sealed partial class HighlightPicker : UserControl
     private const int HueSteps = 15;
 
     // ★ 几何与动画（随手感调）
-    /// <summary>滑块元素边长＝**收起**时的尺寸（比展开大 2dip）。</summary>
-    private const double CollapsedKnobSize = 18;
+    /// <summary>
+    /// 滑块元素边长＝收起时的尺寸，**必须与工具栏上那个方块（`HighlightButtonFill`）一致**：
+    /// 展开时是滑块从方块手里接管，尺寸对不上就会在那一瞬间跳一下。
+    /// </summary>
+    private const double CollapsedKnobSize = 16;
 
     /// <summary>
-    /// 展开后的视觉边长：对齐工具栏上待办勾选框**看得见的墨迹**（约 16dip）。
-    /// 注意别拿 FontIcon 的 FontSize（20）当尺寸——Fluent 图标在 20 的字号里只画 ~16dip，
-    /// 四周是留白（按 20 对齐会明显偏大，2026-10-04 从截图里量出来的）。
+    /// 展开后的视觉边长：与收起时相同，也就是"工具栏那个方块"和"待办勾选框的墨迹"共用的那一档（16）。
+    /// （早先收起 18 / 展开 16 是为了"滑过去的时候缩一点"；方块本身收到 16 之后就不缩了。）
+    /// 注意别拿 FontIcon 的 FontSize 当尺寸——Fluent 图标在 20 的字号里只画 ~16dip，四周是留白。
     /// </summary>
     private const double ExpandedKnobSize = 16;
 
@@ -304,7 +307,7 @@ internal sealed partial class HighlightPicker : UserControl
         }
         KnobShift.X = CollapsedKnobLeft;
         KnobShift.Y = CollapsedKnobTop;
-        KnobScale.ScaleX = 1d; // 收起＝原尺寸（18）
+        KnobScale.ScaleX = 1d; // 收起＝原尺寸（16，与工具栏那个方块一致）
         KnobScale.ScaleY = 1d;
         Knob.Opacity = 0;
         HitZone.Visibility = Visibility.Collapsed;
@@ -372,7 +375,7 @@ internal sealed partial class HighlightPicker : UserControl
     /// <summary>展开后滑块的顶边：色带很细（6dip），滑块上下都探出去——就是滑块的样式。</summary>
     private double KnobTop => _stripTop + ((_stripHeight - CollapsedKnobSize) / 2);
 
-    /// <summary>展开时的缩放：视觉边长 = ExpandedKnobSize（比收起更小）。</summary>
+    /// <summary>展开时的缩放：现在与收起同尺寸，所以是 1（不再缩放；常量改回一大一小就自动生效）。</summary>
     private double ExpandedKnobScale => ExpandedKnobSize / CollapsedKnobSize;
 
     private double CollapsedKnobLeft => _squareRect.X + (_squareRect.Width / 2) - (CollapsedKnobSize / 2);

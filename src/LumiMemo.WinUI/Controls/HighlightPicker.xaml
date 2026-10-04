@@ -24,12 +24,12 @@
         </Border>
 
         <!-- 滑块＝工具栏上那个圆角方块：展开期间由这里接管（方块本身隐藏，视觉上就是"它滑过去了"）。
-             元素尺寸＝**收起**尺寸；展开时缩放成更小一圈（见 .xaml.cs 的常量）。
+             元素尺寸＝**收起**尺寸，与工具栏上的方块一致（见 .xaml.cs 的常量）；两者对不上会跳一下。
              变换顺序必须先缩放后平移，且原点在中心——反过来写的话平移量会被缩放放大。 -->
         <Border x:Name="Knob"
-                Width="18"
-                Height="18"
-                CornerRadius="5"
+                Width="16"
+                Height="16"
+                CornerRadius="4"
                 BorderBrush="#8075697C"
                 BorderThickness="1"
                 Opacity="0"
