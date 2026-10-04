@@ -47,7 +47,9 @@ jobs:
 
       - name: Restore dependencies
         shell: pwsh
-        run: dotnet restore src/LumiMemo.WinUI/LumiMemo.WinUI.csproj -r win-x64
+        # 带上 PublishReadyToRun：csproj 里 Release 默认开这项，restore 不同步带上的话
+        # CI 上会缺 R2R 运行时包，发布时报 NETSDK1094（本地因 NuGet 缓存有包而看不出来）
+        run: dotnet restore src/LumiMemo.WinUI/LumiMemo.WinUI.csproj -r win-x64 -p:PublishReadyToRun=true
 
       - name: Publish single-file executable
         shell: pwsh
