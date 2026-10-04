@@ -144,6 +144,17 @@ public sealed class LumiEditor : Grid
     private LayoutRect _resizeStartRect;
     private LayoutRect? _resizePreview;
 
+    // 松手吸附动画：从松手处的自由矩形连续滑到锚定落位（逐帧走 Rect 直给路径 + 缓出曲线）；
+    // _snapBlock < 0 = 没在演。见 StartImageSnap / CancelImageSnap。
+    private readonly DispatcherTimer _snapTimer;
+    private int _snapBlock = -1;
+    private LayoutRect? _snapRect;
+    private float _snapMargin;
+    private LayoutRect _snapFrom;
+    private LayoutRect _snapTo;
+    private long _snapStartTicks;
+    private int _snapDurationMs;
+
     /// <summary>重锚用的自然版面（「去掉这张图」，手势内复用，见 <see cref="NaturalLayoutForResize"/>）。</summary>
     private LayoutResult? _resizeNaturalLayout;
 
@@ -231,6 +242,9 @@ public sealed class LumiEditor : Grid
         _imageScrollTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16) };
         _imageScrollTimer.Tick += OnImageAutoScrollTick;
 
+        _snapTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16) };
+        _snapTimer.Tick += OnSnapTick;
+
         // OS 拖放插图（Phase 3 M4）：文件/位图拖入 → 落点锚定插图
         AllowDrop = true;
         DragOver += OnDragOverHandler;
@@ -267,6 +281,7 @@ public sealed class LumiEditor : Grid
             _caretBlink.Stop();
             _checkAnimTimer.Stop();
             _imageScrollTimer.Stop();
+            _snapTimer.Stop();
             _tsf?.Dispose();
             _surface.Dispose();
             _imageStore.Dispose();
@@ -622,13 +637,16 @@ public sealed class LumiEditor : Grid
         // TSF 接入（M4）：组字期抑制 UserEdited，候选窗定位经屏幕坐标回调
         AttachTsf();
 
-        // 换文档：清掉全部图片交互态（选中/悬停/拖动/缩放预览）
+        // 换文档：清掉全部图片交互态（选中/悬停/拖动/缩放预览/吸附动画）
         _selectedImageBlock = -1;
         _hoverImageBlock = -1;
         _dragImageBlock = -1;
         _dragFreeRect = null;
         _resizePreview = null;
         _resizeHandle = ImageHandle.None;
+        _snapTimer.Stop();
+        _snapBlock = -1;
+        _snapRect = null;
 
         Relayout();
         _ = WarmupImagesAsync(document);
@@ -717,6 +735,15 @@ public sealed class LumiEditor : Grid
             // 否则只有手柄在动、图片要松手才变。松手仍按锚定规则提交（见 OnImageHandleReleased）
             floats = [.. floats.Select(f => f.Id == _selectedImageBlock
                 ? f with { Anchor = null, AnchorToChar = false, Rect = resizeRect }
+                : f)];
+        }
+        else if (_snapRect is { } snapRect && _snapBlock >= 0)
+        {
+            // 松手吸附的过渡帧，走的是同一条 Rect 直给通路：图片与文字一起逐帧走。
+            // Margin 必须与落定后的浮动一致（拖动落点是"紧跟锚字符"= 0），
+            // 否则最后一帧的文字环绕会和锚定版面差一点，撤掉覆盖时又跳一下
+            floats = [.. floats.Select(f => f.Id == _snapBlock
+                ? f with { Anchor = null, AnchorToChar = false, Rect = snapRect, Margin = _snapMargin }
                 : f)];
         }
         var result = _renderer.UpdateLayout(_document.Blocks, floats, width);
@@ -1965,6 +1992,7 @@ public sealed class LumiEditor : Grid
 
     private void BeginImageDrag(int blockIndex, float docX, float docY)
     {
+        CancelImageSnap(); // 上一张图的吸附还没演完就被抓起来：先收工，别和新手势抢几何
         _dragImageBlock = blockIndex;
         _dragImageActive = false; // 先按兵不动：指针真移动了才把图片"提起来"（避免按下瞬间跳位）
         _dragPressX = docX;
@@ -2065,12 +2093,140 @@ public sealed class LumiEditor : Grid
             _pendingSide = rect.X + (rect.Width / 2f) < ContentWidth / 2f
                 ? FloatSide.Left
                 : FloatSide.Right;
+
+            // 松手吸附：先把图片钉在松手处（_snapRect），提交内部那次重排就落在松手处，
+            // 屏幕上不会先闪一帧"已经吸到位"；提交后再从松手处连续滑到锚定落位（见 StartImageSnap）。
+            // 落点是 AnchorToChar（紧跟锚字符）→ 外边距 0，过渡帧得跟它一致。
+            _snapBlock = block;
+            _snapRect = rect;
+            _snapMargin = 0f;
+
             // AnchorToChar：图片紧跟锚字符之后——横纵位置都由锚字符决定，随文字重排一起走
             _core.ApplyCommand(new MoveImageAnchorCommand(
                 block, _pendingAnchor, _pendingSide, AnchorToChar: true));
-            Relayout();
+
+            StartImageSnap(ProbeFloatRect(block));
         }
     }
+
+    // ---- 松手吸附的连续动画（拖动改锚点 / 左上手柄重锚后落位）----
+
+    /// <summary>吸附动画时长（毫秒）= <c>SnapMinMs + 距离 × SnapMsPerDip</c>，钳在上下限之间。★ 随手感调</summary>
+    private const int SnapMinMs = 150;
+    private const int SnapMaxMs = 260;
+
+    /// <summary>每 1dip 距离追加的时长（毫秒）。</summary>
+    private const float SnapMsPerDip = 1.0f;
+
+    /// <summary>
+    /// 起吸附动画：从当前钉住的矩形（<c>_snapRect</c>）连续滑到 <paramref name="to"/>（锚定落位）。
+    /// 调用前先设好 <c>_snapBlock / _snapRect / _snapMargin</c>（钉在松手处）。
+    /// </summary>
+    private void StartImageSnap(LayoutRect? to)
+    {
+        if (to is not { } target || _snapBlock < 0 || _snapRect is not { } from)
+        {
+            CancelImageSnap();
+            return;
+        }
+
+        float dx = target.X - from.X;
+        float dy = target.Y - from.Y;
+        float distance = MathF.Sqrt((dx * dx) + (dy * dy));
+
+        // 落位就在松手处（多数情况）：没什么可演的，直接撤覆盖
+        if (distance < 0.5f)
+        {
+            CancelImageSnap();
+            return;
+        }
+
+        _snapFrom = from;
+        _snapTo = target;
+        _snapStartTicks = Environment.TickCount64;
+        _snapDurationMs = (int)Math.Clamp(
+            SnapMinMs + (distance * SnapMsPerDip), SnapMinMs, SnapMaxMs);
+        _snapTimer.Start();
+    }
+
+    /// <summary>
+    /// 撤掉吸附覆盖并重排：演完、被打断（又抓起来拖/缩、换文档）、无需演，都走这里。
+    /// 演完那次是安全的——最后一帧的矩形就等于锚定落位，撤掉覆盖不会跳。
+    /// </summary>
+    private void CancelImageSnap()
+    {
+        _snapTimer.Stop();
+        if (_snapBlock < 0 && _snapRect is null)
+        {
+            return;
+        }
+        _snapBlock = -1;
+        _snapRect = null;
+        Relayout();
+    }
+
+    private void OnSnapTick(object? sender, object e)
+    {
+        if (_snapBlock < 0 || _snapRect is null)
+        {
+            _snapTimer.Stop();
+            return;
+        }
+
+        float t = (Environment.TickCount64 - _snapStartTicks) / (float)_snapDurationMs;
+        if (t >= 1f)
+        {
+            CancelImageSnap();
+            return;
+        }
+
+        // 逐帧经 Rect 直给路径重排 → 图片与文字一起连续走，速度按缓出曲线
+        _snapRect = Lerp(_snapFrom, _snapTo, EaseOutCubic(t));
+        Relayout();
+    }
+
+    /// <summary>缓出曲线 1-(1-t)³：起步快、收尾轻，"吸住停稳"就是它给的。</summary>
+    private static float EaseOutCubic(float t)
+    {
+        float inv = 1f - Math.Clamp(t, 0f, 1f);
+        return 1f - (inv * inv * inv);
+    }
+
+    private static LayoutRect Lerp(LayoutRect from, LayoutRect to, float k) => new(
+        from.X + ((to.X - from.X) * k),
+        from.Y + ((to.Y - from.Y) * k),
+        from.Width + ((to.Width - from.Width) * k),
+        from.Height + ((to.Height - from.Height) * k));
+
+    /// <summary>
+    /// 问一次瞬时排版：这张图**不带任何覆盖**时的落位（锚点已生效的真实结果）。
+    /// 走瞬时版面、不上屏——省得"先渲染落位、再拉回来演动画"闪一帧。
+    /// </summary>
+    private LayoutRect? ProbeFloatRect(int blockIndex)
+    {
+        if (_core is null || _document is null)
+        {
+            return null;
+        }
+        using LayoutResult probe = _renderer.LayoutTransient(
+            _core.Document.Blocks, _core.Document.GetFloats(), ContentWidth);
+        foreach (FloatObject f in probe.Floats)
+        {
+            if (f.Id == blockIndex)
+            {
+                return f.Rect;
+            }
+        }
+        return null;
+    }
+
+    /// <summary>文档里这张浮动图当前的外边距（吸附过渡帧要跟落定后的一致，否则最后一帧会挪一下）。</summary>
+    private float CurrentFloatMargin(int blockIndex) =>
+        _core?.Document.Blocks is { } blocks
+        && blockIndex >= 0 && blockIndex < blocks.Count
+        && blocks[blockIndex] is ImageBlock { Float: { } placement }
+            ? placement.Margin
+            : 0f;
 
     // ---- 视口边缘自动滚动（指针贴近上下边缘时 8dip/帧）----
 
@@ -2123,6 +2279,7 @@ public sealed class LumiEditor : Grid
         }
         e.Handled = true;
         box.CapturePointer(e.Pointer);
+        CancelImageSnap(); // 同上：缩放手势接手前先停掉在演的吸附
         SelectImage(block); // 顺手选中：松手提交按选中块走
         _resizeHandle = handle;
         _resizeStartRect = rect;
@@ -2161,6 +2318,7 @@ public sealed class LumiEditor : Grid
         }
         if (_resizePreview is { } preview && _selectedImageBlock >= 0 && _core is not null)
         {
+            int block = _selectedImageBlock;
             // 左/上侧手柄把左上角挪走了 → 按新左上角重算锚点（与拖动落点同一规则），
             // 并把右下边缘钉回自由矩形的位置：图片落位由锚点决定，重锚后尺寸跟着让。
             FloatAnchor? anchor = null;
@@ -2173,10 +2331,23 @@ public sealed class LumiEditor : Grid
                 anchor = landed.Anchor;
                 committed = landed.Rect;
             }
-            _core.ApplyCommand(new ResizeImageCommand(_selectedImageBlock,
+
+            // 预览矩形退役，改由吸附动画钉住（否则两个覆盖源会打架，Relayout 的优先级里预览在前）：
+            // 提交内部那次重排因此落在预览处，落位与预览不同（左/上手柄重锚）时也不会闪跳
+            _resizePreview = null;
+            _snapBlock = block;
+            _snapRect = preview;
+            _snapMargin = anchor is null ? CurrentFloatMargin(block) : 0f; // 重锚 → 边距归零（同命令语义）
+
+            _core.ApplyCommand(new ResizeImageCommand(block,
                 MathF.Round(committed.Width), MathF.Round(committed.Height), anchor));
+
+            StartImageSnap(ProbeFloatRect(block));
         }
-        _resizePreview = null;
+        else
+        {
+            _resizePreview = null;
+        }
         ClearResizeNaturalLayout();
         Relayout();
     }
