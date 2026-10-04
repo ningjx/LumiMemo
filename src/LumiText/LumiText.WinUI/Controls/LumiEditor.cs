@@ -110,6 +110,7 @@ public sealed class LumiEditor : Grid
 
     private FloatAnchor _pendingAnchor = new(0, 0);
     private FloatSide _pendingSide = FloatSide.Right;
+    /// <summary>拖动中的指针位置：文档 X + 视口 Y（自动滚动时按新偏移重算文档坐标用）。</summary>
     private float _pointerViewportY;
     private float _pointerDocX;
 
@@ -564,7 +565,7 @@ public sealed class LumiEditor : Grid
 
     private void OnSizeChanged(object sender, SizeChangedEventArgs e)
     {
-        _surfaceHost.Height = e.NewSize.Height;
+        // 宿主尺寸由 Relayout 统一设成内容高（见那边的坐标约定注释），这里只触发重排。
         Relayout();
     }
 
@@ -598,7 +599,10 @@ public sealed class LumiEditor : Grid
         }
         var result = _renderer.UpdateLayout(_document.Blocks, floats, (float)ActualWidth);
         _contentGrid.Height = Math.Max(result.TotalHeight, ActualHeight);
-        _surfaceHost.Height = ActualHeight;
+        // 宿主 = 文档面：铺满**整个滚动内容**，不是视口高。
+        // 只给视口高的话，滚动后视口底部那一条（= 滚动量那么多）不是宿主，
+        // 指针事件压根不进来，那片文字点不动也拖不了。
+        _surfaceHost.Height = _contentGrid.Height;
         _surface.SetMetrics((float)ActualWidth, (float)ActualHeight, result.TotalHeight);
         UpdateImageOverlay();
         LayoutStatsChanged?.Invoke(_renderer.LastLayoutDuration.TotalMilliseconds);
@@ -662,12 +666,12 @@ public sealed class LumiEditor : Grid
 
     private (int x, int y) DocumentToScreen(float docX, float docY)
     {
-        // 文档坐标(DIP) → _surfaceHost 坐标(DIP) → XAML island 坐标(DIP) → 屏幕物理像素。
+        // 文档坐标(DIP) → XAML island 坐标(DIP) → 屏幕物理像素。
+        // 宿主的 TransformToVisual 已经含滚动平移（见坐标约定），文档坐标直接送进去就是屏幕位置；
+        // 再减一次 VerticalOffset 会把滚动量算两遍——滚动后 IME 候选窗/光标屏坐标会高出 scrollY。
         // TransformToVisual(null) 只到 island 根（窗口内容区原点），需叠加客户区屏幕原点。
-        double hostX = docX;
-        double hostY = docY - _scroller.VerticalOffset;
         var transform = _surfaceHost.TransformToVisual(null);
-        var point = transform.TransformPoint(new Windows.Foundation.Point(hostX, hostY));
+        var point = transform.TransformPoint(new Windows.Foundation.Point(docX, docY));
         var scale = XamlRoot?.RasterizationScale ?? 1.0;
         var origin = ClientScreenOrigin();
         return (origin.x + (int)(point.X * scale), origin.y + (int)(point.Y * scale));
@@ -1093,15 +1097,38 @@ public sealed class LumiEditor : Grid
             return;
         }
         _scroller.Focus(FocusState.Pointer); // CharacterReceived 需要焦点元素
-        var point = e.GetPosition(_surfaceHost);
-        var docY = (float)(point.Y + _scroller.VerticalOffset);
-        var hit = _renderer.Current.HitTest((float)point.X, docY);
+        var point = e.GetPosition(_surfaceHost); // 宿主坐标即文档坐标（见坐标约定）
+        var hit = _renderer.Current.HitTest((float)point.X, (float)point.Y);
         if (hit.Found)
         {
             _core.SetSelection(TextRange.Collapse(hit.CaretPosition));
         }
         e.Handled = true;
     }
+
+    // ------------------------------------------------------------------
+    // ★ 坐标约定（滚动相关 bug 的唯一来源，改指针/屏幕定位前先读这段）
+    //
+    // _surfaceHost 是**滚动内容**（_contentGrid）的子元素、位于内容 y = 0，
+    // 所以它的坐标系里已经含滚动平移：host 坐标 == 文档坐标。
+    //   · e.GetPosition/GetCurrentPoint(_surfaceHost) 拿到的就是文档坐标，
+    //     再 + VerticalOffset 会把滚动量算两遍 → 命中点整体下移 scrollY
+    //     （≈"滚动过的那几行"），光标落在点击位置下方，必须往上偏着点才准。
+    //   · 同理 _surfaceHost.TransformToVisual(null) 已含滚动平移：文档坐标直接送进去
+    //     就是屏幕位置，不要再减 VerticalOffset。
+    //     而 _surfaceHost 之外的（如本控件自身、ScrollViewer）坐标系是**视口坐标**。
+    //   · 只有需要视口坐标时（拖动到边缘自动滚动那种）才换算：DocumentToViewportY。
+    // ------------------------------------------------------------------
+
+    /// <summary>指针 → 文档坐标（宿主坐标系即文档坐标系，见上面的坐标约定）。</summary>
+    private (float X, float Y) PointerToDocument(PointerRoutedEventArgs e)
+    {
+        var p = e.GetCurrentPoint(_surfaceHost).Position;
+        return ((float)p.X, (float)p.Y);
+    }
+
+    /// <summary>文档 Y → 视口 Y（减去滚动偏移）。</summary>
+    private float DocumentToViewportY(float docY) => docY - (float)_scroller.VerticalOffset;
 
     // ------------------------------------------------------------------
     // 指针交互（§4.1）：单击落点/拖动扩选/双击选词/三击选段；
@@ -1143,9 +1170,7 @@ public sealed class LumiEditor : Grid
         }
         _scroller.Focus(FocusState.Pointer);
         var currentPoint = e.GetCurrentPoint(_surfaceHost);
-        var point = currentPoint.Position;
-        float docX = (float)point.X;
-        float docY = (float)(point.Y + _scroller.VerticalOffset);
+        var (docX, docY) = PointerToDocument(e);
 
         // 复选框点击：todo 块首行、按下点落在缩进区（行盒 X 到缩进起点）→ 切勾选，不动光标
         if (currentPoint.Properties.IsLeftButtonPressed && TryToggleTodoAt(docX, docY))
@@ -1225,17 +1250,15 @@ public sealed class LumiEditor : Grid
         {
             return;
         }
-        var point = e.GetCurrentPoint(_surfaceHost).Position;
-        float docX = (float)point.X;
-        float docY = (float)(point.Y + _scroller.VerticalOffset);
+        var (docX, docY) = PointerToDocument(e);
         _pointerDocX = docX;
-        _pointerViewportY = (float)point.Y;
+        _pointerViewportY = DocumentToViewportY(docY); // 自动滚动判边缘要视口坐标
 
         // 拖动改锚点（Phase 3 M4）：更新预览（跨行/换侧才重排）+ 视口边缘自动滚动
         if (_dragImageBlock >= 0)
         {
             UpdateImageDrag(docX, docY);
-            UpdateImageAutoScroll((float)point.Y);
+            UpdateImageAutoScroll(_pointerViewportY);
             e.Handled = true;
             return;
         }
@@ -2021,9 +2044,8 @@ public sealed class LumiEditor : Grid
             return;
         }
 
-        var point = e.GetPosition(_surfaceHost);
-        var hit = _renderer.Current.HitTest(
-            (float)point.X, (float)(point.Y + _scroller.VerticalOffset));
+        var point = e.GetPosition(_surfaceHost); // 宿主坐标即文档坐标（见坐标约定）
+        var hit = _renderer.Current.HitTest((float)point.X, (float)point.Y);
         _dropIndicator = hit.Found ? hit.CaretPosition : null;
         _surface.Invalidate();
     }
@@ -2040,9 +2062,8 @@ public sealed class LumiEditor : Grid
         try
         {
             // 落点 → 光标位置：InsertImageCommand 按当前选区字符锚定图片
-            var point = e.GetPosition(_surfaceHost);
-            var hit = _renderer.Current?.HitTest(
-                (float)point.X, (float)(point.Y + _scroller.VerticalOffset));
+            var point = e.GetPosition(_surfaceHost); // 宿主坐标即文档坐标（见坐标约定）
+            var hit = _renderer.Current?.HitTest((float)point.X, (float)point.Y);
             if (hit is { Found: true } found && _core is not null)
             {
                 _core.SetSelection(Core.Editing.TextRange.Collapse(found.CaretPosition));
