@@ -2,6 +2,7 @@ using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
+using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using LumiMemo.Core.Abstractions;
 using LumiMemo.Core.Models;
@@ -9,6 +10,7 @@ using LumiMemo.WinUI.Controls;
 using LumiMemo.WinUI.Services;
 using LumiMemo.WinUI.ViewModels;
 using LumiText.WinUI.Controls;
+using Windows.Foundation;
 using Windows.Graphics;
 
 namespace LumiMemo.WinUI;
@@ -31,6 +33,14 @@ public sealed partial class MainWindow : Window
     private bool _isApplicationExiting;
     private bool _closeApproved;
     private bool _closeInProgress;
+
+    /// <summary>当前文字底色：按钮本体的颜色、色带滑块的起点、左键点击时的落点。
+    /// 初值取便签黄纸色（与旧的色板默认一致）。</summary>
+    private Windows.UI.Color _highlightColor = NoteColorPalette.Paper(NoteColor.Yellow);
+
+    /// <summary>工具栏底色按钮的悬停提示（与 MainWindow.xaml 里那串字保持一致）：
+    /// 展开色带期间要摘掉——它悬在按钮上方，会挡住刚铺开的色带。</summary>
+    private const string HighlightButtonTip = "文字底色（左键＝用当前色刷选中文字；右键＝展开色带取色）";
 
     public MainWindow(
         NoteViewModel viewModel,
@@ -67,6 +77,18 @@ public sealed partial class MainWindow : Window
         SetTitleBar(TitleBarHost);
         ConfigureWindow();
         _backdrop = AcrylicBackdrop.Apply(this, Root);
+
+        // 文字底色：工具栏的圆角方块按钮 ↔ 展开式色带取色器（色带本体在按钮栏里，接给取色器驱动）
+        HighlightPickerLayer.AttachStrip(HighlightStrip, HighlightStripSpacer);
+        HighlightPickerLayer.ColorPicked += (_, color) => ApplyHighlight(color);
+        HighlightPickerLayer.Closed += (_, _) =>
+        {
+            HighlightButtonFill.Visibility = Visibility.Visible;
+            SetHighlightButtonIdle(false);
+        };
+        UpdateHighlightButtonFill();
+        // 点到别处＝取消取色。编辑器会把 PointerPressed 标成 Handled，所以得用 handledEventsToo 挂上
+        Root.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler(OnRootPointerPressed), true);
 
         EditorHost.Loaded += OnEditorHostLoaded;
         _appWindow.Closing += OnWindowClosing;
@@ -283,69 +305,114 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>
-    /// 文字底色色板（Phase 3 打磨，取代原「段落底色」）：作用于<b>选中文字</b>；
-    /// 末位「无」清除。色值用纸面色<b>实色</b>（RTF 颜色表没有 alpha 通道，
-    /// 带透明度的底色在复制粘贴时会被抹平——高亮面积小，实色不影响毛玻璃观感）。
+    /// 文字底色：工具栏上那个圆角方块**就是**按钮本体，底色＝当前色。
+    /// 左键＝把当前色刷到选中文字；右键＝展开色带取色（见 <see cref="HighlightPicker"/>）。
     /// </summary>
-    private void OnBackgroundClick(object sender, RoutedEventArgs e)
+    /// <remarks>
+    /// 色值给实色：RTF 颜色表没有 alpha 通道，带透明度的底色在复制粘贴时会被抹平
+    /// （高亮面积小，实色不影响毛玻璃观感）。
+    /// 没选中文字时 <c>SetInlineBackground</c> 自己会忽略——这时只更新"当前色"（按钮换色），不报错。
+    /// </remarks>
+    private void OnHighlightClick(object sender, RoutedEventArgs e) => ApplyHighlight(_highlightColor);
+
+    /// <summary>右键：色带在按钮栏里向右展开（右侧按钮被推开），方块缩小、滑到当前色的位置上当滑块。</summary>
+    private void OnHighlightRightTapped(object sender, RightTappedRoutedEventArgs e)
     {
-        if (sender is not Button button)
+        if (HighlightPickerLayer.IsOpen)
         {
             return;
         }
 
-        var panel = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            Spacing = 6,
-            Padding = new Thickness(10, 8, 10, 8),
-        };
-        var flyout = new Flyout { Content = panel, Placement = FlyoutPlacementMode.Top };
-        var border = new SolidColorBrush(Windows.UI.Color.FromArgb(0x50, 0x75, 0x69, 0x7C));
+        // 先量方块的矩形，再把它藏起来——Collapsed 的元素量不到有效坐标（这是上一版动画失效的根因）
+        var squareRect = HighlightButtonFill.TransformToVisual(Root)
+            .TransformBounds(new Rect(0, 0, HighlightButtonFill.ActualWidth, HighlightButtonFill.ActualHeight));
+        HighlightButtonFill.Visibility = Visibility.Collapsed; // 方块交给滑块接管：视觉上就是它滑过去了
+        SetHighlightButtonIdle(true);
+        HighlightPickerLayer.Open(squareRect, _highlightColor);
+        e.Handled = true;
+    }
 
-        foreach (NoteColor color in Enum.GetValues<NoteColor>())
+    /// <summary>色带松手 / 左键点击的落点：记住当前色、按钮换色、刷到选中文字。</summary>
+    private void ApplyHighlight(Windows.UI.Color color)
+    {
+        _highlightColor = color;
+        UpdateHighlightButtonFill();
+        _editor.SetInlineBackground(
+            new LumiText.Core.Documents.Color32(0xFF, color.R, color.G, color.B));
+    }
+
+    private void UpdateHighlightButtonFill() =>
+        HighlightButtonFill.Background = new SolidColorBrush(_highlightColor);
+
+    /// <summary>
+    /// 展开期间把原按钮"熄灭"：悬停/按下的底色与边框改成透明，并摘掉悬停提示与焦点框。
+    /// 光设 <c>IsHitTestVisible = false</c> 不够——指针**已经**在按钮上，PointerOver 是**粘住的**
+    /// （元素不再收输入，也就等不到 PtrExited 来复位），那圈边框会一直画在色带上面（截图里那个圆角空框）。
+    /// 所以把模板取的那几个画刷在元素级覆盖成透明，状态还在也不显形。
+    /// 顺带把**焦点视觉**也关掉：WinUI 的 FocusVisual 同样是"外扩一圈圆角框"，Tab 到这里也会露出来。
+    /// </summary>
+    private void SetHighlightButtonIdle(bool idle)
+    {
+        if (idle)
         {
-            var paper = NoteColorPalette.Paper(color);
-            var highlight = new LumiText.Core.Documents.Color32(0xFF, paper.R, paper.G, paper.B);
-            var swatch = new Button
-            {
-                Width = 22,
-                Height = 22,
-                Padding = new Thickness(0),
-                CornerRadius = new CornerRadius(11),
-                Background = new SolidColorBrush(paper),
-                BorderThickness = new Thickness(1),
-                BorderBrush = border,
-            };
-            ToolTipService.SetToolTip(swatch, NoteColorPalette.DisplayName(color));
-            swatch.Click += (_, _) =>
-            {
-                flyout.Hide();
-                _editor.SetInlineBackground(highlight);
-            };
-            panel.Children.Add(swatch);
+            var transparent = new SolidColorBrush(Windows.UI.Color.FromArgb(0, 0, 0, 0));
+            HighlightButton.Resources["ButtonBackgroundPointerOver"] = transparent;
+            HighlightButton.Resources["ButtonBackgroundPressed"] = transparent;
+            HighlightButton.Resources["ButtonBorderBrushPointerOver"] = transparent;
+            HighlightButton.Resources["ButtonBorderBrushPressed"] = transparent;
+            HighlightButton.Resources["FocusVisualPrimaryBrush"] = transparent;
+            HighlightButton.Resources["FocusVisualSecondaryBrush"] = transparent;
+            HighlightButton.IsHitTestVisible = false;
+            HighlightButton.UseSystemFocusVisuals = false;
+            VisualStateManager.GoToState(HighlightButton, "Normal", false);
+            ToolTipService.SetToolTip(HighlightButton, null);
         }
-
-        var clear = new Button
+        else
         {
-            Width = 22,
-            Height = 22,
-            Padding = new Thickness(0),
-            CornerRadius = new CornerRadius(11),
-            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0, 0, 0, 0)),
-            BorderThickness = new Thickness(1),
-            BorderBrush = border,
-            Content = new TextBlock { Text = "无", FontSize = 10 },
-        };
-        ToolTipService.SetToolTip(clear, "清除文字底色");
-        clear.Click += (_, _) =>
-        {
-            flyout.Hide();
-            _editor.SetInlineBackground(null);
-        };
-        panel.Children.Add(clear);
+            HighlightButton.Resources.Remove("ButtonBackgroundPointerOver");
+            HighlightButton.Resources.Remove("ButtonBackgroundPressed");
+            HighlightButton.Resources.Remove("ButtonBorderBrushPointerOver");
+            HighlightButton.Resources.Remove("ButtonBorderBrushPressed");
+            HighlightButton.Resources.Remove("FocusVisualPrimaryBrush");
+            HighlightButton.Resources.Remove("FocusVisualSecondaryBrush");
+            HighlightButton.IsHitTestVisible = true;
+            HighlightButton.UseSystemFocusVisuals = true;
+            ToolTipService.SetToolTip(HighlightButton, HighlightButtonTip);
+        }
+    }
 
-        flyout.ShowAt(button);
+    /// <summary>点亮别处＝取消取色（色带收起，不套用）。</summary>
+    private void OnRootPointerPressed(object sender, PointerRoutedEventArgs e)
+    {
+        if (!HighlightPickerLayer.IsOpen
+            || IsWithin(e.OriginalSource as DependencyObject, HighlightPickerLayer))
+        {
+            return;
+        }
+        HighlightPickerLayer.Close(apply: false);
+    }
+
+    /// <summary>Esc 也取消（预览键隧道到根，先于编辑器的 Esc 处理）。</summary>
+    private void OnRootPreviewKeyDown(object sender, KeyRoutedEventArgs e)
+    {
+        if (HighlightPickerLayer.IsOpen && e.Key == Windows.System.VirtualKey.Escape)
+        {
+            HighlightPickerLayer.Close(apply: false);
+            e.Handled = true;
+        }
+    }
+
+    private static bool IsWithin(DependencyObject? node, DependencyObject ancestor)
+    {
+        while (node is not null)
+        {
+            if (ReferenceEquals(node, ancestor))
+            {
+                return true;
+            }
+            node = VisualTreeHelper.GetParent(node);
+        }
+        return false;
     }
 
     // ---- 关闭与退出 ----

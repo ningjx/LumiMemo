@@ -3,9 +3,10 @@
     x:Class="LumiMemo.WinUI.MainWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:LumiMemo.WinUI.Controls"
     Title="LumiMemo">
 
-    <Grid x:Name="Root" Background="Transparent">
+    <Grid x:Name="Root" Background="Transparent" PreviewKeyDown="OnRootPreviewKeyDown">
     <Grid.Resources>
         <SolidColorBrush x:Key="ButtonBackground" Color="Transparent" />
         <SolidColorBrush x:Key="ButtonBackgroundPointerOver" Color="#14FFFFFF" />
@@ -91,7 +92,7 @@
                                 IsEnabled="{x:Bind ViewModel.CanRegenerateTitle, Mode=OneWay}"
                                 Click="OnRefreshTitleClick"
                                 ToolTipService.ToolTip="重新生成标题">
-                            <FontIcon Glyph="&#xE72C;" FontSize="12" />
+                            <FontIcon FontFamily="{StaticResource LumiIconFont}" FontSize="{StaticResource LumiIconSizeChrome}" Glyph="&#xE0AA;" />
                         </Button>
                     </StackPanel>
                 </Grid>
@@ -104,7 +105,7 @@
                             VerticalAlignment="Center"
                             Click="OnNewNoteClick"
                             ToolTipService.ToolTip="新建便笺">
-                        <FontIcon Glyph="&#xE710;" FontSize="13" />
+                        <FontIcon FontFamily="{StaticResource LumiIconFont}" FontSize="{StaticResource LumiIconSizeChrome}" Glyph="&#xF56D;" />
                     </Button>
                     <ToggleButton x:Name="PinButton"
                                   Style="{StaticResource GlassToggleButtonStyle}"
@@ -112,7 +113,7 @@
                                   VerticalAlignment="Center"
                                   IsChecked="{x:Bind ViewModel.IsTopMost, Mode=TwoWay}"
                                   ToolTipService.ToolTip="置顶">
-                        <FontIcon Glyph="&#xE718;" FontSize="13" />
+                        <FontIcon FontFamily="{StaticResource LumiIconFont}" FontSize="{StaticResource LumiIconSizeChrome}" Glyph="&#xF600;" />
                     </ToggleButton>
                     <Button x:Name="DeleteNoteButton"
                             Width="32" Height="30"
@@ -120,7 +121,7 @@
                             VerticalAlignment="Center"
                             Click="OnDeleteNoteClick"
                             ToolTipService.ToolTip="删除便签">
-                        <FontIcon Glyph="&#xE74D;" FontSize="13" />
+                        <FontIcon FontFamily="{StaticResource LumiIconFont}" FontSize="{StaticResource LumiIconSizeChrome}" Glyph="&#xE47B;" />
                     </Button>
                     <Button x:Name="CloseButton"
                             Width="32" Height="30"
@@ -128,7 +129,7 @@
                             VerticalAlignment="Center"
                             Click="OnCloseClick"
                             ToolTipService.ToolTip="关闭">
-                        <FontIcon Glyph="&#xE8BB;" FontSize="13" />
+                        <FontIcon FontFamily="{StaticResource LumiIconFont}" FontSize="{StaticResource LumiIconSizeChrome}" Glyph="&#xF368;" />
                     </Button>
                 </StackPanel>
             </Grid>
@@ -136,7 +137,8 @@
 
         <Grid x:Name="EditorHost" Grid.Row="1" />
 
-        <Border Grid.Row="2"
+        <Border x:Name="ToolbarBar"
+                Grid.Row="2"
                 Background="#18FFFFFF"
                 Padding="8,0,10,0">
             <Grid>
@@ -144,39 +146,77 @@
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
+
+                <!-- 色带：**排在按钮栏前面＝z 序在按钮底下**，左缘由取色器对齐到方块左缘、向右变长。
+                     它常驻布局（收起＝宽 0 + 透明；别用 Visibility，Collapsed 的元素量不到有效坐标）。
+                     它不占按钮栏的位置——"把右侧按钮推开"由 StackPanel 里的占位块负责。 -->
+                <Border x:Name="HighlightStrip"
+                        Width="0"
+                        Opacity="0"
+                        Height="6"
+                        CornerRadius="3"
+                        HorizontalAlignment="Left"
+                        VerticalAlignment="Center"
+                        BorderBrush="#8075697C"
+                        BorderThickness="1">
+                    <Border.Background>
+                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,0" />
+                    </Border.Background>
+                    <Border.RenderTransform>
+                        <TranslateTransform x:Name="HighlightStripShift" />
+                    </Border.RenderTransform>
+                </Border>
                 <StackPanel Orientation="Horizontal" Spacing="3" VerticalAlignment="Center">
+                    <!-- 图标一律取自 Fluent UI System Icons（字体与尺寸见 App.xaml 的 LumiIconFont /
+                         LumiIconSizeToolbar；名字→码位见 LumiIcons.cs）。工具栏统一 20px 字形。 -->
                     <Button Style="{StaticResource GlassButtonStyle}" Width="30" Height="30" Click="OnBoldClick" ToolTipService.ToolTip="粗体">
-                        <TextBlock Text="B" FontSize="16" FontWeight="Bold" />
+                        <FontIcon FontFamily="{StaticResource LumiIconFont}" FontSize="{StaticResource LumiIconSizeToolbar}" Glyph="&#xF7A4;" />
                     </Button>
                     <Button Style="{StaticResource GlassButtonStyle}" Width="30" Height="30" Click="OnItalicClick" ToolTipService.ToolTip="斜体">
-                        <TextBlock Text="I" FontSize="16" FontStyle="Italic" />
+                        <FontIcon FontFamily="{StaticResource LumiIconFont}" FontSize="{StaticResource LumiIconSizeToolbar}" Glyph="&#xF7F4;" />
                     </Button>
                     <Button Style="{StaticResource GlassButtonStyle}" Width="30" Height="30" Click="OnUnderlineClick" ToolTipService.ToolTip="下划线">
-                        <TextBlock Text="U" FontSize="15" TextDecorations="Underline" />
+                        <FontIcon FontFamily="{StaticResource LumiIconFont}" FontSize="{StaticResource LumiIconSizeToolbar}" Glyph="&#xF80A;" />
                     </Button>
                     <Button Style="{StaticResource GlassButtonStyle}" Width="30" Height="30" Click="OnStrikeClick" ToolTipService.ToolTip="删除线">
-                        <TextBlock Text="S" FontSize="15" TextDecorations="Strikethrough" />
+                        <FontIcon FontFamily="{StaticResource LumiIconFont}" FontSize="{StaticResource LumiIconSizeToolbar}" Glyph="&#xED5F;" />
                     </Button>
                     <Rectangle Width="1" Height="18" Margin="3,0" Fill="#5075697C" />
                     <ToggleButton x:Name="BulletButton" Style="{StaticResource GlassToggleButtonStyle}" Width="30" Height="30" Click="OnBulletClick" ToolTipService.ToolTip="分点列表（再按一次取消；Esc 也行）">
-                        <TextBlock Text="•" FontSize="18" />
+                        <FontIcon FontFamily="{StaticResource LumiIconFont}" FontSize="{StaticResource LumiIconSizeToolbar}" Glyph="&#xF0290;" />
                     </ToggleButton>
                     <ToggleButton x:Name="TodoButton" Style="{StaticResource GlassToggleButtonStyle}" Width="30" Height="30" Click="OnTodoClick" ToolTipService.ToolTip="待办勾选（再按一次取消；Esc 也行）">
-                        <TextBlock Text="☐" FontSize="14" />
+                        <FontIcon FontFamily="{StaticResource LumiIconFont}" FontSize="{StaticResource LumiIconSizeToolbar}" Glyph="&#xF28D;" />
                     </ToggleButton>
                     <Rectangle Width="1" Height="18" Margin="3,0" Fill="#5075697C" />
-                    <Button Style="{StaticResource GlassButtonStyle}" Width="30" Height="30" Click="OnBackgroundClick" ToolTipService.ToolTip="文字底色（作用于选中文字）">
-                        <Border Width="17" Height="13" CornerRadius="3" Background="#59FDF3C4" BorderBrush="#8075697C" BorderThickness="1" />
+                    <!-- 文字底色：圆角方块就是按钮本体（底色＝当前色）。
+                         左键＝把当前色刷到选中文字；右键＝展开色带取色（HighlightPicker）。 -->
+                    <Button x:Name="HighlightButton"
+                            Style="{StaticResource GlassButtonStyle}"
+                            Width="30" Height="30"
+                            Click="OnHighlightClick"
+                            RightTapped="OnHighlightRightTapped"
+                            ToolTipService.ToolTip="文字底色（左键＝用当前色刷选中文字；右键＝展开色带取色）">
+                        <Border x:Name="HighlightButtonFill"
+                                Width="18" Height="18"
+                                CornerRadius="5"
+                                BorderBrush="#8075697C"
+                                BorderThickness="1" />
                     </Button>
+                    <!-- 展开占位：与色带同步变宽，把右侧按钮推开（色带本体在按钮底下的图层里，只负责画）。
+                         负外边距抵消两端的 Spacing：收起时不占位，展开时的位移正好等于宽度。 -->
+                    <Border x:Name="HighlightStripSpacer"
+                            Width="0"
+                            Margin="-3,0,-3,0" />
                     <Rectangle Width="1" Height="18" Margin="3,0" Fill="#5075697C" />
                     <ToggleButton x:Name="Heading1Button" Style="{StaticResource GlassToggleButtonStyle}" Width="30" Height="30" Click="OnHeading1Click" ToolTipService.ToolTip="标题 1">
-                        <TextBlock Text="H1" FontSize="12" FontWeight="SemiBold" />
+                        <FontIcon FontFamily="{StaticResource LumiIconFont}" FontSize="{StaticResource LumiIconSizeToolbar}" Glyph="&#xF7EF;" />
                     </ToggleButton>
                     <ToggleButton x:Name="Heading2Button" Style="{StaticResource GlassToggleButtonStyle}" Width="30" Height="30" Click="OnHeading2Click" ToolTipService.ToolTip="标题 2">
-                        <TextBlock Text="H2" FontSize="12" FontWeight="SemiBold" />
+                        <FontIcon FontFamily="{StaticResource LumiIconFont}" FontSize="{StaticResource LumiIconSizeToolbar}" Glyph="&#xF7F0;" />
                     </ToggleButton>
                     <ToggleButton x:Name="Heading3Button" Style="{StaticResource GlassToggleButtonStyle}" Width="30" Height="30" Click="OnHeading3Click" ToolTipService.ToolTip="标题 3">
-                        <TextBlock Text="H3" FontSize="12" FontWeight="SemiBold" />
+                        <FontIcon FontFamily="{StaticResource LumiIconFont}" FontSize="{StaticResource LumiIconSizeToolbar}" Glyph="&#xF7F1;" />
                     </ToggleButton>
                 </StackPanel>
                 <TextBlock x:Name="StatusText"
@@ -187,6 +227,10 @@
                            Text="{x:Bind ViewModel.StatusText, Mode=OneWay}" />
             </Grid>
         </Border>
+
+        <!-- 文字底色取色器（展开式色带）：铺满窗口的覆盖层，空白处不吃指针（见控件里的纪律说明）；
+             放在最后＝z 序最高，色带压在编辑区之上。 -->
+        <controls:HighlightPicker x:Name="HighlightPickerLayer" Grid.RowSpan="3" />
 
     </Grid>
 </Window>

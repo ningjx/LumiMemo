@@ -12,6 +12,14 @@
                 <ResourceDictionary Source="ms-appx:///ScrollBarStyle.xaml" />
             </ResourceDictionary.MergedDictionaries>
 
+            <!-- 图标字体：Fluent UI System Icons（微软，MIT）的 Regular 变体，随应用走。
+                 码位（名字→码位）见 LumiIcons.cs；XAML 里直接写 Glyph="&#xE47B;" 这样的字面量。 -->
+            <FontFamily x:Key="LumiIconFont">ms-appx:///Assets/FluentSystemIcons-Regular.ttf#FluentSystemIcons-Regular</FontFamily>
+            <!-- 字体里每个图标按尺寸各存一份字形（12/16/20/24/28/32/48）：
+                 取 20 的字形就必须配 20 的字号，否则光学重量不对 -->
+            <x:Double x:Key="LumiIconSizeToolbar">20</x:Double>
+            <x:Double x:Key="LumiIconSizeChrome">16</x:Double>
+
             <!-- 玻璃窗口上的图标按钮：透明底无边框，悬停底色由默认模板给。
                  只做具名样式（不碰 ButtonBackground 之类的主题键），设置页与对话框的常规按钮不受影响。 -->
             <Style x:Key="IconButtonStyle" TargetType="Button">

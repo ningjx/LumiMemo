@@ -48,6 +48,9 @@
 
   <ItemGroup>
     <Content Include="Assets\AppIcon.ico" />
+    <!-- 图标字体（Fluent UI System Icons，MIT）：运行时按 ms-appx:///Assets/… 引用，必须进输出目录。
+         单文件自解压发布（IncludeAllContentForSelfExtract）靠的也是这条 Content。 -->
+    <Content Include="Assets\FluentSystemIcons-Regular.ttf" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <PropertyGroup>

@@ -62,6 +62,7 @@ cd src/LumiText/LumiText.Core.Tests && dotnet run
 - `custom-renderer-framework.md`——为什么要自研渲染器
 - `phase1-readonly-renderer-design.md` / `phase2-editing-layer-design.md`——排版与编辑层
 - `phase3-beyond-native-design.md` / `phase4-old-kernel-retirement-design.md`——超越原生与旧内核退役
+- `ui-theme-round-design.md`——按钮/图标/动效统一与深色模式（本轮设计稿草案）
 
 ## 开源协议
 
