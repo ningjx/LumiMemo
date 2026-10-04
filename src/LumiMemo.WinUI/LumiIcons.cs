@@ -75,4 +75,10 @@ public static class LumiIcons
 
     /// <summary>设置（ic_fluent_settings_16_regular）。</summary>
     public const string Settings = "\uF6A8";
+
+    /// <summary>\u5BF9\u52FE\uFF08ic_fluent_checkmark_16_regular\uFF09\u2014\u2014\u53F3\u4E0B\u89D2"\u5DF2\u4FDD\u5B58"\u3002</summary>
+    public const string Checkmark = "\uE305";
+
+    /// <summary>\u8B66\u793A\u4E09\u89D2\uFF08ic_fluent_warning_16_regular\uFF09\u2014\u2014\u4FDD\u5B58\u5931\u8D25 / \u4E34\u65F6\u63D0\u793A\u3002</summary>
+    public const string Warning = "\uF868";
 }

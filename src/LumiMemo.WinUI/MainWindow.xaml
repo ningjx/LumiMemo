@@ -219,12 +219,32 @@
                         <FontIcon FontFamily="{StaticResource LumiIconFont}" FontSize="{StaticResource LumiIconSizeToolbar}" Glyph="&#xF7F1;" />
                     </ToggleButton>
                 </StackPanel>
-                <TextBlock x:Name="StatusText"
-                           Grid.Column="1"
-                           VerticalAlignment="Center"
-                           FontSize="12"
-                           Foreground="#FF75697C"
-                           Text="{x:Bind ViewModel.StatusText, Mode=OneWay}" />
+                <StackPanel Grid.Column="1"
+                            Orientation="Horizontal"
+                            Spacing="4"
+                            VerticalAlignment="Center">
+                    <!-- 右下角保存状态：转圈（保存中）/ 对勾（已保存）/ 警示（失败或临时提示）。
+                         有临时提示时以提示文案为准（提示多半是失败信息，不能只藏在 Tooltip 里）。
+                         图标与显隐由 code-behind 的 UpdateStatusVisuals 统一管，完整文案进 Tooltip。 -->
+                    <ProgressRing x:Name="StatusProgress"
+                                  Width="14" Height="14"
+                                  IsActive="False"
+                                  Visibility="Collapsed" />
+                    <FontIcon x:Name="StatusIcon"
+                              FontFamily="{StaticResource LumiIconFont}"
+                              FontSize="{StaticResource LumiIconSizeChrome}"
+                              Glyph="&#xE305;"
+                              Foreground="#FF75697C" />
+                    <TextBlock x:Name="StatusCountText"
+                               VerticalAlignment="Center"
+                               FontSize="12"
+                               Foreground="#FF75697C" />
+                    <TextBlock x:Name="StatusHintText"
+                               VerticalAlignment="Center"
+                               FontSize="12"
+                               Foreground="#FF75697C"
+                               Visibility="Collapsed" />
+                </StackPanel>
             </Grid>
         </Border>
 

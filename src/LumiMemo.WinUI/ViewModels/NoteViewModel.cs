@@ -100,6 +100,15 @@ public sealed class NoteViewModel : ObservableObject, IDisposable
         _ => $"已保存 · {CharacterCount} 字",
     };
 
+    /// <summary>当前保存状态：右下角状态条据此换图标（转圈 / 对勾 / 警示）。</summary>
+    public SaveStatus Status => _status;
+
+    /// <summary>
+    /// 是否正在显示临时提示（读取失败、插图失败等）。
+    /// 提示是**文案**不是状态——视图要把它露出来，不能只塞进 Tooltip。
+    /// </summary>
+    public bool HasHint => _hint is not null;
+
     /// <summary>标题正在生成中（转圈指示）。</summary>
     public bool IsTitleGenerating
     {

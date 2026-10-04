@@ -87,6 +87,9 @@ public sealed partial class MainWindow : Window
             SetHighlightButtonIdle(false);
         };
         UpdateHighlightButtonFill();
+        // 右下角保存状态：VM 报一次就换一次图标（StatusText 连带字数、标题一起报）
+        _viewModel.PropertyChanged += OnViewModelPropertyChanged;
+        UpdateStatusVisuals();
         // 点到别处＝取消取色。编辑器会把 PointerPressed 标成 Handled，所以得用 handledEventsToo 挂上
         Root.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler(OnRootPointerPressed), true);
 
@@ -351,6 +354,46 @@ public sealed partial class MainWindow : Window
     private static LumiText.Core.Documents.Color32 ToColor32(Windows.UI.Color color) =>
         new(0xFF, color.R, color.G, color.B);
 
+    /// <summary>状态条的常规墨色（与正文副色同一档）。</summary>
+    private static readonly Windows.UI.Color StatusInk = Windows.UI.Color.FromArgb(255, 0x75, 0x69, 0x7C);
+
+    /// <summary>保存失败 / 临时提示时的警示色（与便签配色的红同一档）。</summary>
+    private static readonly Windows.UI.Color StatusAlertInk = Windows.UI.Color.FromArgb(255, 0xB4, 0x2D, 0x3C);
+
+    private void OnViewModelPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName is nameof(NoteViewModel.StatusText))
+        {
+            UpdateStatusVisuals();
+        }
+    }
+
+    /// <summary>
+    /// 右下角保存状态（2026-10-04 改为图标）：保存中转圈、已保存对勾、失败警示；
+    /// 有临时提示时改成警示 + **把提示文案露出来**（提示多半是失败信息，只藏在 Tooltip 里等于没提示）。
+    /// 平时只显示图标 + 字数，完整文案（"已保存 · 42 字"）统一进 Tooltip。
+    /// </summary>
+    private void UpdateStatusVisuals()
+    {
+        bool hint = _viewModel.HasHint;
+        bool saving = !hint && _viewModel.Status == SaveStatus.Saving;
+        bool alert = hint || _viewModel.Status == SaveStatus.Failed;
+
+        StatusProgress.IsActive = saving;
+        StatusProgress.Visibility = saving ? Visibility.Visible : Visibility.Collapsed;
+        StatusIcon.Visibility = saving ? Visibility.Collapsed : Visibility.Visible;
+        StatusIcon.Glyph = alert ? LumiIcons.Warning : LumiIcons.Checkmark;
+        StatusIcon.Foreground = new SolidColorBrush(alert ? StatusAlertInk : StatusInk);
+
+        StatusHintText.Visibility = hint ? Visibility.Visible : Visibility.Collapsed;
+        StatusHintText.Text = hint ? _viewModel.StatusText : string.Empty;
+        StatusCountText.Visibility = hint ? Visibility.Collapsed : Visibility.Visible;
+        StatusCountText.Text = $"{_viewModel.CharacterCount} 字";
+
+        ToolTipService.SetToolTip(StatusIcon, _viewModel.StatusText);
+        ToolTipService.SetToolTip(StatusProgress, _viewModel.StatusText);
+    }
+
     private void UpdateHighlightButtonFill() =>
         HighlightButtonFill.Background = new SolidColorBrush(_highlightColor);
 
@@ -524,6 +567,7 @@ public sealed partial class MainWindow : Window
     {
         // 先做同步清理：窗口管理器要立刻把这个实例摘掉（否则同一张便签重开拿不到新窗口）。
         _viewModel.TopMostChanged -= OnTopMostChanged;
+        _viewModel.PropertyChanged -= OnViewModelPropertyChanged;
         Closed -= OnWindowClosed;
         _onClosed(_viewModel.Id);
         _appWindow.Changed -= OnAppWindowChanged;
