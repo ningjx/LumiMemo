@@ -38,9 +38,11 @@ internal sealed partial class HighlightPicker : UserControl
     /// <summary>展开后的色带长度（dip）：从方块中心起向右变长。</summary>
     public const double StripWidthDips = 76;
 
-    /// <summary>按钮栏里那个占位块要变宽多少：色带长度 − 25。
-    /// 那个 25 = "按钮格 + Spacing"的固定量 33 − 留给后面分隔线的净空 8。</summary>
-    private const double PushWidthDips = StripWidthDips - 25;
+    /// <summary>
+    /// 展开时右侧要让出多宽（dip）——**由宿主实测量算后传进来**（它知道两条分割线与按钮的位置），
+    /// 这里只负责拿它驱动占位块。不在这里推算：分隔线的 Margin、按钮栏 Spacing 一改，推算就对不上。
+    /// </summary>
+    private double _pushWidth;
 
     /// <summary>色相带右端：红 0° → 紫 300°。</summary>
     private const float HueEnd = 300f;
@@ -125,9 +127,13 @@ internal sealed partial class HighlightPicker : UserControl
     /// <summary>
     /// 展开：色带从 <paramref name="squareRect"/>（宿主在**隐藏方块之前**量好的窗口矩形）
     /// 处向右长到 <see cref="StripWidthDips"/>；滑块从方块的大小与位置滑到
-    /// <paramref name="current"/> 在带上的位置，并放大到展开尺寸。
+    /// <paramref name="current"/> 在带上的位置。
     /// </summary>
-    public void Open(Rect squareRect, Color current)
+    /// <param name="pushWidth">
+    /// 右侧内容要让出多宽——**由宿主量算**：它要保证色带右端到右边分割线的距离，
+    /// 等于按钮左缘到左边分割线的距离（见 MainWindow.OnHighlightRightTapped）。
+    /// </param>
+    public void Open(Rect squareRect, Color current, double pushWidth)
     {
         _running?.Stop(); // 放掉上一轮的保持值
         _running = null;
@@ -141,6 +147,7 @@ internal sealed partial class HighlightPicker : UserControl
         _pending = current;
         _open = true;
         _dragging = false;
+        _pushWidth = pushWidth;
 
         BuildHueGradient(strip);
 
@@ -175,7 +182,7 @@ internal sealed partial class HighlightPicker : UserControl
         strip.Opacity = 1;
         if (_spacer is { } pushFinal)
         {
-            pushFinal.Width = PushWidthDips;
+            pushFinal.Width = _pushWidth;
         }
         SetKnobVisual(KnobCenterXFor(current));
         Knob.Opacity = 1;
@@ -187,7 +194,7 @@ internal sealed partial class HighlightPicker : UserControl
         Add(story, strip, "Opacity", 0d, 1d, ExpandMs);
         if (_spacer is { } push)
         {
-            Add(story, push, "Width", 0d, PushWidthDips, ExpandMs); // 与色带同步：右侧按钮让位
+            Add(story, push, "Width", 0d, _pushWidth, ExpandMs); // 与色带同步：右侧按钮让位
         }
         Add(story, Knob, "Opacity", 0d, 1d, ExpandMs);
         Add(story, KnobShift, "X", CollapsedKnobLeft, KnobCenterXFor(current) - (CollapsedKnobSize / 2), ExpandMs);
@@ -288,7 +295,7 @@ internal sealed partial class HighlightPicker : UserControl
         }
         if (_spacer is { } push)
         {
-            push.Width = PushWidthDips;
+            push.Width = _pushWidth;
         }
         SetKnobVisual(KnobCenterXFor(_pending));
         Knob.Opacity = 1;

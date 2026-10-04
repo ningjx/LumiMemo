@@ -174,7 +174,7 @@
                     <ToggleButton x:Name="TodoButton" Style="{StaticResource LumiToolbarToggleStyle}" Click="OnTodoClick" ToolTipService.ToolTip="待办勾选（再按一次取消；Esc 也行）">
                         <FontIcon Style="{StaticResource LumiToolbarIconStyle}" Glyph="&#xF28D;" />
                     </ToggleButton>
-                    <Rectangle Width="1" Height="18" Margin="3,0" Fill="#5075697C" />
+                    <Rectangle x:Name="HighlightLeftDivider" Width="1" Height="18" Margin="3,0" Fill="#5075697C" />
                     <!-- 文字底色：圆角方块就是按钮本体（底色＝当前色）。
                          方块 16×16：与图标的墨迹（17dip）同一个量级。原来 18 是刻意大一圈，
                          2026-10-04 实机看着比图标重，收成一样大。
@@ -194,11 +194,14 @@
                                 BorderThickness="1" />
                     </Button>
                     <!-- 展开占位：与色带同步变宽，把右侧按钮推开（色带本体在按钮底下的图层里，只负责画）。
-                         负外边距抵消两端的 Spacing：收起时不占位，展开时的位移正好等于宽度。 -->
+                         外边距取 -1.5（不是 -3）：**让按钮在两条分割线之间左右等距**——
+                         它左边是"分割线外边距 3 + 按钮栏 Spacing 3"＝6，右边要凑成同样的 6
+                         （3 - 1.5 - 1.5 + 3 + 3），所以两边各欠 1.5。取 -3 的话右边只剩 3，按钮就偏心。
+                         展开时占位变宽多少＝右侧整体右移多少，具体值由宿主按实测算（见 OnHighlightRightTapped）。 -->
                     <Border x:Name="HighlightStripSpacer"
                             Width="0"
-                            Margin="-3,0,-3,0" />
-                    <Rectangle Width="1" Height="18" Margin="3,0" Fill="#5075697C" />
+                            Margin="-1.5,0,-1.5,0" />
+                    <Rectangle x:Name="HighlightRightDivider" Width="1" Height="18" Margin="0,0" Fill="#5075697C" />
                     <!-- 常用标题（2026-10-04 由三个按钮合并而来，且**全局保存**）：
                          面上＝H + **下角标**数字（H₂ 的读法，常用级别）；左键＝把它套用到光标所在块——
                          与合并前那三个按钮的逻辑一样（命令自带 toggle，再来一下即回正文）；

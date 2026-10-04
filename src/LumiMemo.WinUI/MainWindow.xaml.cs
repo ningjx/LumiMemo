@@ -770,7 +770,7 @@ public sealed partial class MainWindow : Window
         _editor.SetInlineBackground(_editor.SelectionHasBackground(color) ? null : color);
     }
 
-    /// <summary>右键：色带在按钮栏里向右展开（右侧按钮被推开），方块缩小、滑到当前色的位置上当滑块。</summary>
+    /// <summary>右键：色带在按钮栏里向右展开（右侧按钮被推开），方块滑到当前色的位置上当滑块。</summary>
     private void OnHighlightRightTapped(object sender, RightTappedRoutedEventArgs e)
     {
         if (HighlightPickerLayer.IsOpen)
@@ -778,14 +778,34 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        // 先量方块的矩形，再把它藏起来——Collapsed 的元素量不到有效坐标（这是上一版动画失效的根因）
-        var squareRect = HighlightButtonFill.TransformToVisual(Root)
-            .TransformBounds(new Rect(0, 0, HighlightButtonFill.ActualWidth, HighlightButtonFill.ActualHeight));
+        // 量三样东西（都在**隐藏方块之前**量）：方块的矩形、**收起时按钮右缘到右分割线的净空**、
+        // 右分割线现在的位置。Collapsed 的元素量不到有效坐标（这是上一版动画失效的根因）。
+        Rect squareRect = RectInRoot(HighlightButtonFill);
+        double gap = RectInRoot(HighlightRightDivider).X - RectInRoot(HighlightButton).Right;
+        double stripRight = squareRect.X + HighlightPicker.StripWidthDips; // 色带左缘对齐方块左缘
+
+        // 让位宽：**先按算式给初值，再强制排一次版、量真实结果修正一次**。
+        // 为什么不直接信算式：占位块变宽 1dip，右边到底是不是正好右移 1dip，取决于
+        // StackPanel 的 Spacing 与那对负外边距怎么组合——这一处推错过两回，所以改成"量"。
+        // 修正之后：色带右端到右分割线的距离，**正好等于**左侧那个净空（gap）。
+        double pushWidth = Math.Max(0, stripRight + gap- RectInRoot(HighlightRightDivider).X);
+
+        HighlightStripSpacer.Width = pushWidth;
+        Root.UpdateLayout(); // 强制排一次：下面量到的就是"展开后"的真实位置
+        pushWidth = Math.Max(0,
+            pushWidth + gap + 8 - (RectInRoot(HighlightRightDivider).X - stripRight));
+        HighlightStripSpacer.Width = 0; // 还原成起点：展开动画从 0 开始长
+
         HighlightButtonFill.Visibility = Visibility.Collapsed; // 方块交给滑块接管：视觉上就是它滑过去了
         SetHighlightButtonIdle(true);
-        HighlightPickerLayer.Open(squareRect, _toolbar.HighlightColor);
+        HighlightPickerLayer.Open(squareRect, _toolbar.HighlightColor, pushWidth);
         e.Handled = true;
     }
+
+    /// <summary>元素在窗口根坐标系里的矩形。量坐标一律走它（别拿 Canvas.Left/Top 那套去推）。</summary>
+    private Rect RectInRoot(FrameworkElement element) =>
+        element.TransformToVisual(Root)
+            .TransformBounds(new Rect(0, 0, element.ActualWidth, element.ActualHeight));
 
     /// <summary>色带松手：底色记进**全局设置**（落盘；别的便签窗口跟着换色），并刷到选中文字。</summary>
     private void ApplyHighlight(Windows.UI.Color color)
