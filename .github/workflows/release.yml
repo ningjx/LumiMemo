@@ -49,60 +49,34 @@ jobs:
         shell: pwsh
         run: dotnet restore src/LumiMemo.WinUI/LumiMemo.WinUI.csproj -r win-x64
 
-      - name: Publish self-contained app
+      - name: Publish single-file executable
         shell: pwsh
         run: |
-          # 发布到名为 LumiMemo 的目录：zip 里就是 LumiMemo/… 这一层，解压即得干净文件夹
-          $publishDirectory = Join-Path $env:RUNNER_TEMP "LumiMemo"
+          $publishDirectory = Join-Path $env:RUNNER_TEMP "LumiMemo-publish"
           $releaseDirectory = Join-Path $env:GITHUB_WORKSPACE "release"
 
-          # 自包含文件夹发布。属性全部写在命令行上：Properties/PublishProfiles/*.pubxml
-          # 除 single-file 那个外都被 .gitignore 忽略，CI 检出里没有它们。
-          # EnableMsixTooling 必须开：否则发布目录会缺应用自己的 LumiMemo.WinUI.pri
+          # 未打包 + 自包含 + 单文件。win-x64-singlefile.pubxml 里是官方文档要求的那组属性
+          # （WindowsPackageType=None / WindowsAppSDKSelfContained / SelfContained /
+          #  EnableMsixTooling / IncludeAllContentForSelfExtract / PublishSingleFile），
+          # 且它是 Properties/PublishProfiles 下唯一被跟踪进仓库的配置。
           dotnet publish src/LumiMemo.WinUI/LumiMemo.WinUI.csproj `
             -c Release `
             --no-restore `
-            -p:SelfContained=true `
-            -p:PublishSingleFile=false `
-            -p:EnableMsixTooling=true `
+            -p:PublishProfile=win-x64-singlefile `
             -p:Version="${{ steps.version.outputs.value }}" `
             -o $publishDirectory
 
-          # 调试符号不进发布包
-          Get-ChildItem -LiteralPath $publishDirectory -Recurse -Filter *.pdb |
-            Remove-Item -Force
-
-          # dotnet publish（CLI）会把应用自己的编译 XAML（*.xbf）与 Assets 落下——
-          # 应用会因缺 XAML 在启动时静默失败（无日志、无事件记录；2026-10-04 实测）。
-          # 从构建输出补齐，使发布目录与「VS 里能跑」的输出逐文件一致。
-          $buildDirectory = Get-ChildItem `
-            -LiteralPath (Join-Path $env:GITHUB_WORKSPACE "src/LumiMemo.WinUI/bin/Release") `
-            -Recurse -Directory |
-            Where-Object { $_.Name -eq "win-x64" } |
-            Select-Object -First 1 -ExpandProperty FullName
-          if (-not $buildDirectory) {
-            throw "Build output directory (bin/Release/**/win-x64) was not found."
-          }
-          Copy-Item -Path (Join-Path $buildDirectory "*.xbf") -Destination $publishDirectory -Force
-          Copy-Item -Path (Join-Path $buildDirectory "Assets") -Destination $publishDirectory -Recurse -Force
-          Copy-Item -Path (Join-Path $buildDirectory "LumiMemo.WinUI.pri") -Destination $publishDirectory -Force
-
-          # 主 exe **不要改名**：MRT 资源管理器按可执行文件名找 `<同名>.pri`，
-          # 改成别的名字会让 LumiMemo.WinUI.pri 配不上对，XAML 初始化直接抛
-          # stowed exception（0xc000027b，2026-10-04 实测踩过一次）
+          # 资产名必须与 exe 名一致，**不要改名**：MRT 资源管理器按可执行文件名找
+          # <同名>.pri，改名会让单文件包里的 LumiMemo.WinUI.pri 配不上对，
+          # 启动时抛 stowed exception / 静默退出（2026-10-04 实测踩过两次）
           $publishedExecutable = Join-Path $publishDirectory "LumiMemo.WinUI.exe"
           if (-not (Test-Path -LiteralPath $publishedExecutable)) {
             throw "Published executable was not found at '$publishedExecutable'."
           }
 
-          # 打 zip（含 LumiMemo 这一层目录）
           New-Item -ItemType Directory -Path $releaseDirectory -Force | Out-Null
-          $releaseArchive = Join-Path $releaseDirectory "LumiMemo-win-x64.zip"
-          [System.IO.Compression.ZipFile]::CreateFromDirectory(
-            $publishDirectory,
-            $releaseArchive,
-            [System.IO.Compression.CompressionLevel]::Optimal,
-            $true)
+          Copy-Item -LiteralPath $publishedExecutable `
+            -Destination (Join-Path $releaseDirectory "LumiMemo.WinUI.exe")
 
       - name: Extract release notes from CHANGELOG
         id: notes
@@ -139,4 +113,4 @@ jobs:
           # 发布说明取自 CHANGELOG 对应段落，再追加 GitHub 自动生成的新旧提交对比
           body_path: ${{ steps.notes.outputs.path }}
           generate_release_notes: true
-          files: release/LumiMemo-win-x64.zip
+          files: release/LumiMemo.WinUI.exe
