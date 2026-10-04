@@ -20,9 +20,13 @@ Windows 便签应用：常驻托盘、免安装、毛玻璃外观，内置一套
 
 ## 运行
 
-从 [Releases](../../releases) 下载 `LumiMemo-win-x64.exe`（单文件、免安装），双击即可。
+从 [Releases](../../releases) 下载 `LumiMemo-win-x64.zip`，解压后双击 `LumiMemo/LumiMemo.exe`。
+免安装，也无需另装 .NET 或 Windows App SDK 运行时（全部自包含）。
 
-> 单文件约 240MB（Windows App SDK 自包含，无需另装运行时）；首次启动会有一次自解压等待。
+> 压缩包约 110MB，解压后约 290MB——自包含的代价。首次启动会稍慢。
+>
+> 不使用单文件 exe：WinUI 3 不支持单文件发布（原生依赖必须与 exe 同目录），
+> 单文件版会在启动时静默失败。
 
 ## 开发
 
