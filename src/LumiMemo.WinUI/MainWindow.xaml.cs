@@ -132,12 +132,21 @@ public sealed partial class MainWindow : Window
     private void OnTitleProgressSizeChanged(object sender, SizeChangedEventArgs e) => UpdateTitleLayout();
 
     /// <summary>
-    /// 标题区布局：下层文字按自然宽度铺（不按字裁剪），上层遮罩（省略号/进度圈/刷新按钮）
-    /// 的位置 = min(文字自然宽, 限位)——随窗口宽度连续变化，拖动时不按字符跳变。
+    /// 标题区布局：文字按自然宽铺，遮罩（进度圈/刷新按钮）的位置 = min(文字自然宽, 限位)——
+    /// 随窗口宽度连续变化，拖动时不按字符跳变。
     /// </summary>
     /// <remarks>
-    /// 装不下时遮罩带着省略号整块顶到限位（刷新按钮右缘与图标组同距 3px），
-    /// 文字裁在遮罩左缘、由省略号自然盖住；装得下时遮罩紧贴文字右缘。
+    /// <para>
+    /// 装不下时遮罩整块顶到限位（刷新按钮右缘与图标组同距 3px），文字在它左边按<strong>字符</strong>截断，
+    /// 省略号由 <see cref="TextBlock.TextTrimming"/> 画在限位之内；装得下时遮罩紧贴文字右缘。
+    /// </para>
+    /// <para>
+    /// <strong>曾经这里用的是「文字渐隐」</strong>（给 <c>Foreground</c> 铺一段相对坐标的渐变刷），
+    /// 但那个做法在 WinUI 里不可靠：标题一旦中英数混排，字体回退会把文字拆成多个 glyph run，
+    /// 而渐变刷的相对坐标是<strong>按每个 run 的边界</strong>铺的——几段文字就有几道渐隐
+    /// （2026-10-05 实测：数字混排、字母混排都能触发，截图里标题被切成一段亮一段灭）。
+    /// 换 <see cref="TextBlock.TextTrimming"/> 之后不依赖 run 怎么切，也不会切出半个字。
+    /// </para>
     /// </remarks>
     private void UpdateTitleLayout()
     {
@@ -155,6 +164,8 @@ public sealed partial class MainWindow : Window
         }
 
         // 量一次文字的自然宽度（不限宽）：遮罩贴它，也用它判断装不装得下。
+        // 量之前必须先撤掉上限——否则量到的是被上一轮 maxWidth 裁过之后的宽。
+        TitleText.MaxWidth = double.PositiveInfinity;
         TitleText.Measure(new Windows.Foundation.Size(
             double.PositiveInfinity, double.PositiveInfinity));
         double natural = TitleText.DesiredSize.Width;
@@ -164,56 +175,19 @@ public sealed partial class MainWindow : Window
 
         if (truncated)
         {
-            // 遮罩整块顶到限位；文字在遮罩左缘前"渐隐"收尾（比省略号优雅）——
-            // 用文字前景色的渐变画刷实现（WinUI 3 没有 OpacityMask），
-            // 渐隐之后再叠一道裁剪兜底，保证遮罩附近没有半截字漏出来。
             overlayX = Math.Max(0, column - overlayWidth);
-            TitleText.Foreground = BuildFadeForeground(overlayX, natural);
-            TitleText.Clip = new RectangleGeometry
-            {
-                Rect = new Windows.Foundation.Rect(0, 0, overlayX, TitleBarGrid.ActualHeight),
-            };
+
+            // 上限设在遮罩左缘：文字因此永远不会钻到刷新按钮底下。
+            TitleText.MaxWidth = overlayX;
+            TitleText.TextTrimming = TextTrimming.CharacterEllipsis;
         }
         else
         {
             overlayX = natural;
-            TitleText.Foreground = TitleSolidForeground;
-            TitleText.Clip = null;
+            TitleText.TextTrimming = TextTrimming.None;
         }
 
         TitleOverlay.Margin = new Thickness(overlayX, 0, 0, 0);
-    }
-
-    private static readonly SolidColorBrush TitleSolidForeground =
-        new(Windows.UI.Color.FromArgb(255, 0x40, 0x37, 0x47));
-
-    /// <summary>标题渐隐前景：从 <paramref name="edgeX"/> 往左约 36px 内把文字淡出到全透明。</summary>
-    private static LinearGradientBrush BuildFadeForeground(double edgeX, double natural)
-    {
-        double fade = Math.Min(36, edgeX);
-        double end = natural > 0 ? edgeX / natural : 0;
-        double start = natural > 0 ? (edgeX - fade) / natural : 0;
-
-        Windows.UI.Color solid = Windows.UI.Color.FromArgb(255, 0x40, 0x37, 0x47);
-        Windows.UI.Color clear = Windows.UI.Color.FromArgb(0, 0x40, 0x37, 0x47);
-
-        var brush = new LinearGradientBrush
-        {
-            StartPoint = new Windows.Foundation.Point(0, 0),
-            EndPoint = new Windows.Foundation.Point(1, 0),
-        };
-
-        brush.GradientStops.Add(new GradientStop { Offset = 0, Color = solid });
-
-        if (start > 0)
-        {
-            brush.GradientStops.Add(new GradientStop { Offset = start, Color = solid });
-        }
-
-        brush.GradientStops.Add(new GradientStop { Offset = end, Color = clear });
-        brush.GradientStops.Add(new GradientStop { Offset = 1, Color = clear });
-
-        return brush;
     }
 
     /// <summary>x:Bind 的函数绑定不能直接产 Visibility，借这个转换（生成代码按实例调用）。</summary>
