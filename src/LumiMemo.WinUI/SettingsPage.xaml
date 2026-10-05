@@ -6,6 +6,50 @@
 
     <ScrollViewer x:Name="SettingsScroll" Padding="20,16,20,16">
         <StackPanel Spacing="14" MaxWidth="560" HorizontalAlignment="Left">
+
+            <!-- 存储位置：改完要重启才生效，所以这一节自带「立即重启」入口。 -->
+            <TextBlock Text="存储位置"
+                       FontSize="15"
+                       FontWeight="SemiBold"
+                       Foreground="#FF403747" />
+            <TextBlock Text="便笺以 .lumi 文件保存在这个文件夹里。"
+                       FontSize="12"
+                       Foreground="#FF75697C"
+                       TextWrapping="Wrap" />
+            <Grid ColumnSpacing="8">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBox x:Name="NotesFolderBox" IsReadOnly="True" />
+                <Button x:Name="ChangeNotesFolderButton"
+                        Grid.Column="1"
+                        Content="更改…"
+                        Click="OnChangeNotesFolderClick" />
+            </Grid>
+            <StackPanel x:Name="RestartPanel"
+                        Orientation="Horizontal"
+                        Spacing="10"
+                        HorizontalAlignment="Left"
+                        Visibility="Collapsed">
+                <TextBlock x:Name="RestartText"
+                           VerticalAlignment="Center"
+                           FontSize="12"
+                           Foreground="#FFB42D3C"
+                           TextWrapping="Wrap" />
+                <Button x:Name="RestartButton" Content="立即重启" Click="OnRestartClick" />
+            </StackPanel>
+            <TextBlock x:Name="NotesFolderStatusText"
+                       FontSize="12"
+                       Foreground="#FF2E7D46"
+                       TextWrapping="Wrap" />
+            <TextBlock x:Name="NotesFolderErrorText"
+                       FontSize="12"
+                       Foreground="#FFB42D3C"
+                       TextWrapping="Wrap" />
+
+            <Border Height="1" Background="#22808080" Margin="0,4,0,4" />
+
             <ToggleSwitch x:Name="EnabledSwitch" Header="自动生成标题" />
             <TextBox x:Name="EndpointBox"
                      Header="端点"

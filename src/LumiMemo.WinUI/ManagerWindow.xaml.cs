@@ -1,6 +1,7 @@
 using H.NotifyIcon;
 using LumiMemo.Core.Abstractions;
 using LumiMemo.Core.Models;
+using LumiMemo.Infrastructure.Storage;
 using LumiMemo.WinUI.Pages;
 using LumiMemo.WinUI.Services;
 using LumiMemo.WinUI.ViewModels;
@@ -43,12 +44,18 @@ public sealed partial class ManagerWindow : Window
         ManagerViewModel viewModel,
         TrashViewModel trashViewModel,
         AppSettings settings,
-        ISettingsStore settingsStore)
+        ISettingsStore settingsStore,
+        IAppPaths paths,
+        NotesFolderCopier notesFolderCopier,
+        IAppLifecycle lifecycle)
     {
         ArgumentNullException.ThrowIfNull(viewModel);
         ArgumentNullException.ThrowIfNull(trashViewModel);
         ArgumentNullException.ThrowIfNull(settings);
         ArgumentNullException.ThrowIfNull(settingsStore);
+        ArgumentNullException.ThrowIfNull(paths);
+        ArgumentNullException.ThrowIfNull(notesFolderCopier);
+        ArgumentNullException.ThrowIfNull(lifecycle);
 
         InitializeComponent();
 
@@ -56,7 +63,16 @@ public sealed partial class ManagerWindow : Window
 
         _noteListPage = new NoteListPage(viewModel);
         _trashPage = new TrashPage(trashViewModel);
-        _settingsPage = new SettingsPage(settings, settingsStore);
+
+        // 文件夹选择器要绑窗口句柄，只有窗口自己知道自己是哪个窗口——所以把「怎么选文件夹」
+        // 作为委托传进设置页，而不是让页面去猜。
+        _settingsPage = new SettingsPage(
+            settings,
+            settingsStore,
+            paths,
+            notesFolderCopier,
+            lifecycle,
+            () => FolderPickerHelper.PickFolderAsync(this));
         PageHost.Children.Add(_noteListPage);
         PageHost.Children.Add(_trashPage);
         PageHost.Children.Add(_settingsPage);

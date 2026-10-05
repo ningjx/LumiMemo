@@ -32,12 +32,15 @@ namespace LumiMemo.WinUI;
 /// 进容器会绕成环。
 /// </para>
 /// </remarks>
-public partial class App : Application
+public partial class App : Application, IAppLifecycle
 {
     private ServiceProvider? _services;
     private TrayIconService? _trayIcon;
     private SingleInstanceGuard? _guard;
     private FileLoggerProvider? _fileLogger;
+
+    /// <summary>收尾是否已经开始。所有调用都在 UI 线程上，不需要再加锁。</summary>
+    private bool _shuttingDown;
 
     public App()
     {
@@ -79,6 +82,12 @@ public partial class App : Application
             }
 
             _services = await BuildServicesAsync();
+            if (_services is null)
+            {
+                // 用户在首次运行的存储位置向导里放弃了：没有笔记目录，启动无从继续。
+                Exit();
+                return;
+            }
 
             NoteWindowManager windows = GetService<NoteWindowManager>();
             ManagerWindow manager = GetService<ManagerWindow>();
@@ -107,14 +116,18 @@ public partial class App : Application
 
             if (settings.ShowTrayIcon)
             {
+                // 「打开笔记文件夹」认本次启动生效的目录，不读设置对象里的实时值：
+                // 用户在设置页改了存储位置、还没重启的那段窗口期里，便签其实还在旧目录。
+                string activeNotesFolder = settings.NotesFolder;
+
                 _trayIcon = new TrayIconService(manager.TrayIconHost);
                 _trayIcon.Start(
                     () => _ = windows.CreateNoteAsync(),
                     windows.HideAllNotes,
                     manager.ShowWindow,
-                    () => OpenNotesFolder(settings.NotesFolder),
+                    () => OpenNotesFolder(activeNotesFolder),
                     () => _ = manager.ShowAboutAsync(),
-                    ExitFromTray);
+                    () => _ = ShutdownAsync(relaunch: false));
             }
 
             int restored = windows.RestoreOpenNotes();
@@ -144,8 +157,58 @@ public partial class App : Application
         });
     }
 
-    private async void ExitFromTray()
+    /// <summary>重新启动本程序；成功返回 <see langword="true"/>。</summary>
+    /// <remarks>
+    /// <c>UseShellExecute</c> 走的是与用户双击图标同一条路——直接 CreateProcess 会沿用
+    /// 本进程的启动上下文，而 WinUI 在那套上下文里解析 XAML 资源会失败。
+    /// </remarks>
+    private static bool RelaunchSelf()
     {
+        string? executable = Environment.ProcessPath;
+        if (string.IsNullOrEmpty(executable))
+        {
+            return false;
+        }
+
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = executable,
+                UseShellExecute = true,
+            });
+
+            return true;
+        }
+        catch (Exception)
+        {
+            // 拉不起来就只是「没重启」：设置已经存好，用户手动再开一次即可。
+            return false;
+        }
+    }
+
+    /// <inheritdoc />
+    public void Relaunch() => _ = ShutdownAsync(relaunch: true);
+
+    /// <summary>
+    /// 收尾并结束进程；<paramref name="relaunch"/> 为 <see langword="true"/> 时先拉起一个新进程，
+    /// 让「改了存储位置」这类必须重启才生效的设置落到实处。
+    /// </summary>
+    /// <remarks>
+    /// 顺序是刻意的：释放动作都发生在新进程起来<strong>之前</strong>——单实例守卫一释放，
+    /// 新进程才会认为自己是第一个实例；而容器一释放日志 provider 就没了，
+    /// 「已拉起新进程」这条记录必须写在它前面。
+    /// </remarks>
+    private async Task ShutdownAsync(bool relaunch)
+    {
+        // 防重入：收尾要跑好几个 await，连点两次「立即重启」会走两遍并拉起两个新进程。
+        if (_shuttingDown)
+        {
+            return;
+        }
+
+        _shuttingDown = true;
+
         ILogger<App> logger = GetService<ILogger<App>>();
 
         // 每一步都立即冲刷日志：崩溃时最后一条落盘的日志就是精确的现场。
@@ -191,6 +254,11 @@ public partial class App : Application
         _guard = null;
         Step("退出：单实例守卫已释放。");
 
+        if (relaunch)
+        {
+            Step(RelaunchSelf() ? "退出：已拉起新进程。" : "退出：拉起新进程失败，重启未完成。");
+        }
+
         Step("退出：准备释放容器。");
         _services?.Dispose();
         _services = null;
@@ -201,8 +269,11 @@ public partial class App : Application
         Environment.Exit(0);
     }
 
-    /// <summary>第一段（异步引导）+ 第二段（容器组装）。</summary>
-    private async Task<ServiceProvider> BuildServicesAsync()
+    /// <summary>
+    /// 第一段（异步引导）+ 第二段（容器组装）；用户在首次运行向导里放弃时返回
+    /// <see langword="null"/>。
+    /// </summary>
+    private async Task<ServiceProvider?> BuildServicesAsync()
     {
         var paths = new AppPaths();
         paths.EnsureLocalAppDataDirectories();
@@ -229,11 +300,14 @@ public partial class App : Application
 
         if (string.IsNullOrWhiteSpace(settings.NotesFolder))
         {
-            settings.NotesFolder = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
-                "LumiMemo");
-            Directory.CreateDirectory(settings.NotesFolder);
-            await settingsStore.SaveAsync(settings);
+            // 首次运行：存储位置交给用户当场决定（§8.6 的首次运行向导）。
+            // 不再预置「我的文档\LumiMemo」——在用户不知情的地方凭空建一个目录，
+            // 正是「我的便签去哪了」这类问题的源头。向导选完即写盘，这里只管结果。
+            string? chosen = await FirstRunWindow.ChooseNotesFolderAsync(settings, settingsStore);
+            if (chosen is null)
+            {
+                return null;
+            }
         }
 
         paths.SetNotesFolder(settings.NotesFolder);
@@ -278,10 +352,19 @@ public partial class App : Application
         services.AddSingleton<ISettingsStore>(settingsStore);
         services.AddSingleton<ILayoutStore>(layoutStore);
 
+        // 设置页要能分辨「当前生效的目录」与「已改、等重启生效的目录」，所以路径对象进容器。
+        services.AddSingleton<IAppPaths>(paths);
+
+        // 重启自己（「存储位置」改完生效用）——收尾序列只有 App 知道，由它实现。
+        services.AddSingleton<IAppLifecycle>(this);
+
         // 工具栏那两个「当前值」（文字底色、常用标题级别）：全局一份、随设置落盘，多窗口共享。
         services.AddSingleton<ToolbarPreferences>();
         services.AddSingleton<INoteStorage>(storage);
         services.AddSingleton<ITrashStore>(trash);
+
+        // 换存储位置时把旧目录的便签搬过去（设置页用；向导场景没有旧目录）。
+        services.AddSingleton<NotesFolderCopier>();
 
         // 搜索：当前是本地关键词实现；AI 搜索（语义检索）将实现同一接口，
         // 届时在这里按设置选择注入哪一个即可，UI 层无感知。

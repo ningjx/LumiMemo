@@ -204,6 +204,8 @@ public sealed class JsonSettingsStore : ISettingsStore
             nameof(AppSettings.DefaultHeadingLevel),
             path);
 
+        settings.NotesFolder = SanitizeNotesFolder(settings.NotesFolder, path);
+
         settings.AttachmentsFolderName = SanitizeAttachmentsFolderName(
             settings.AttachmentsFolderName,
             path);
@@ -229,6 +231,42 @@ public sealed class JsonSettingsStore : ISettingsStore
             clamped);
 
         return clamped;
+    }
+
+    /// <summary>
+    /// 把笔记目录收成一个<strong>绝对路径</strong>；不是绝对路径就清空。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 这个值会直接进 <c>AppPaths.SetNotesFolder</c>，而那里对相对路径是<strong>抛异常</strong>的
+    /// （相对路径会让笔记目录指向「进程当前目录」，不同启动方式下是不同地方）。
+    /// 抛在启动序列里等于「程序起不来」，而用户只是把配置文件改坏了一行。
+    /// </para>
+    /// <para>
+    /// 清空后它退化成「尚未选择」，启动时走首次运行向导——用户重新选一次即可，
+    /// 比对着一个起不来的程序强。
+    /// </para>
+    /// </remarks>
+    private string SanitizeNotesFolder(string? notesFolder, string path)
+    {
+        if (string.IsNullOrWhiteSpace(notesFolder))
+        {
+            return "";
+        }
+
+        string trimmed = notesFolder.Trim();
+
+        if (Path.IsPathFullyQualified(trimmed))
+        {
+            return trimmed;
+        }
+
+        _logger.LogWarning(
+            "{Path} 的 NotesFolder 不是绝对路径（{Value}），已按「尚未选择」处理。",
+            path,
+            trimmed);
+
+        return "";
     }
 
     /// <summary>

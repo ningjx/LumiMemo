@@ -475,6 +475,60 @@ public sealed class JsonSettingsStoreTests
         Assert.Equal(2, Directory.GetFiles(local.Path, "settings.json.corrupt-*").Length);
     }
 
+    // ---- 笔记目录（存储位置）----
+
+    [Fact]
+    public async Task 笔记目录是绝对路径时原样保留()
+    {
+        using var local = new TempDirectory();
+        var (store, paths) = CreateStore(local);
+        string notes = local.Combine("笔记");
+
+        await File.WriteAllTextAsync(
+            paths.SettingsFile,
+            JsonSerializer.Serialize(new { version = 1, notesFolder = notes }),
+            Ct);
+
+        AppSettings settings = await store.LoadAsync(Ct);
+
+        Assert.Equal(notes, settings.NotesFolder);
+    }
+
+    [Theory]
+    [InlineData("笔记")]                  // 纯相对名
+    [InlineData(@"..\别处")]              // 相对上跳
+    [InlineData(@"\根目录相对")]          // 以分隔符开头仍是根目录相对
+    public async Task 笔记目录不是绝对路径时清空(string value)
+    {
+        using var local = new TempDirectory();
+        var (store, paths) = CreateStore(local);
+
+        // 相对路径会让 AppPaths.SetNotesFolder 抛异常 → 启动直接失败。
+        // 清空后退化成「尚未选择」，用户重选一次即可（走首次运行向导）。
+        await File.WriteAllTextAsync(
+            paths.SettingsFile,
+            JsonSerializer.Serialize(new { version = 1, notesFolder = value }),
+            Ct);
+
+        AppSettings settings = await store.LoadAsync(Ct);
+
+        Assert.Equal("", settings.NotesFolder);
+    }
+
+    [Fact]
+    public async Task 保存时笔记目录也被钳制()
+    {
+        using var local = new TempDirectory();
+        var (store, paths) = CreateStore(local);
+
+        var settings = new AppSettings { NotesFolder = "相对路径" };
+        await store.SaveAsync(settings, Ct);
+
+        // 钳制是就地的：调用方手里的对象与磁盘上的内容必须一致。
+        Assert.Equal("", settings.NotesFolder);
+        Assert.Equal("", (await store.LoadAsync(Ct)).NotesFolder);
+    }
+
     // ---- 辅助 ----
 
     private static (JsonSettingsStore Store, AppPaths Paths) CreateStore(TempDirectory local)
