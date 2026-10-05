@@ -836,6 +836,22 @@ public sealed partial class MainWindow : Window
         {
             UpdateStatusVisuals();
         }
+        else if (e.PropertyName is nameof(NoteViewModel.Title))
+        {
+            // 标题换了，标题区就得重算——遮罩位置与渐隐都是按文字的自然宽算出来的，
+            // 而「自然宽变了」不在任何 SizeChanged 的触发源里（窗口尺寸没动），
+            // 于是整块布局会一直停在旧标题上。
+            //
+            // 症状：自动生成的标题只露出前一两个字，手动拖一下窗口又好了。
+            // 来路是标题区的计算依赖文字自然宽：生成完成时先收进度圈（触发一次重算，
+            // 可那时量到的还是旧的长标题，按它算出的渐隐是「到 15% 全透明」），
+            // 随后文字才换成新的短标题，那段按比例铺开的渐变刷就把新标题几乎全吃掉了；
+            // 遮罩也停在旧位置，于是标题与刷新按钮之间空出一大截。
+            //
+            // 推迟一轮再算：x:Bind 与本处理器的先后没有保证（本订阅在构造函数里、
+            // 早于绑定的接入），此刻 TextBlock 里可能还是旧文字，量出来的自然宽就是错的。
+            DispatcherQueue.TryEnqueue(UpdateTitleLayout);
+        }
     }
 
     /// <summary>
