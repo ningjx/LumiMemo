@@ -47,6 +47,12 @@ public sealed class LumiEditor : Grid
     private readonly DispatcherTimer _caretBlink;
     private bool _caretVisible = true;
 
+    /// <summary>编辑器（<see cref="_scroller"/>）是否持有键盘焦点——光标可见性的一半（另一半是窗口激活态）。</summary>
+    private bool _editorFocused = true;
+
+    /// <summary>宿主窗口是否在前台——失焦的便签不该还闪着输入光标（与 <see cref="_editorFocused"/> 取与）。</summary>
+    private bool _windowActive = true;
+
     /// <summary>上下移动的期望列（文档坐标 X，Phase 3 M6 §6.4）；null = 下一趟重取。</summary>
     private float? _goalCaretX;
 
@@ -233,10 +239,7 @@ public sealed class LumiEditor : Grid
         _caretBlink.Tick += (_, _) =>
         {
             _caretVisible = !_caretVisible;
-            if (_selectedImageBlock < 0)
-            {
-                _surface.Invalidate(); // 选中图片时没有光标可闪，别白重绘
-            }
+            InvalidateCaret(); // 选中图片时没有光标可闪，别白重绘
         };
 
         _checkAnimTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16) };
@@ -262,7 +265,18 @@ public sealed class LumiEditor : Grid
         _scroller.ViewChanged += OnViewChanged;
         // 编辑器得焦时也重设 TSF 焦点：点击进入文本、XAML 焦点恢复都会走这里，
         // 与窗口 Activated 的重设形成多层兜底（Phase 3 修复：重开窗口后 IME 绕开本店）。
-        _scroller.GotFocus += (_, _) => RefocusTsf();
+        _scroller.GotFocus += (_, _) =>
+        {
+            _editorFocused = true;
+            RefreshCaretForFocus();
+            RefocusTsf();
+        };
+        // 焦点走了（点到工具栏/滚动条/别的控件）光标就该收起来——打字也进不来编辑区了
+        _scroller.LostFocus += (_, _) =>
+        {
+            _editorFocused = false;
+            RefreshCaretForFocus();
+        };
         // 键盘：PreviewKeyDown 隧道截方向键/快捷键（先于 ScrollViewer 滚动处理）；
         // CharacterReceived 挂 _scroller（Control 可聚焦，冒泡事件必须由焦点元素触发）。
         PreviewKeyDown += OnPreviewKeyDownHandler;
@@ -399,12 +413,27 @@ public sealed class LumiEditor : Grid
 
     private void OnHostWindowActivated(object sender, Microsoft.UI.Xaml.WindowActivatedEventArgs args)
     {
-        if (args.WindowActivationState == WindowActivationState.Deactivated)
+        // 窗口失焦：光标立刻收起来（画在 surface 上的像素只能靠重绘抹掉，见 RefreshCaretForFocus）。
+        // XAML 焦点在窗口换前台时不会走 _scroller.LostFocus，所以这一层必须自己接。
+        _windowActive = args.WindowActivationState != WindowActivationState.Deactivated;
+        if (_windowActive && IsEditorFocused())
+        {
+            // 只做"正校准"：真查着焦点在编辑区就点亮——窗口失活时 WinUI 未必补一对
+            // LostFocus/GotFocus，光信事件可能让光标永远回不来；查不到则维持事件给出的判断
+            // （便签刚打开、首个焦点还没落到编辑区时，宁可按"亮"处理，别把光标藏起来）。
+            _editorFocused = true;
+        }
+        RefreshCaretForFocus();
+        if (!_windowActive)
         {
             return;
         }
         RefocusTsf();
     }
+
+    /// <summary>编辑区是不是当前的 XAML 焦点元素（编辑器内只有 <see cref="_scroller"/> 是可聚焦控件）。</summary>
+    private bool IsEditorFocused() =>
+        XamlRoot is { } root && ReferenceEquals(FocusManager.GetFocusedElement(root), _scroller);
 
     /// <summary>
     /// 重设 TSF 文档焦点：立即一次 + 下一个派发周期补一次，并启动短延时自愈（见
@@ -684,7 +713,7 @@ public sealed class LumiEditor : Grid
 
         Relayout();
         _ = WarmupImagesAsync(document);
-        _caretBlink.Start();
+        RestartCaretBlink(); // 载入即开始闪（窗口不在前台的便签不闪，见 CaretFocusActive）
         // 载入即刷新工具栏按钮态（光标落在标题块时按钮应立即可见为按下）
         CaretBlockChanged?.Invoke(this, EventArgs.Empty);
     }
@@ -913,12 +942,63 @@ public sealed class LumiEditor : Grid
             SelectImage(-1);
         }
 
-        _caretVisible = true;
-        _caretBlink.Stop();
-        _caretBlink.Start();
+        RestartCaretBlink(); // 光标回到"亮"的相位重新计时（失焦中则保持收起）
         _surface.Invalidate();
         CaretBlockChanged?.Invoke(this, EventArgs.Empty);
         ScrollCaretIntoView();
+    }
+
+    /// <summary>光标可见性的总开关：编辑区持着键盘焦点、且宿主窗口在前台。</summary>
+    private bool CaretFocusActive => _editorFocused && _windowActive;
+
+    /// <summary>光标是画在 surface 上的像素：可见性一变就得重绘（选中图片期间不画光标，省掉）。</summary>
+    private void InvalidateCaret()
+    {
+        if (_selectedImageBlock < 0)
+        {
+            _surface.Invalidate();
+        }
+    }
+
+    /// <summary>
+    /// 点亮光标并重启闪烁周期（打字/选区变化时"重启计时"，让光标立刻可见）。
+    /// 失焦中不点亮——定时器也别空转。
+    /// </summary>
+    private void RestartCaretBlink()
+    {
+        if (!CaretFocusActive)
+        {
+            return;
+        }
+        _caretVisible = true;
+        _caretBlink.Stop();
+        _caretBlink.Start();
+    }
+
+    /// <summary>
+    /// 焦点/激活态变化后刷新光标：失焦 → 立刻收起并停掉闪烁；回到编辑区 → 点亮并重启闪烁。
+    /// 状态没变的一侧什么都不做（重绘很便宜，但没必要）。
+    /// </summary>
+    private void RefreshCaretForFocus()
+    {
+        if (CaretFocusActive)
+        {
+            if (_caretBlink.IsEnabled)
+            {
+                return;
+            }
+            _caretVisible = true;
+            _caretBlink.Start();
+            InvalidateCaret();
+            return;
+        }
+        if (!_caretBlink.IsEnabled && !_caretVisible)
+        {
+            return;
+        }
+        _caretBlink.Stop();
+        _caretVisible = false;
+        InvalidateCaret();
     }
 
     private void ScrollCaretIntoView()
