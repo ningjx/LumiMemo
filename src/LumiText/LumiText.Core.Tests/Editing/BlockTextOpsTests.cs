@@ -56,6 +56,32 @@ public sealed class BlockTextOpsTests
     }
 
     [Fact]
+    public void ReplaceText_InsertAtBlockStart_InsertsAtStartNotEnd()
+    {
+        // 回归：块首（偏移 0）插入曾掉进"末尾兜底"——前面没有 run 的右缘可挂，
+        // 首 run 又被判成"编辑区间之后"，字符于是跑到块尾（实机表现：光标在行首打字，字接在末尾）。
+        var block = new ParagraphBlock("123");
+        var result = BlockTextOps.ReplaceText(block, 0, 0, "4");
+        var p = Assert.IsType<ParagraphBlock>(result);
+        Assert.Equal("4123", p.PlainText);
+        Assert.Single(p.Runs); // 同样式合并
+    }
+
+    [Fact]
+    public void ReplaceText_InsertAtFirstRun_StartInheritsFirstRunStyle()
+    {
+        var block = new ParagraphBlock([
+            new TextRun("123", new InlineStyle(Bold: true)),
+            new TextRun("456"),
+        ]);
+        var result = BlockTextOps.ReplaceText(block, 0, 0, "X");
+        var p = Assert.IsType<ParagraphBlock>(result);
+        Assert.Equal("X123456", p.PlainText);
+        Assert.Equal("X123", p.Runs[0].Text);
+        Assert.True(p.Runs[0].Style!.Bold); // 块首插入继承首 run 样式
+    }
+
+    [Fact]
     public void ReplaceText_EmptyBlock_InsertsPlainRun()
     {
         var block = new ParagraphBlock([]);

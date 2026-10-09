@@ -16,6 +16,7 @@ public sealed class EditorCoreTests
     public void ApplyCommand_RaisesDocumentChanged()
     {
         var core = CoreWith(new ParagraphBlock("a"));
+        core.SetSelection(TextRange.Collapse(new TextPosition(0, 1))); // 光标在末尾（初始选区在文档首）
         int fired = 0;
         core.DocumentChanged += (_, _) => fired++;
         core.ApplyCommand(new InsertTextCommand("b"));

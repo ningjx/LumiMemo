@@ -79,7 +79,9 @@ public static class BlockTextOps
             int keepTailStart = Math.Clamp(start + count - runStart, 0, run.Text.Length); // 区间之后的保留起点
 
             bool isBeforeEdit = runEnd <= start;      // 本 run 完全在编辑区间之前
-            bool isAfterEdit = runStart >= start + count; // 本 run 完全在编辑区间之后
+            // 空区间（纯插入）时 runStart == start 的 run 是「插入点所在 run」，不是「区间之后」——
+            // 否则块首插入（前面没有 run 的右缘可挂）会一路判成"之后"，最后掉进末尾兜底，字符跑到块尾。
+            bool isAfterEdit = count > 0 ? runStart >= start + count : runStart > start;
             bool boundaryInsertAtRightEdge = isBeforeEdit && runEnd == start && replacement.Length > 0;
 
             if (isBeforeEdit || isAfterEdit)

@@ -28,6 +28,18 @@ public sealed class EditCommandTests
     }
 
     [Fact]
+    public void InsertText_AtBlockStart_InsertsAtStartAndAdvancesCaret()
+    {
+        // 回归（实机 BUG）：光标移到行首打字，字接在末尾、光标停在第一个字符后面。
+        var state = StateWith(new ParagraphBlock("123"))
+            with { Selection = TextRange.Collapse(new TextPosition(0, 0)) };
+        var after = new InsertTextCommand("4").Apply(state);
+        var p = Assert.IsType<ParagraphBlock>(after.Document.Blocks[0]);
+        Assert.Equal("4123", p.PlainText);
+        Assert.Equal(new TextPosition(0, 1), after.Selection.Active);
+    }
+
+    [Fact]
     public void InsertText_ReplacesSelection()
     {
         var state = StateWith(new ParagraphBlock("hello world"))
