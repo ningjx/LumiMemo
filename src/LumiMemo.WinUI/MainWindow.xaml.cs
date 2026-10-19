@@ -30,6 +30,10 @@ public sealed partial class MainWindow : Window
     private readonly INoteWindowActions _actions;
     private readonly LumiEditor _editor;
     private readonly AppWindow _appWindow;
+
+    /// <summary>隐藏的 owner 窗口：让本窗口进 Alt+Tab 而不占任务栏（见 <see cref="HiddenOwnerWindow"/>）。</summary>
+    private readonly HiddenOwnerWindow? _switcherOwner;
+
     private AcrylicBackdrop? _backdrop;
     private bool _isApplicationExiting;
     private bool _closeApproved;
@@ -64,6 +68,11 @@ public sealed partial class MainWindow : Window
         InitializeComponent();
         _appWindow = AppWindow;
 
+        // 进 Alt+Tab、不占任务栏：靠隐藏 owner 把系统那两个列表拆开（见 HiddenOwnerWindow）。
+        // 排在构造函数最前头——窗口显示之后再改，任务栏要 hide→改→show 才会重新判定，
+        // 而窗口是窗口管理器在构造之后才 Activate/Show 的，这里还来得及。
+        _switcherOwner = HiddenOwnerWindow.AttachTo(this);
+
         _viewModel = viewModel;
         _layout = layout;
         _layoutStore = layoutStore;
@@ -79,7 +88,9 @@ public sealed partial class MainWindow : Window
         _viewModel.AttachDocument(new LumiEditorDocument(_editor));
         _viewModel.TopMostChanged += OnTopMostChanged;
 
-        Title = "LumiMemo";
+        // 窗口标题 = 便签标题（界面上看不见——标题栏是自绘的，但 Alt+Tab 与任务栏认它，
+        // 便签一多，那里得认得出是哪一张；正文改动时跟着换，见 OnViewModelPropertyChanged）。
+        Title = _viewModel.Title;
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(TitleBarHost);
         ConfigureWindow();
@@ -218,7 +229,10 @@ public sealed partial class MainWindow : Window
         AppWindow.Move(hasSavedPosition
             ? new PointInt32((int)Math.Round(_layout.X), (int)Math.Round(_layout.Y))
             : new PointInt32(workArea.X + workArea.Width - width - 40, workArea.Y + 80));
-        AppWindow.IsShownInSwitchers = false;
+        // 这里**不碰** AppWindow.IsShownInSwitchers：它内部走 shell 的 ITaskbarList
+        // （HrInit + AddTab/DeleteTab，见 microsoft-ui-xaml#8596），一旦设置就等于让 shell
+        // 重新登记这个窗口，会把 owner 刚摘掉的任务栏按钮又装回来；explorer 不响应时它还会抛。
+        // 两个列表的分家全部交给 owner 规则，见 HiddenOwnerWindow。
 
         if (AppWindow.Presenter is OverlappedPresenter presenter)
         {
@@ -812,6 +826,10 @@ public sealed partial class MainWindow : Window
         }
         else if (e.PropertyName is nameof(NoteViewModel.Title))
         {
+            // Alt+Tab 与任务栏上的那张牌子（自绘标题栏用不到它，但系统那两处认它）。
+            // 便签标题是正文的投影，打字就会变——牌子跟着走，列表里才是当前的样子。
+            Title = _viewModel.Title;
+
             // 标题换了，标题区就得重算——遮罩位置与渐隐都是按文字的自然宽算出来的，
             // 而「自然宽变了」不在任何 SizeChanged 的触发源里（窗口尺寸没动），
             // 于是整块布局会一直停在旧标题上。
@@ -1104,6 +1122,17 @@ public sealed partial class MainWindow : Window
             _viewModel.Dispose();
             _backdrop?.Dispose();
             _backdrop = null;
+        }
+        catch (Exception exception)
+        {
+            System.Diagnostics.Debug.WriteLine(exception);
+        }
+
+        // 隐藏 owner 排在 XAML 拆解**之后**：它只是把 owner 还回池子（见 HiddenOwnerWindow），
+        // 但这个窗口的关闭流程里不再多插任何事，免得再和 XAML 收摊抢时序。
+        try
+        {
+            _switcherOwner?.Dispose();
         }
         catch (Exception exception)
         {
