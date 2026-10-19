@@ -47,10 +47,13 @@ public sealed class LumiEditor : Grid
     private readonly DispatcherTimer _caretBlink;
     private bool _caretVisible = true;
 
-    /// <summary>编辑器（<see cref="_scroller"/>）是否持有键盘焦点——光标可见性的一半（另一半是窗口激活态）。</summary>
+    /// <summary>光标可见性规则（焦点 × 窗口前台 × 没被拆）——纯逻辑在 <see cref="CaretVisibility"/>，可单测。</summary>
+    private readonly CaretVisibility _caretVisibility = new();
+
+    /// <summary>编辑器（<see cref="_scroller"/>）是否持有键盘焦点——喂给 <see cref="_caretVisibility"/> 的原始输入。</summary>
     private bool _editorFocused = true;
 
-    /// <summary>宿主窗口是否在前台——失焦的便签不该还闪着输入光标（与 <see cref="_editorFocused"/> 取与）。</summary>
+    /// <summary>宿主窗口是否在前台——喂给 <see cref="_caretVisibility"/> 的原始输入。</summary>
     private bool _windowActive = true;
 
     /// <summary>上下移动的期望列（文档坐标 X，Phase 3 M6 §6.4）；null = 下一趟重取。</summary>
@@ -295,6 +298,9 @@ public sealed class LumiEditor : Grid
         Tapped += OnTappedHandler;
         Unloaded += (_, _) =>
         {
+            // 立闸要排在前面：拆完之后 WinUI 仍会送焦点/激活回调进来，
+            // 那时再去重绘就是在已释放的 surface 上作画（见 CaretVisibility）。
+            _caretVisibility.MarkDisposed();
             _caretBlink.Stop();
             _checkAnimTimer.Stop();
             _imageScrollTimer.Stop();
@@ -638,6 +644,7 @@ public sealed class LumiEditor : Grid
     /// <summary>释放 TSF / surface / 图片资源（窗口关闭协议调用；与 Unloaded 清理互补）。</summary>
     public void Dispose()
     {
+        _caretVisibility.MarkDisposed();
         _caretBlink.Stop();
         _checkAnimTimer.Stop();
         _imageScrollTimer.Stop();
@@ -948,12 +955,18 @@ public sealed class LumiEditor : Grid
         ScrollCaretIntoView();
     }
 
-    /// <summary>光标可见性的总开关：编辑区持着键盘焦点、且宿主窗口在前台。</summary>
-    private bool CaretFocusActive => _editorFocused && _windowActive;
-
-    /// <summary>光标是画在 surface 上的像素：可见性一变就得重绘（选中图片期间不画光标，省掉）。</summary>
+    /// <summary>
+    /// 光标是画在 surface 上的像素：可见性一变就得重绘（选中图片期间不画光标，省掉）。
+    /// <b>拆过之后一次都不许发</b>——surface 已经 Dispose，Redraw 会在已释放的 Composition
+    /// 对象上写属性（关便签时 WinUI 仍会送焦点/激活回调进来，见 <see cref="CaretVisibility"/>）。
+    /// </summary>
     private void InvalidateCaret()
     {
+        if (_caretVisibility.IsDisposed)
+        {
+            return;
+        }
+
         if (_selectedImageBlock < 0)
         {
             _surface.Invalidate();
@@ -966,7 +979,7 @@ public sealed class LumiEditor : Grid
     /// </summary>
     private void RestartCaretBlink()
     {
-        if (!CaretFocusActive)
+        if (!_caretVisibility.ShouldBlink)
         {
             return;
         }
@@ -976,29 +989,24 @@ public sealed class LumiEditor : Grid
     }
 
     /// <summary>
-    /// 焦点/激活态变化后刷新光标：失焦 → 立刻收起并停掉闪烁；回到编辑区 → 点亮并重启闪烁。
-    /// 状态没变的一侧什么都不做（重绘很便宜，但没必要）。
+    /// 焦点/激活态变化后刷新光标：该亮就点亮并重启闪烁，该收就立刻收起并停掉闪烁，
+    /// 状态没变则什么都不做（重绘很便宜，但没必要）。
     /// </summary>
     private void RefreshCaretForFocus()
     {
-        if (CaretFocusActive)
+        switch (_caretVisibility.Update(_editorFocused, _windowActive))
         {
-            if (_caretBlink.IsEnabled)
-            {
-                return;
-            }
-            _caretVisible = true;
-            _caretBlink.Start();
-            InvalidateCaret();
-            return;
+            case CaretVisibilityChange.Shown:
+                _caretVisible = true;
+                _caretBlink.Start();
+                InvalidateCaret();
+                break;
+            case CaretVisibilityChange.Hidden:
+                _caretBlink.Stop();
+                _caretVisible = false;
+                InvalidateCaret();
+                break;
         }
-        if (!_caretBlink.IsEnabled && !_caretVisible)
-        {
-            return;
-        }
-        _caretBlink.Stop();
-        _caretVisible = false;
-        InvalidateCaret();
     }
 
     private void ScrollCaretIntoView()

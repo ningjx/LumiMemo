@@ -172,6 +172,15 @@ public sealed class VirtualizedTextSurface : IDisposable
         _surface?.Dispose();
         _graphicsDevice?.Dispose();
         _sprite?.Dispose();
+
+        // 全部置空（不能只 Dispose 了事）：窗口关闭途中，滚动/尺寸/焦点这些回调仍可能摸进来，
+        // 而 Invalidate/OnScroll/SetMetrics 只判"是不是 null"——留着已释放的实例不置空，
+        // Redraw 就会往已释放的 Composition 对象上写属性，抛 ObjectDisposedException
+        // （实机：连续开两个便签、关掉其中一个 → _sprite.Offset 处进程挂掉）。
+        _surface = null;
+        _graphicsDevice = null;
+        _sprite = null;
+        _compositor = null;
     }
 
     /// <summary>
