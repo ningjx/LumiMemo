@@ -1,417 +1,259 @@
+using Microsoft.UI.Input;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Animation;
-using System;
 using Windows.Foundation;
 using Windows.UI;
+using Windows.UI.ViewManagement;
 
 namespace LumiMemo.WinUI.Controls;
 
-/// <summary>
-/// 文字底色取色器（展开式色带，2026-10-04 设计）：工具栏上那个**圆角方块**就是按钮本体；
-/// 右键在按钮栏里展开一条**细色相带**（按钮底下那层，占位块把右侧按钮推开），
-/// 方块**滑动到当前色的位置上当滑块**（滑块＝当前色实时显示）；拖动无级取色，
-/// 松手后色带缩回、方块回位，并把新颜色交回宿主（<see cref="ColorPicked"/>）。
-/// </summary>
-/// <remarks>
-/// <para><b>色带本体归宿主</b>：它插在工具栏里（<see cref="Open"/> 前由 <see cref="AttachStrip"/> 接上），
-/// 这样"展开"就是一次普通布局变化——右侧按钮由 StackPanel 连同占位块一起推开，不用手写位移动画。
-/// 本控件只管滑块（跟着色相位置走的那块）。</para>
-/// <para><b>坐标</b>：滑块是覆盖层里的元素，位置用 TranslateTransform（Canvas.Left/Top 不能动画）。
-/// 色带的窗口坐标在展开那一刻量一次——展开期间它的左缘不动。</para>
-/// <para><b>变形的先后</b>：滑块的 TransformGroup 必须"先缩放、后平移"，且原点在中心——
-/// XAML 按顺序左乘，反过来写平移量会被缩放一起放大。</para>
-/// <para><b>取色口径</b>：色带就是按 <see cref="HueSaturation"/>/<see cref="HueValue"/> 画出来的，
-/// 所以"带上的颜色"和"选到的颜色"完全一致（所见即所得）。</para>
-/// <para><b>三条踩过的坑</b>（改这里之前先读）：
-/// ① 自绘的可点元素**必须给 Background**——没有画刷的 Border 既不显色也不参与命中测试；
-/// ② 量元素坐标要在它**可见**时做（Collapsed 的元素量不到有效矩形），所以方块的矩形由宿主在
-/// 隐藏它之前量好传进来；
-/// ③ Storyboard 播完会**保持**动画值、盖住之后的直接赋值（滑块就拖不动了）——换场前先停、
-/// 播完先把终值写回属性再停（见 <see cref="_running"/>）。</para>
-/// </remarks>
 internal sealed partial class HighlightPicker : UserControl
 {
-    // ★ 色带与取色参数（随手感调）
-    /// <summary>展开后的色带长度（dip）：从方块中心起向右变长。</summary>
-    public const double StripWidthDips = 76;
+    private const double StripWidth = 76;
+    private const double StripHeight = 6;
+    private const double KnobSize = 16;
+    private const double KnobHalf = KnobSize / 2;
+    private const double Travel = StripWidth - KnobSize;
+    private const double DragThreshold = 4;
+    private const double ToolbarGap = 4;
+    private const int TransitionMs = 167;
 
-    /// <summary>
-    /// 展开时右侧要让出多宽（dip）——**由宿主实测量算后传进来**（它知道两条分割线与按钮的位置），
-    /// 这里只负责拿它驱动占位块。不在这里推算：分隔线的 Margin、按钮栏 Spacing 一改，推算就对不上。
-    /// </summary>
-    private double _pushWidth;
-
-    /// <summary>色相带右端：红 0° → 紫 300°。</summary>
     private const float HueEnd = 300f;
-
-    /// <summary>取色的饱和度/明度：定成"当文字底色不刺眼"的一档。</summary>
     private const double HueSaturation = 0.55;
     private const double HueValue = 0.99;
-
-    /// <summary>渐变色标的段数（0..300° 每 20° 一段）。</summary>
     private const int HueSteps = 15;
 
-    // ★ 几何与动画（随手感调）
-    /// <summary>
-    /// 滑块元素边长＝收起时的尺寸，**必须与工具栏上那个方块（`HighlightButtonFill`）一致**：
-    /// 展开时是滑块从方块手里接管，尺寸对不上就会在那一瞬间跳一下。
-    /// </summary>
-    private const double CollapsedKnobSize = 16;
+    private readonly UISettings _uiSettings = new();
+    private readonly TranslateTransform _leftShift = new();
+    private readonly TranslateTransform _rightShift = new();
+    private Border _swatch = null!;
+    private FrameworkElement _leftGroup = null!;
+    private FrameworkElement _rightGroup = null!;
 
-    /// <summary>
-    /// 展开后的视觉边长：与收起时相同，也就是"工具栏那个方块"和"待办勾选框的墨迹"共用的那一档（16）。
-    /// （早先收起 18 / 展开 16 是为了"滑过去的时候缩一点"；方块本身收到 16 之后就不缩了。）
-    /// 注意别拿 FontIcon 的 FontSize 当尺寸——Fluent 图标在 20 的字号里只画 ~16dip，四周是留白。
-    /// </summary>
-    private const double ExpandedKnobSize = 16;
-
-    private const int ExpandMs = 250;   // 进场（≈ ControlNormalAnimationDuration）
-    private const int CollapseMs = 167; // 退场（≈ ControlFastAnimationDuration）
-    private const int GlideMs = 120;    // 点色带取色后，滑块滑到落点的时长（让人看清选了哪个色）
-
-    private FrameworkElement? _strip;  // 工具栏里的色带（AttachStrip 给，Open 时读它的位置与宽高）
-    private Border? _stripHost;
-    private FrameworkElement? _spacer; // 按钮栏里的占位块（与色带同步变宽，推开右侧按钮）
-    private double _stripLeft;         // 色带左缘在覆盖层坐标里的位置（展开期间不变）
-    private double _stripTop;
-    private double _stripHeight;
-
-    /// <summary>方块在窗口里的矩形（宿主在隐藏它之前量好；收起时滑块要回到这里）。</summary>
-    private Rect _squareRect;
-
-    private Color _pending;            // 正在拖的颜色（松手才交回宿主）
-    private bool _open;
-    private bool _dragging;
-    private bool _gradientBuilt;
-
-    /// <summary>正在跑的动画：Storyboard 播完会保持动画值、盖住之后的直接赋值，所以要记账（见类注释）。</summary>
-    private Storyboard? _running;
+    private uint? _pointerId;
+    private Point _pressPoint;
+    private bool _dragStarted;
+    private double _startPosition;
+    private Color _startColor;
+    private Color _pending;
+    private Storyboard? _transition;
 
     public HighlightPicker()
     {
         InitializeComponent();
-
-        // 按下：滑块会在 Layer 上冒泡；色带（在工具栏里）由 AttachStrip 单独接
-        Layer.PointerPressed += OnAnyPointerPressed;
-        Layer.PointerMoved += OnAnyPointerMoved;
-        Layer.PointerReleased += OnAnyPointerReleased;
-        Layer.PointerCaptureLost += OnAnyPointerCaptureLost;
+        Knob.Width = KnobSize;
+        Knob.Height = KnobSize;
+        Strip.Width = StripWidth;
+        Strip.Height = StripHeight;
+        Canvas.SetTop(Strip, KnobHalf - StripHeight / 2);
+        Strip.Background = CreateHueGradient();
     }
 
-    /// <summary>松手选定了新颜色（在收起动画之前抛出，好让宿主的方块同步换色）。</summary>
     public event EventHandler<Color>? ColorPicked;
-
-    /// <summary>收起动画播完（宿主据此把工具栏那个方块放回来）。</summary>
+    public event EventHandler? Opened;
     public event EventHandler? Closed;
+    public bool IsOpen { get; private set; }
 
-    /// <summary>是否已展开。</summary>
-    public bool IsOpen => _open;
-
-    /// <summary>
-    /// 接上宿主按钮栏里的两件东西：色带（<paramref name="strip"/>，按钮**底下**那层，负责画）
-    /// 与占位块（<paramref name="spacer"/>，按钮栏里的普通成员，负责把右侧按钮推开）。
-    /// 两者同步变宽，视觉上就是"色带从方块处向右长出来、右侧按钮让位"。
-    /// </summary>
-    public void AttachStrip(Border strip, FrameworkElement spacer)
+    public void Attach(Border swatch, FrameworkElement leftGroup, FrameworkElement rightGroup)
     {
-        ArgumentNullException.ThrowIfNull(strip);
-        ArgumentNullException.ThrowIfNull(spacer);
-        _stripHost = strip;
-        _spacer = spacer;
-        strip.PointerPressed += OnAnyPointerPressed;
+        _swatch = swatch;
+        _leftGroup = leftGroup;
+        _rightGroup = rightGroup;
+        leftGroup.RenderTransform = _leftShift;
+        rightGroup.RenderTransform = _rightShift;
     }
 
-    /// <summary>
-    /// 展开：色带从 <paramref name="squareRect"/>（宿主在**隐藏方块之前**量好的窗口矩形）
-    /// 处向右长到 <see cref="StripWidthDips"/>；滑块从方块的大小与位置滑到
-    /// <paramref name="current"/> 在带上的位置。
-    /// </summary>
-    /// <param name="pushWidth">
-    /// 右侧内容要让出多宽——**由宿主量算**：它要保证色带右端到右边分割线的距离，
-    /// 等于按钮左缘到左边分割线的距离（见 MainWindow.OnHighlightRightTapped）。
-    /// </param>
-    public void Open(Rect squareRect, Color current, double pushWidth)
+    internal void TrackPress(PointerRoutedEventArgs e)
     {
-        _running?.Stop(); // 放掉上一轮的保持值
-        _running = null;
-
-        if (_stripHost is not { } strip)
+        var point = e.GetCurrentPoint(this);
+        if (_pointerId is null && point.PointerDeviceType == PointerDeviceType.Mouse &&
+            point.Properties.PointerUpdateKind == PointerUpdateKind.LeftButtonPressed)
         {
-            return; // 没接色带：什么都不做（宿主接线漏了也不会崩）
+            _pointerId = e.Pointer.PointerId;
+            _pressPoint = point.Position;
+            _dragStarted = false;
         }
-        _strip = strip;
-        _squareRect = squareRect;
-        _pending = current;
-        _open = true;
-        _dragging = false;
-        _pushWidth = pushWidth;
-
-        BuildHueGradient(strip);
-
-        // 色带左缘对齐**方块左缘**：两边都在窗口坐标系里量（平移量的差值与坐标系无关），再向右长
-        if (strip.RenderTransform is TranslateTransform shift)
-        {
-            shift.X = 0; // 量之前归零：TransformToVisual 会把变换算进去
-            double stripLeft = strip.TransformToVisual(Layer)
-                .TransformBounds(new Rect(0, 0, strip.ActualWidth, strip.ActualHeight)).X;
-            shift.X = squareRect.X - stripLeft;
-        }
-
-        // 色带的窗口坐标在展开那一刻量一次——展开期间它的左缘不动。
-        var stripOrigin = strip.TransformToVisual(Layer).TransformPoint(new Point(0, 0));
-        _stripLeft = stripOrigin.X;
-        _stripTop = stripOrigin.Y;
-        _stripHeight = strip.ActualHeight;
-
-        // 命中带：带子上下各留 14——细带只有 6dip 高，按视觉位置点很容易点空，
-        // 点空会走"点别处＝取消"那条路（颜色没改就收起）。左右**不外扩**：右边紧邻分隔线/H1，
-        // 外扩会盖住它们的边缘。滑块在它上面，事件都走同一套处理。
-        const double hitPadY = 14d;
-        HitZone.Width = StripWidthDips;
-        HitZone.Height = _stripHeight + (hitPadY * 2d);
-        HitZoneShift.X = _stripLeft;
-        HitZoneShift.Y = _stripTop - hitPadY;
-        HitZone.Visibility = Visibility.Visible;
-
-        // 基准值先设成**终态**：动画只负责过程，某条没跑成也不会留下坏状态。
-        // （同一帧里 Begin() 就挂上了动画，所以不会闪终态——首帧读到的仍是 From。）
-        strip.Width = StripWidthDips;
-        strip.Opacity = 1;
-        if (_spacer is { } pushFinal)
-        {
-            pushFinal.Width = _pushWidth;
-        }
-        SetKnobVisual(KnobCenterXFor(current));
-        Knob.Opacity = 1;
-        Knob.Background = new SolidColorBrush(current); // 滑块＝当前色（没有画刷的 Border 不参与命中测试）
-        Layer.Visibility = Visibility.Visible;
-
-        var story = new Storyboard();
-        Add(story, strip, "Width", 0d, StripWidthDips, ExpandMs);
-        Add(story, strip, "Opacity", 0d, 1d, ExpandMs);
-        if (_spacer is { } push)
-        {
-            Add(story, push, "Width", 0d, _pushWidth, ExpandMs); // 与色带同步：右侧按钮让位
-        }
-        Add(story, Knob, "Opacity", 0d, 1d, ExpandMs);
-        Add(story, KnobShift, "X", CollapsedKnobLeft, KnobCenterXFor(current) - (CollapsedKnobSize / 2), ExpandMs);
-        Add(story, KnobShift, "Y", CollapsedKnobTop, KnobTop, ExpandMs);
-        Add(story, KnobScale, "ScaleX", 1d, ExpandedKnobScale, ExpandMs);
-        Add(story, KnobScale, "ScaleY", 1d, ExpandedKnobScale, ExpandMs);
-        story.Completed += (_, _) => Finish(story, BakeExpanded);
-        _running = story;
-        story.Begin();
     }
 
-    /// <summary>收起（无论有没有选到色）。<paramref name="apply"/> 为真时先抛出 <see cref="ColorPicked"/>。</summary>
-    public void Close(bool apply)
+    internal void TrackMove(PointerRoutedEventArgs e)
     {
-        if (!_open || _strip is not { } strip)
+        if (_pointerId != e.Pointer.PointerId)
         {
             return;
         }
-        _open = false;
-        _dragging = false;
+
+        var point = e.GetCurrentPoint(this);
+        if (!point.Properties.IsLeftButtonPressed)
+        {
+            return;
+        }
+
+        if (!_dragStarted)
+        {
+            double dx = point.Position.X - _pressPoint.X;
+            double dy = point.Position.Y - _pressPoint.Y;
+            if (dx * dx + dy * dy < DragThreshold * DragThreshold)
+            {
+                return;
+            }
+
+            _dragStarted = true;
+            OpenAt(point.Position.X);
+        }
+        else if (IsOpen)
+        {
+            UpdateFromPointer(point.Position.X);
+        }
+    }
+
+    internal bool FinishPress(PointerRoutedEventArgs e)
+    {
+        if (_pointerId != e.Pointer.PointerId)
+        {
+            return false;
+        }
+
+        var point = e.GetCurrentPoint(this);
+        if (point.Properties.IsLeftButtonPressed)
+        {
+            return _dragStarted;
+        }
+
+        _pointerId = null;
+        if (IsOpen)
+        {
+            UpdateFromPointer(point.Position.X);
+            Close(apply: true);
+        }
+        return _dragStarted;
+    }
+
+    internal void CancelPress(PointerRoutedEventArgs e)
+    {
+        if (_pointerId == e.Pointer.PointerId)
+        {
+            _pointerId = null;
+            Close(apply: false);
+        }
+    }
+
+    private void OpenAt(double pointerX)
+    {
+        _transition?.Stop();
+        _transition = null;
+        _leftShift.X = 0;
+        _rightShift.X = 0;
+
+        Rect swatchRect = BoundsOf(_swatch);
+        _startColor = ((SolidColorBrush)_swatch.Background).Color;
+        _pending = _startColor;
+        _startPosition = Math.Clamp(HueOf(_startColor) / (double)HueEnd, 0, 1);
+
+        // 用起始色在色带上的位置反推左端。拖动开始后，两端固定，
+        // 指针可以直接在整条色带上取色，不会把色带一起拖走。
+        TrackShift.X = pointerX - KnobHalf - _startPosition * Travel;
+        TrackShift.Y = swatchRect.Y + swatchRect.Height / 2 - KnobHalf;
+        SetKnob(_startPosition);
+        double leftOffset = Math.Min(0, TrackShift.X - ToolbarGap - BoundsOf(_leftGroup).Right);
+        double rightOffset = Math.Max(0, TrackShift.X + StripWidth + ToolbarGap - BoundsOf(_rightGroup).X);
+
+        _swatch.Opacity = 0;
+        Layer.Visibility = Visibility.Visible;
+        IsOpen = true;
+        Opened?.Invoke(this, EventArgs.Empty);
+
+        StripScale.ScaleX = 1;
+        Strip.Opacity = 1;
+        _leftShift.X = leftOffset;
+        _rightShift.X = rightOffset;
+        if (!_uiSettings.AnimationsEnabled)
+        {
+            return;
+        }
+
+        var story = new Storyboard();
+        AddAnimation(story, StripScale, "ScaleX", KnobSize / StripWidth, 1);
+        AddAnimation(story, Strip, "Opacity", 0, 1);
+        AddAnimation(story, _leftShift, "X", 0, leftOffset);
+        AddAnimation(story, _rightShift, "X", 0, rightOffset);
+        RunTransition(story);
+    }
+
+    private void UpdateFromPointer(double pointerX)
+    {
+        double position = Math.Clamp((pointerX - TrackShift.X - KnobHalf) / Travel, 0, 1);
+        _pending = Math.Abs(position - _startPosition) < 0.0001
+            ? _startColor
+            : FromHue((float)(position * HueEnd));
+        SetKnob(position);
+    }
+
+    private void SetKnob(double position)
+    {
+        KnobShift.X = position * Travel;
+        Knob.Background = new SolidColorBrush(_pending);
+
+        // 缩放色带时以滑块为支点。即使在展开过程中继续拖，滑块也会对准当前色。
+        StripScale.CenterX = KnobShift.X + KnobHalf;
+    }
+
+    public void Close(bool apply)
+    {
+        if (!IsOpen)
+        {
+            return;
+        }
+        IsOpen = false;
 
         if (apply)
         {
             ColorPicked?.Invoke(this, _pending);
         }
 
-        var story = new Storyboard();
-        // From 取"当前值"：半途打断也能从眼下这一帧接着收（读属性拿到的是动画中的实际值）
-        Add(story, strip, "Width", strip.Width, 0d, CollapseMs);
-        Add(story, strip, "Opacity", strip.Opacity, 0d, CollapseMs);
-        if (_spacer is { } push)
+        if (!_uiSettings.AnimationsEnabled)
         {
-            Add(story, push, "Width", push.Width, 0d, CollapseMs);
-        }
-        Add(story, Knob, "Opacity", Knob.Opacity, 0d, CollapseMs);
-        Add(story, KnobShift, "X", KnobShift.X, CollapsedKnobLeft, CollapseMs);
-        Add(story, KnobShift, "Y", KnobShift.Y, CollapsedKnobTop, CollapseMs);
-        Add(story, KnobScale, "ScaleX", KnobScale.ScaleX, 1d, CollapseMs);
-        Add(story, KnobScale, "ScaleY", KnobScale.ScaleY, 1d, CollapseMs);
-        story.Completed += (_, _) =>
-        {
-            Finish(story, BakeCollapsed);
-            Closed?.Invoke(this, EventArgs.Empty);
-        };
-
-        _running?.Stop();
-        _running = story;
-        story.Begin();
-    }
-
-    /// <summary>动画收尾：先把终值写回属性，再停掉动画（否则保持值会盖住以后的直接赋值）。</summary>
-    private void Finish(Storyboard story, Action bake)
-    {
-        bake();
-        story.Stop();
-        if (ReferenceEquals(_running, story))
-        {
-            _running = null;
-        }
-    }
-
-    /// <summary>
-    /// 松手：滑块还没到落点就先短促地滑过去（≤ <see cref="GlideMs"/>，让人看清选了哪个色），
-    /// 到了再收起；拖拽期间滑块本来就跟着指针，直接收。
-    /// </summary>
-    private void GlideThenClose()
-    {
-        if (_strip is null)
-        {
+            _transition?.Stop();
+            _transition = null;
+            FinishClose();
             return;
         }
 
-        double target = KnobCenterXFor(_pending) - (CollapsedKnobSize / 2);
-        if (Math.Abs(KnobShift.X - target) < 0.5)
-        {
-            Close(apply: true);
-            return;
-        }
-
+        Rect swatchRect = BoundsOf(_swatch);
+        double homeX = swatchRect.X + swatchRect.Width / 2 - StripScale.CenterX;
         var story = new Storyboard();
-        Add(story, KnobShift, "X", KnobShift.X, target, GlideMs);
-        story.Completed += (_, _) =>
-        {
-            Finish(story, () => SetKnobVisual(KnobCenterXFor(_pending)));
-            Close(apply: true);
-        };
-        _running?.Stop();
-        _running = story;
-        story.Begin();
+        AddAnimation(story, TrackShift, "X", TrackShift.X, homeX);
+        AddAnimation(story, StripScale, "ScaleX", StripScale.ScaleX, KnobSize / StripWidth);
+        AddAnimation(story, Strip, "Opacity", Strip.Opacity, 0);
+        AddAnimation(story, _leftShift, "X", _leftShift.X, 0);
+        AddAnimation(story, _rightShift, "X", _rightShift.X, 0);
+        RunTransition(story, FinishClose);
     }
 
-    private void BakeExpanded()
+    private void FinishClose()
     {
-        if (_strip is { } strip)
-        {
-            strip.Width = StripWidthDips;
-            strip.Opacity = 1;
-        }
-        if (_spacer is { } push)
-        {
-            push.Width = _pushWidth;
-        }
-        SetKnobVisual(KnobCenterXFor(_pending));
-        Knob.Opacity = 1;
-    }
-
-    private void BakeCollapsed()
-    {
-        if (_strip is { } strip)
-        {
-            strip.Width = 0;
-            strip.Opacity = 0;
-        }
-        if (_spacer is { } push)
-        {
-            push.Width = 0;
-        }
-        KnobShift.X = CollapsedKnobLeft;
-        KnobShift.Y = CollapsedKnobTop;
-        KnobScale.ScaleX = 1d; // 收起＝原尺寸（16，与工具栏那个方块一致）
-        KnobScale.ScaleY = 1d;
-        Knob.Opacity = 0;
-        HitZone.Visibility = Visibility.Collapsed;
         Layer.Visibility = Visibility.Collapsed;
+        _leftShift.X = 0;
+        _rightShift.X = 0;
+        _swatch.Opacity = 1;
+        Closed?.Invoke(this, EventArgs.Empty);
     }
 
-    // ---- 拖拽取色 ----
+    private Rect BoundsOf(FrameworkElement element) => element.TransformToVisual(this)
+        .TransformBounds(new Rect(0, 0, element.ActualWidth, element.ActualHeight));
 
-    /// <summary>按下：滑块（Layer 的子元素）与色带（工具栏里那位）共用同一个入口。</summary>
-    private void OnAnyPointerPressed(object sender, PointerRoutedEventArgs e)
+    private LinearGradientBrush CreateHueGradient()
     {
-        if (!_open || !e.GetCurrentPoint(Layer).Properties.IsLeftButtonPressed)
+        // 渐变首尾对应滑块中心能到达的两端，扣除色带边框占用的 1 DIP。
+        double inset = (KnobHalf - Strip.BorderThickness.Left) /
+            (StripWidth - Strip.BorderThickness.Left - Strip.BorderThickness.Right);
+        var brush = new LinearGradientBrush
         {
-            return;
-        }
-        e.Handled = true;
-        _dragging = true;
-        Layer.CapturePointer(e.Pointer); // 捕获在覆盖层上：后续移动都回到这里，色带那边不用管
-        UpdateFromPointer(e);
-    }
-
-    private void OnAnyPointerMoved(object sender, PointerRoutedEventArgs e)
-    {
-        if (!_dragging)
-        {
-            return;
-        }
-        e.Handled = true;
-        UpdateFromPointer(e);
-    }
-
-    private void OnAnyPointerReleased(object sender, PointerRoutedEventArgs e)
-    {
-        if (!_dragging)
-        {
-            return;
-        }
-        e.Handled = true;
-        Layer.ReleasePointerCapture(e.Pointer);
-        GlideThenClose(); // 松手：滑块先滑到落点（让人看清选了哪个色），到了再收起
-    }
-
-    private void OnAnyPointerCaptureLost(object sender, PointerRoutedEventArgs e)
-    {
-        if (_dragging)
-        {
-            Close(apply: true);
-        }
-    }
-
-    /// <summary>按指针位置更新滑块（指针到色带左缘的距离 → 色相；滑块填充实时跟着走）。</summary>
-    private void UpdateFromPointer(PointerRoutedEventArgs e)
-    {
-        double x = e.GetCurrentPoint(Layer).Position.X;
-        double travel = Math.Max(1d, StripWidthDips - ExpandedKnobSize);
-        double t = Math.Clamp((x - _stripLeft - (ExpandedKnobSize / 2)) / travel, 0d, 1d);
-        _pending = FromHue((float)(t * HueEnd));
-
-        SetKnobVisual(KnobCenterXFor(_pending));
-        Knob.Background = new SolidColorBrush(_pending);
-    }
-
-    // ---- 几何小工具 ----
-
-    /// <summary>展开后滑块的顶边：色带很细（6dip），滑块上下都探出去——就是滑块的样式。</summary>
-    private double KnobTop => _stripTop + ((_stripHeight - CollapsedKnobSize) / 2);
-
-    /// <summary>展开时的缩放：现在与收起同尺寸，所以是 1（不再缩放；常量改回一大一小就自动生效）。</summary>
-    private double ExpandedKnobScale => ExpandedKnobSize / CollapsedKnobSize;
-
-    private double CollapsedKnobLeft => _squareRect.X + (_squareRect.Width / 2) - (CollapsedKnobSize / 2);
-
-    private double CollapsedKnobTop => _squareRect.Y + (_squareRect.Height / 2) - (CollapsedKnobSize / 2);
-
-    /// <summary>某个颜色在色带上的滑块中心 X（按色相定位；两端留半个滑块）。</summary>
-    private double KnobCenterXFor(Color color)
-    {
-        float hue = HueOf(color);
-        double t = Math.Clamp(hue / HueEnd, 0f, 1f);
-        return _stripLeft + (ExpandedKnobSize / 2) + (t * (StripWidthDips - ExpandedKnobSize));
-    }
-
-    private void SetKnobVisual(double centerX)
-    {
-        KnobShift.X = centerX - (CollapsedKnobSize / 2);
-        KnobShift.Y = KnobTop;
-        KnobScale.ScaleX = ExpandedKnobScale;
-        KnobScale.ScaleY = ExpandedKnobScale;
-    }
-
-    /// <summary>色带的色标只铺一次（宿主每次展开都给同一条）。</summary>
-    private void BuildHueGradient(Border strip)
-    {
-        if (_gradientBuilt || strip.Background is not LinearGradientBrush brush)
-        {
-            return;
-        }
+            StartPoint = new Point(inset, 0),
+            EndPoint = new Point(1 - inset, 0),
+        };
         for (int i = 0; i <= HueSteps; i++)
         {
             double offset = (double)i / HueSteps;
@@ -421,10 +263,8 @@ internal sealed partial class HighlightPicker : UserControl
                 Color = FromHue((float)(offset * HueEnd)),
             });
         }
-        _gradientBuilt = true;
+        return brush;
     }
-
-    // ---- 色相 ↔ RGB（S/V 固定，见类注释）----
 
     private static Color FromHue(float hue)
     {
@@ -465,19 +305,31 @@ internal sealed partial class HighlightPicker : UserControl
         return (float)(((hue % 360d) + 360d) % 360d);
     }
 
-    // ---- 动画小工具（与编辑器里那套写法保持一致）----
+    private void RunTransition(Storyboard story, Action? onCompleted = null)
+    {
+        _transition?.Stop();
+        _transition = story;
+        story.Completed += (_, _) =>
+        {
+            if (ReferenceEquals(_transition, story))
+            {
+                onCompleted?.Invoke();
+                story.Stop();
+                _transition = null;
+            }
+        };
+        story.Begin();
+    }
 
-    private static void Add(Storyboard story, DependencyObject target, string property,
-        double from, double to, int milliseconds)
+    private static void AddAnimation(Storyboard story, DependencyObject target, string property,
+        double from, double to)
     {
         var animation = new DoubleAnimation
         {
             From = from,
             To = to,
-            Duration = new Duration(TimeSpan.FromMilliseconds(milliseconds)),
+            Duration = new Duration(TimeSpan.FromMilliseconds(TransitionMs)),
             EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
-            // 宽度这类布局属性的动画必须显式允许（同 ScrollBarReveal 的宽度动画）
-            EnableDependentAnimation = true,
         };
         Storyboard.SetTarget(animation, target);
         Storyboard.SetTargetProperty(animation, property);

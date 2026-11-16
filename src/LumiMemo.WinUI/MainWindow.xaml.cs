@@ -42,9 +42,7 @@ public sealed partial class MainWindow : Window
     /// <summary>工具栏那两个「当前值」（文字底色的颜色、常用标题级别）：全局一份、随设置落盘。</summary>
     private readonly ToolbarPreferences _toolbar;
 
-    /// <summary>工具栏底色按钮的悬停提示（与 MainWindow.xaml 里那串字保持一致）：
-    /// 展开色带期间要摘掉——它悬在按钮上方，会挡住刚铺开的色带。</summary>
-    private const string HighlightButtonTip = "文字底色（左键＝用当前色刷选中文字；右键＝展开色带取色）";
+    private const string HighlightButtonTip = "文字底色（左键点击切换，按住左键拖动取色）";
 
     /// <summary>工具栏「常用标题」按钮的悬停提示（与 MainWindow.xaml 里那串字保持一致）：
     /// 展开期间要摘掉——那时它已经不是"一个按钮"了，提示会浮在刚露出来的 1/2/3 上面。</summary>
@@ -96,22 +94,19 @@ public sealed partial class MainWindow : Window
         ConfigureWindow();
         _backdrop = AcrylicBackdrop.Apply(this, Root);
 
-        // 文字底色：工具栏的圆角方块按钮 ↔ 展开式色带取色器（色带本体在按钮栏里，接给取色器驱动）
-        HighlightPickerLayer.AttachStrip(HighlightStrip, HighlightStripSpacer);
+        HighlightButton.Picker = HighlightPickerLayer;
+        HighlightPickerLayer.Attach(HighlightButtonFill, HighlightLeftGroup, HighlightRightGroup);
         HighlightPickerLayer.ColorPicked += (_, color) => ApplyHighlight(color);
-        HighlightPickerLayer.Closed += (_, _) =>
-        {
-            HighlightButtonFill.Visibility = Visibility.Visible;
-            SetHighlightButtonIdle(false);
-        };
+        HighlightPickerLayer.Opened += (_, _) => SetHighlightButtonIdle(true);
+        HighlightPickerLayer.Closed += (_, _) => SetHighlightButtonIdle(false);
+        SetHighlightButtonIdle(false);
 
         // 底色与常用标题级别都是**全局**值：别的便签窗口改了，这里也要跟上
         _toolbar.HighlightColorChanged += OnToolbarHighlightColorChanged;
         _toolbar.HeadingLevelChanged += OnToolbarHeadingLevelChanged;
         _headingBadgeRestingScale = HeadingFaceLevelSlot.FontSize / HeadingBadgeText.FontSize;
 
-        // 角标是浮层上的元素，位置得自己算：每次布局完校一次——它要跟着 H 一起被推走
-        // （底色色带展开时整组会右移），展开期间还要停在选中的那个格子上。
+        // 角标在 H 所在的组内，每次布局后校准到标题按钮或当前选项。
         // 顺序有讲究：先把展开的那一排对齐到"下角标"的高度，再校角标位置（它量的是那一排）。
         HeadingBadgeLayer.LayoutUpdated += (_, _) =>
         {
@@ -740,60 +735,17 @@ public sealed partial class MainWindow : Window
         TodoButton.IsChecked = _editor.CaretIsTodo;
     }
 
-    /// <summary>
-    /// 文字底色：工具栏上那个圆角方块**就是**按钮本体，底色＝当前色。
-    /// 左键＝把当前色刷到选中文字；右键＝展开色带取色（见 <see cref="HighlightPicker"/>）。
-    /// </summary>
-    /// <remarks>
-    /// 色值给实色：RTF 颜色表没有 alpha 通道，带透明度的底色在复制粘贴时会被抹平
-    /// （高亮面积小，实色不影响毛玻璃观感）。
-    /// 没选中文字时 <c>SetInlineBackground</c> 自己会忽略——这时只更新"当前色"（按钮换色），不报错。
-    /// </remarks>
-    /// <summary>
-    /// 左键：选中文字**已经是当前色** → 再点一次＝取消（按钮保留当前色，方便再刷回来）；否则刷成当前色。
-    /// </summary>
+    /// <summary>点击切换选中文字的当前底色。</summary>
     private void OnHighlightClick(object sender, RoutedEventArgs e)
     {
-        var color = ToColor32(_toolbar.HighlightColor);
-        _editor.SetInlineBackground(_editor.SelectionHasBackground(color) ? null : color);
-    }
-
-    /// <summary>右键：色带在按钮栏里向右展开（右侧按钮被推开），方块滑到当前色的位置上当滑块。</summary>
-    private void OnHighlightRightTapped(object sender, RightTappedRoutedEventArgs e)
-    {
-        if (HighlightPickerLayer.IsOpen)
+        if (HighlightButton.SuppressClick || HighlightPickerLayer.IsOpen)
         {
             return;
         }
 
-        // 量三样东西（都在**隐藏方块之前**量）：方块的矩形、**收起时按钮右缘到右分割线的净空**、
-        // 右分割线现在的位置。Collapsed 的元素量不到有效坐标（这是上一版动画失效的根因）。
-        Rect squareRect = RectInRoot(HighlightButtonFill);
-        double gap = RectInRoot(HighlightRightDivider).X - RectInRoot(HighlightButton).Right;
-        double stripRight = squareRect.X + HighlightPicker.StripWidthDips; // 色带左缘对齐方块左缘
-
-        // 让位宽：**先按算式给初值，再强制排一次版、量真实结果修正一次**。
-        // 为什么不直接信算式：占位块变宽 1dip，右边到底是不是正好右移 1dip，取决于
-        // StackPanel 的 Spacing 与那对负外边距怎么组合——这一处推错过两回，所以改成"量"。
-        // 修正之后：色带右端到右分割线的距离，**正好等于**左侧那个净空（gap）。
-        double pushWidth = Math.Max(0, stripRight + gap- RectInRoot(HighlightRightDivider).X);
-
-        HighlightStripSpacer.Width = pushWidth;
-        Root.UpdateLayout(); // 强制排一次：下面量到的就是"展开后"的真实位置
-        pushWidth = Math.Max(0,
-            pushWidth + gap + 8 - (RectInRoot(HighlightRightDivider).X - stripRight));
-        HighlightStripSpacer.Width = 0; // 还原成起点：展开动画从 0 开始长
-
-        HighlightButtonFill.Visibility = Visibility.Collapsed; // 方块交给滑块接管：视觉上就是它滑过去了
-        SetHighlightButtonIdle(true);
-        HighlightPickerLayer.Open(squareRect, _toolbar.HighlightColor, pushWidth);
-        e.Handled = true;
+        var color = ToColor32(_toolbar.HighlightColor);
+        _editor.SetInlineBackground(_editor.SelectionHasBackground(color) ? null : color);
     }
-
-    /// <summary>元素在窗口根坐标系里的矩形。量坐标一律走它（别拿 Canvas.Left/Top 那套去推）。</summary>
-    private Rect RectInRoot(FrameworkElement element) =>
-        element.TransformToVisual(Root)
-            .TransformBounds(new Rect(0, 0, element.ActualWidth, element.ActualHeight));
 
     /// <summary>色带松手：底色记进**全局设置**（落盘；别的便签窗口跟着换色），并刷到选中文字。</summary>
     private void ApplyHighlight(Windows.UI.Color color)
@@ -928,17 +880,16 @@ public sealed partial class MainWindow : Window
         "FocusVisualSecondaryBrush",
     ];
 
-    /// <summary>展开色带期间把底色按钮整个让位（连命中测试一起关掉：那时候点它就是"点别处"）。</summary>
+    /// <summary>展开色带期间隐藏按钮的交互外观，让按钮继续接收捕获的指针。</summary>
     private void SetHighlightButtonIdle(bool idle)
     {
         SetButtonIdle(HighlightButton, idle);
-        HighlightButton.IsHitTestVisible = !idle;
         ToolTipService.SetToolTip(HighlightButton, idle ? null : HighlightButtonTip);
     }
 
     /// <summary>
     /// 展开 1/2/3 期间把 H "熄灭"（背景/边框/焦点框都不画）。
-    /// 与底色按钮的区别：**它仍然可点**——点一下＝收起，所以命中测试照旧开着。
+    /// 点一下可以收起选项。
     /// </summary>
     private void SetHeadingButtonActive(bool active)
     {
@@ -951,7 +902,7 @@ public sealed partial class MainWindow : Window
     {
         var source = e.OriginalSource as DependencyObject;
 
-        if (HighlightPickerLayer.IsOpen && !IsWithin(source, HighlightPickerLayer))
+        if (HighlightPickerLayer.IsOpen && !IsWithin(source, HighlightButton))
         {
             HighlightPickerLayer.Close(apply: false);
         }
