@@ -19,9 +19,7 @@
                 </Border.RenderTransform>
             </Border>
             <Border x:Name="Knob"
-                    CornerRadius="4"
-                    BorderBrush="#8075697C"
-                    BorderThickness="1">
+                    Style="{StaticResource LumiToolbarSwatchStyle}">
                 <Border.RenderTransform>
                     <TranslateTransform x:Name="KnobShift" />
                 </Border.RenderTransform>

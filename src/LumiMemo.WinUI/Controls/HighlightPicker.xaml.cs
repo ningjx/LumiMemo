@@ -1,12 +1,9 @@
-using Microsoft.UI.Input;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
-using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Animation;
 using Windows.Foundation;
 using Windows.UI;
-using Windows.UI.ViewManagement;
 
 namespace LumiMemo.WinUI.Controls;
 
@@ -17,29 +14,23 @@ internal sealed partial class HighlightPicker : UserControl
     private const double KnobSize = 16;
     private const double KnobHalf = KnobSize / 2;
     private const double Travel = StripWidth - KnobSize;
-    private const double DragThreshold = 4;
     private const double ToolbarGap = 4;
-    private const int TransitionMs = 167;
 
     private const float HueEnd = 300f;
     private const double HueSaturation = 0.55;
     private const double HueValue = 0.99;
     private const int HueSteps = 15;
 
-    private readonly UISettings _uiSettings = new();
+    private readonly ToolbarPickerAnimation _animation = new();
     private readonly TranslateTransform _leftShift = new();
     private readonly TranslateTransform _rightShift = new();
     private Border _swatch = null!;
     private FrameworkElement _leftGroup = null!;
     private FrameworkElement _rightGroup = null!;
 
-    private uint? _pointerId;
-    private Point _pressPoint;
-    private bool _dragStarted;
     private double _startPosition;
     private Color _startColor;
     private Color _pending;
-    private Storyboard? _transition;
 
     public HighlightPicker()
     {
@@ -66,86 +57,9 @@ internal sealed partial class HighlightPicker : UserControl
         rightGroup.RenderTransform = _rightShift;
     }
 
-    internal void TrackPress(PointerRoutedEventArgs e)
+    public void Open(double pointerX)
     {
-        var point = e.GetCurrentPoint(this);
-        if (_pointerId is null && point.PointerDeviceType == PointerDeviceType.Mouse &&
-            point.Properties.PointerUpdateKind == PointerUpdateKind.LeftButtonPressed)
-        {
-            _pointerId = e.Pointer.PointerId;
-            _pressPoint = point.Position;
-            _dragStarted = false;
-        }
-    }
-
-    internal void TrackMove(PointerRoutedEventArgs e)
-    {
-        if (_pointerId != e.Pointer.PointerId)
-        {
-            return;
-        }
-
-        var point = e.GetCurrentPoint(this);
-        if (!point.Properties.IsLeftButtonPressed)
-        {
-            return;
-        }
-
-        if (!_dragStarted)
-        {
-            double dx = point.Position.X - _pressPoint.X;
-            double dy = point.Position.Y - _pressPoint.Y;
-            if (dx * dx + dy * dy < DragThreshold * DragThreshold)
-            {
-                return;
-            }
-
-            _dragStarted = true;
-            OpenAt(point.Position.X);
-        }
-        else if (IsOpen)
-        {
-            UpdateFromPointer(point.Position.X);
-        }
-    }
-
-    internal bool FinishPress(PointerRoutedEventArgs e)
-    {
-        if (_pointerId != e.Pointer.PointerId)
-        {
-            return false;
-        }
-
-        var point = e.GetCurrentPoint(this);
-        if (point.Properties.IsLeftButtonPressed)
-        {
-            return _dragStarted;
-        }
-
-        _pointerId = null;
-        if (IsOpen)
-        {
-            UpdateFromPointer(point.Position.X);
-            Close(apply: true);
-        }
-        return _dragStarted;
-    }
-
-    internal void CancelPress(PointerRoutedEventArgs e)
-    {
-        if (_pointerId == e.Pointer.PointerId)
-        {
-            _pointerId = null;
-            Close(apply: false);
-        }
-    }
-
-    private void OpenAt(double pointerX)
-    {
-        _transition?.Stop();
-        _transition = null;
-        _leftShift.X = 0;
-        _rightShift.X = 0;
+        Dismiss();
 
         Rect swatchRect = BoundsOf(_swatch);
         _startColor = ((SolidColorBrush)_swatch.Background).Color;
@@ -169,21 +83,26 @@ internal sealed partial class HighlightPicker : UserControl
         Strip.Opacity = 1;
         _leftShift.X = leftOffset;
         _rightShift.X = rightOffset;
-        if (!_uiSettings.AnimationsEnabled)
+        if (!_animation.Enabled)
         {
             return;
         }
 
         var story = new Storyboard();
-        AddAnimation(story, StripScale, "ScaleX", KnobSize / StripWidth, 1);
-        AddAnimation(story, Strip, "Opacity", 0, 1);
-        AddAnimation(story, _leftShift, "X", 0, leftOffset);
-        AddAnimation(story, _rightShift, "X", 0, rightOffset);
-        RunTransition(story);
+        ToolbarPickerAnimation.Add(story, StripScale, "ScaleX", KnobSize / StripWidth, 1);
+        ToolbarPickerAnimation.Add(story, Strip, "Opacity", 0, 1);
+        ToolbarPickerAnimation.Add(story, _leftShift, "X", 0, leftOffset);
+        ToolbarPickerAnimation.Add(story, _rightShift, "X", 0, rightOffset);
+        _animation.Run(story);
     }
 
-    private void UpdateFromPointer(double pointerX)
+    public void UpdateFromPointer(double pointerX)
     {
+        if (!IsOpen)
+        {
+            return;
+        }
+
         double position = Math.Clamp((pointerX - TrackShift.X - KnobHalf) / Travel, 0, 1);
         _pending = Math.Abs(position - _startPosition) < 0.0001
             ? _startColor
@@ -200,6 +119,22 @@ internal sealed partial class HighlightPicker : UserControl
         StripScale.CenterX = KnobShift.X + KnobHalf;
     }
 
+    public void Commit(double pointerX)
+    {
+        UpdateFromPointer(pointerX);
+        Close(apply: true);
+    }
+
+    public void Dismiss()
+    {
+        if (Layer.Visibility == Visibility.Visible)
+        {
+            IsOpen = false;
+            _animation.Stop();
+            FinishClose();
+        }
+    }
+
     public void Close(bool apply)
     {
         if (!IsOpen)
@@ -213,23 +148,21 @@ internal sealed partial class HighlightPicker : UserControl
             ColorPicked?.Invoke(this, _pending);
         }
 
-        if (!_uiSettings.AnimationsEnabled)
+        if (!_animation.Enabled)
         {
-            _transition?.Stop();
-            _transition = null;
-            FinishClose();
+            Dismiss();
             return;
         }
 
         Rect swatchRect = BoundsOf(_swatch);
         double homeX = swatchRect.X + swatchRect.Width / 2 - StripScale.CenterX;
         var story = new Storyboard();
-        AddAnimation(story, TrackShift, "X", TrackShift.X, homeX);
-        AddAnimation(story, StripScale, "ScaleX", StripScale.ScaleX, KnobSize / StripWidth);
-        AddAnimation(story, Strip, "Opacity", Strip.Opacity, 0);
-        AddAnimation(story, _leftShift, "X", _leftShift.X, 0);
-        AddAnimation(story, _rightShift, "X", _rightShift.X, 0);
-        RunTransition(story, FinishClose);
+        ToolbarPickerAnimation.Add(story, TrackShift, "X", TrackShift.X, homeX);
+        ToolbarPickerAnimation.Add(story, StripScale, "ScaleX", StripScale.ScaleX, KnobSize / StripWidth);
+        ToolbarPickerAnimation.Add(story, Strip, "Opacity", Strip.Opacity, 0);
+        ToolbarPickerAnimation.Add(story, _leftShift, "X", _leftShift.X, 0);
+        ToolbarPickerAnimation.Add(story, _rightShift, "X", _rightShift.X, 0);
+        _animation.Run(story, FinishClose);
     }
 
     private void FinishClose()
@@ -303,36 +236,5 @@ internal sealed partial class HighlightPicker : UserControl
             : max == g ? 60 * (((b - r) / span) + 2)
             : 60 * (((r - g) / span) + 4);
         return (float)(((hue % 360d) + 360d) % 360d);
-    }
-
-    private void RunTransition(Storyboard story, Action? onCompleted = null)
-    {
-        _transition?.Stop();
-        _transition = story;
-        story.Completed += (_, _) =>
-        {
-            if (ReferenceEquals(_transition, story))
-            {
-                onCompleted?.Invoke();
-                story.Stop();
-                _transition = null;
-            }
-        };
-        story.Begin();
-    }
-
-    private static void AddAnimation(Storyboard story, DependencyObject target, string property,
-        double from, double to)
-    {
-        var animation = new DoubleAnimation
-        {
-            From = from,
-            To = to,
-            Duration = new Duration(TimeSpan.FromMilliseconds(TransitionMs)),
-            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
-        };
-        Storyboard.SetTarget(animation, target);
-        Storyboard.SetTargetProperty(animation, property);
-        story.Children.Add(animation);
     }
 }

@@ -4,14 +4,12 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
-using Microsoft.UI.Xaml.Media.Animation;
 using LumiMemo.Core.Abstractions;
 using LumiMemo.Core.Models;
 using LumiMemo.WinUI.Controls;
 using LumiMemo.WinUI.Services;
 using LumiMemo.WinUI.ViewModels;
 using LumiText.WinUI.Controls;
-using Windows.Foundation;
 using Windows.Graphics;
 
 namespace LumiMemo.WinUI;
@@ -44,9 +42,7 @@ public sealed partial class MainWindow : Window
 
     private const string HighlightButtonTip = "文字底色（左键点击切换，按住左键拖动取色）";
 
-    /// <summary>工具栏「常用标题」按钮的悬停提示（与 MainWindow.xaml 里那串字保持一致）：
-    /// 展开期间要摘掉——那时它已经不是"一个按钮"了，提示会浮在刚露出来的 1/2/3 上面。</summary>
-    private const string HeadingButtonTip = "常用标题（左键＝选中文字则放大成该级字号／否则整段设为该级标题；右键＝改常用级别）";
+    private const string HeadingButtonTip = "字号（左键点击应用常用档，按住左键拖动选档）";
 
     public MainWindow(
         NoteViewModel viewModel,
@@ -94,25 +90,39 @@ public sealed partial class MainWindow : Window
         ConfigureWindow();
         _backdrop = AcrylicBackdrop.Apply(this, Root);
 
-        HighlightButton.Picker = HighlightPickerLayer;
         HighlightPickerLayer.Attach(HighlightButtonFill, HighlightLeftGroup, HighlightRightGroup);
         HighlightPickerLayer.ColorPicked += (_, color) => ApplyHighlight(color);
         HighlightPickerLayer.Opened += (_, _) => SetHighlightButtonIdle(true);
         HighlightPickerLayer.Closed += (_, _) => SetHighlightButtonIdle(false);
+        HighlightButton.DragStarted += x =>
+        {
+            HeadingPickerLayer.Dismiss();
+            HighlightPickerLayer.Open(x);
+        };
+        HighlightButton.DragMoved += HighlightPickerLayer.UpdateFromPointer;
+        HighlightButton.DragCompleted += HighlightPickerLayer.Commit;
+        HighlightButton.DragCanceled += () => HighlightPickerLayer.Close(apply: false);
         SetHighlightButtonIdle(false);
 
-        // 底色与常用标题级别都是**全局**值：别的便签窗口改了，这里也要跟上
+        HeadingPickerLayer.Attach(HeadingFace, HeadingLeftGroup, HeadingLeftDivider, ToolbarStatus);
+        HeadingPickerLayer.LevelPicked += level =>
+        {
+            _toolbar.SetHeadingLevel(level);
+            ApplyHeadingLevel();
+        };
+        HeadingPickerLayer.VisibilityChanged += SetHeadingButtonIdle;
+        HeadingButton.DragStarted += x =>
+        {
+            HighlightPickerLayer.Dismiss();
+            HeadingPickerLayer.Open(x, _toolbar.HeadingLevel);
+        };
+        HeadingButton.DragMoved += HeadingPickerLayer.UpdateFromPointer;
+        HeadingButton.DragCompleted += HeadingPickerLayer.Commit;
+        HeadingButton.DragCanceled += HeadingPickerLayer.Close;
+        SetHeadingButtonIdle(false);
+
         _toolbar.HighlightColorChanged += OnToolbarHighlightColorChanged;
         _toolbar.HeadingLevelChanged += OnToolbarHeadingLevelChanged;
-        _headingBadgeRestingScale = HeadingFaceLevelSlot.FontSize / HeadingBadgeText.FontSize;
-
-        // 角标在 H 所在的组内，每次布局后校准到标题按钮或当前选项。
-        // 顺序有讲究：先把展开的那一排对齐到"下角标"的高度，再校角标位置（它量的是那一排）。
-        HeadingBadgeLayer.LayoutUpdated += (_, _) =>
-        {
-            AlignHeadingChoicesWithSubscript();
-            SyncHeadingBadge();
-        };
         UpdateHighlightButtonFill();
         UpdateHeadingVisuals();
         // 右下角保存状态：VM 报一次就换一次图标（StatusText 连带字数、标题一起报）
@@ -294,78 +304,14 @@ public sealed partial class MainWindow : Window
 
     private void OnTodoClick(object sender, RoutedEventArgs e) => _editor.ExecuteCommand("todo");
 
-    // ---- 标题级别：一个 "H" 按钮 + 向右展开的 1/2/3 选项（2026-10-04 合并）----
-
-    /// <summary>
-    /// 选项帘子展开后的宽度＝三个格子的宽 + 两道格距。
-    /// </summary>
-    /// <remarks>
-    /// <b>别去问那条 StackPanel 的 <c>DesiredSize</c></b>：帘子收起时外框宽 0，而没有显式宽度的元素，
-    /// 它的 DesiredSize 会被**夹到可见宽度**上——那条 StackPanel 量出来就是 0，于是"展开"是把宽度
-    /// 从 0 动到 0：格子根本没出来，而角标照旧飞到格子的位置上（它的落点算的是格子自己的宽，
-    /// 格子有显式 <c>Width</c>、量出来是准的）——看上去就是"数字孤零零飘在那儿"。
-    /// 所以这里按格子逐个加：改格子宽度或格距（XAML 里那三个 `Width` 与 `HeadingChoiceStrip.Spacing`）
-    /// 不用回来改代码。
-    /// </remarks>
-    private double HeadingChoiceWidth =>
-        ChoiceWidth(HeadingChoice1) + ChoiceWidth(HeadingChoice2) + ChoiceWidth(HeadingChoice3)
-        + (HeadingChoiceStrip.Spacing * 2);
-
-    /// <summary>
-    /// 一个格子的宽度：优先取**显式写死的** <c>Width</c>（那个数不会被布局夹），没写才退回实测宽度。
-    /// 帘子收起时格子排在 0 宽的槽里，实测值有被夹到 0 的风险——显式值没这个问题。
-    /// </summary>
-    private static double ChoiceWidth(FrameworkElement chip) =>
-        double.IsNaN(chip.Width) ? chip.DesiredSize.Width : chip.Width;
-
-    private const int HeadingExpandMs = 250;   // ≈ ControlNormalAnimationDuration
-    private const int HeadingCollapseMs = 167; // ≈ ControlFastAnimationDuration
-
-    /// <summary>选项帘子是否展开（宽度做动画期间读不出准确值，所以单独记一个态）。</summary>
-    private bool _headingOpen;
-
-    /// <summary>正在跑的展开/收起动画：Storyboard 播完会**保持**动画值、盖住之后的直接赋值，所以要记账。</summary>
-    private Storyboard? _headingStory;
-
-    /// <summary>角标停在收起位（H 的下角标）时的缩放：与面里那个占位数字的字号对齐（两个字号都来自 XAML）。</summary>
-    private readonly double _headingBadgeRestingScale;
-
-    /// <summary>角标正被动画驱动：既别让 <see cref="SyncHeadingBadge"/> 改写它的位置，也别换它的数字。</summary>
-    private bool _headingBadgeAnimating;
-
-    /// <summary>角标已"入库"（展开落定后把数字交还给了格子）。这时它是藏着的、位置无所谓，收起时会重新摆。</summary>
-    private bool _headingBadgeParked;
-
-    /// <summary>上次把角标摆到哪儿了（没变就不写变换，免得每次布局都白重画一遍）。</summary>
-    private (double X, double Y, double Scale) _headingBadgePlaced = (double.NaN, double.NaN, double.NaN);
-
-    /// <summary>右键点 H：1/2/3 在它右边向右展开（H 自己不动）。</summary>
-    private void OnHeadingRightTapped(object sender, RightTappedRoutedEventArgs e)
-    {
-        e.Handled = true;
-        OpenHeadingChoices();
-    }
-
-    /// <summary>
-    /// 左键点 H 本体：把**常用级别**应用一次（选了字＝放大选中的文字；没选＝整段设为该级标题）。
-    /// 展开期间点它＝收起。
-    /// </summary>
     private void OnHeadingClick(object sender, RoutedEventArgs e)
     {
-        if (_headingOpen)
+        if (!HeadingButton.SuppressClick && !HeadingPickerLayer.IsOpen)
         {
-            CollapseHeadingChoices();
-            return;
+            ApplyHeadingLevel();
         }
-
-        ApplyHeadingLevel();
     }
 
-    /// <summary>
-    /// 把常用级别应用一次：**选了字**就把选中的文字放大成这一档标题的字号（行内字号比，段落类型不变）；
-    /// **没选字**就把整段设成这一级标题。两条路都跟"点一下 H"完全一样——右键菜单里选完一档
-    /// 也走这里（与底色按钮"选完就刷上去"一致）。两条命令自带 toggle 语义：已经在这一档就回退。
-    /// </summary>
     private void ApplyHeadingLevel()
     {
         if (_editor.HasSelection)
@@ -377,356 +323,8 @@ public sealed partial class MainWindow : Window
         _editor.ExecuteCommand($"h{_toolbar.HeadingLevel}");
     }
 
-    /// <summary>
-    /// 左键点选项：把它设为**常用级别**（全局保存，下次打开/新建便签还是它），
-    /// 然后**顺手应用一次**——跟底色按钮"选完就刷上去"一致，不用再点一下 H。
-    /// </summary>
-    private void OnHeadingChoiceClick(object sender, RoutedEventArgs e)
-    {
-        if (sender is FrameworkElement { Tag: string level }
-            && int.TryParse(level, out int parsed))
-        {
-            _toolbar.SetHeadingLevel(parsed);
-            ApplyHeadingLevel();
-        }
-        CollapseHeadingChoices();
-    }
-
-    /// <summary>帘子宽度变了就同步裁剪框（WinUI 没有 ClipToBounds，没有它子元素会溢出 0 宽的外框）。</summary>
-    private void OnHeadingChoiceHostSizeChanged(object sender, SizeChangedEventArgs e) => UpdateHeadingChoiceClip();
-
-    /// <summary>动画期间逐帧对齐裁剪框——不指望 SizeChanged 一定会跟着布局动画走。</summary>
-    private void OnHeadingHostLayoutUpdated(object? sender, object e) => UpdateHeadingChoiceClip();
-
-    /// <summary>开始逐帧跟裁剪；半途换场时先摘再挂，避免同一个处理器挂重。</summary>
-    private void StartTrackingHeadingClip()
-    {
-        HeadingChoiceHost.LayoutUpdated -= OnHeadingHostLayoutUpdated;
-        HeadingChoiceHost.LayoutUpdated += OnHeadingHostLayoutUpdated;
-    }
-
-    private void StopTrackingHeadingClip()
-    {
-        HeadingChoiceHost.LayoutUpdated -= OnHeadingHostLayoutUpdated;
-        UpdateHeadingChoiceClip();
-    }
-
-    private void UpdateHeadingChoiceClip() =>
-        HeadingChoiceClip.Rect = new Rect(0, 0, HeadingChoiceHost.ActualWidth, HeadingChoiceHost.ActualHeight);
-
-    /// <summary>
-    /// 展开：帘子宽 0 → 42，同时角标从 H 的下角标位置**飞到当前选中的那个选项上**
-    /// （选中项自己的数字让位，看起来就是角标挪了过去）。
-    /// </summary>
-    private void OpenHeadingChoices()
-    {
-        if (_headingOpen)
-        {
-            return;
-        }
-        _headingOpen = true;
-        UpdateHeadingVisuals();  // 起飞前先对齐（角标的数字此刻就是当前级别）
-        _headingBadgeAnimating = true;
-        _headingBadgeParked = false; // 上一次展开落定时它入过库；收起那一趟已经把它摆回家并露出来了
-
-        // 展开期间 H **不画自己的背景**（悬停/按下的底色、边框、焦点框全熄掉）——跟左边那个
-        // 底色按钮一个思路：这一排露出来的是"H + 1/2/3"一整套，H 上再挂一圈悬停框就不成一体了。
-        // 但它**仍然可点**（点一下＝收起），所以不能像底色按钮那样把命中测试整个关掉。
-        SetHeadingButtonActive(true);
-
-        SyncHeadingChoiceDigits(); // 选中那格的数字让位给要飞过来的角标
-
-        // 基准值先设成终态、动画只负责过程：某条没跑成也不会留下坏状态
-        // （同一帧里 Begin() 就挂上了动画，首帧读到的仍是 From，不会闪终态）
-        HeadingChoiceHost.Width = HeadingChoiceWidth;
-
-        // 宽度写成终态之后**强制排一次版**，再去量角标要落的那一格：量的是它**真正待着**的位置，
-        // 而不是按"格宽 + 间距"推算出来的——格子怎么调（宽窄/间距/外边距）都不会偏。
-        HeadingChoiceHost.UpdateLayout();
-        Point badgeTarget = HeadingChoiceCenter(_toolbar.HeadingLevel);
-
-        StartTrackingHeadingClip();
-
-        var story = new Storyboard();
-        AddHeadingAnimation(story, HeadingChoiceHost, "Width", 0d, HeadingChoiceWidth, HeadingExpandMs, isLayout: true);
-        AddHeadingBadgeAnimations(story, badgeTarget, 1d, HeadingExpandMs);
-        RunHeadingAnimation(story, () =>
-        {
-            HeadingChoiceHost.Width = HeadingChoiceWidth;
-            PlaceHeadingBadge(badgeTarget, 1d);
-            _headingBadgeAnimating = false;
-            StopTrackingHeadingClip();
-
-            // 落地：把数字**交还给格子自己**（角标退场）。角标与格子里的数字是两条渲染路径，
-            // 差不到 1dip 的那点永远消不掉；交了之后"选中的数字"和旁边两个就是同一种元素，差多少都看不出来。
-            // 同一帧里"亮回数字 + 藏起角标"，看不出交接。
-            ShowAllHeadingChoiceDigits();
-            ParkHeadingBadge();
-        });
-    }
-
-    /// <summary>
-    /// 收起：帘子宽 → 0，角标从选项上**飞回 H 的下角标位置**。
-    /// 角标带着**旧**数字飞（落地那一下才换新的）——否则它会顶着新数字停在旧格子上，像穿帮。
-    /// </summary>
-    private void CollapseHeadingChoices()
-    {
-        if (!_headingOpen)
-        {
-            return;
-        }
-        _headingOpen = false;
-        _headingBadgeAnimating = true; // 先锁住角标，再刷新界面（刷新会想要换它的数字）
-        UpdateHeadingVisuals();
-        StartTrackingHeadingClip();
-
-        // 起飞前把它**瞬移**到要离开的那一格上：落地后它一直"入库"藏着、位置停在家里，
-        // 而格子自己的数字正显示着——同帧里"藏数字 + 摆角标 + 露角标"，看见的就是"它本来就在那儿"。
-        _headingBadgeParked = false;
-        SyncHeadingChoiceDigits();
-        PlaceHeadingBadge(HeadingChoiceCenter(_toolbar.HeadingLevel), 1d);
-
-        Point badgeTarget = HeadingFaceLevelSlotCenter();
-
-        var story = new Storyboard();
-        // From 取"当前值"：半途打断也能从眼下这一帧接着收
-        AddHeadingAnimation(story, HeadingChoiceHost, "Width", HeadingChoiceHost.Width, 0d, HeadingCollapseMs, isLayout: true);
-        AddHeadingBadgeAnimations(story, badgeTarget, _headingBadgeRestingScale, HeadingCollapseMs);
-        RunHeadingAnimation(story, () =>
-        {
-            HeadingChoiceHost.Width = 0d;
-            SetHeadingButtonActive(false); // 选项没了，H 恢复成一个普通按钮（悬停底色/提示都回来）
-            PlaceHeadingBadge(badgeTarget, _headingBadgeRestingScale);
-            _headingBadgeAnimating = false;
-            UpdateHeadingBadgeText();          // 到家了才换新数字
-            ShowAllHeadingChoiceDigits();      // 选项的数字各自归位
-            StopTrackingHeadingClip();
-        });
-    }
-
-    // ---- 角标：H 的下角标 ↔ 飞过去当选项的数字 ----
-
-    private void AddHeadingBadgeAnimations(Storyboard story, Point target, double scale, int milliseconds)
-    {
-        Point half = HeadingBadgeHalf;
-
-        // 曲线用对称的缓入缓出：角标要横跨小半个工具栏，缓出（起步就冲出去）看着像"飞过头"。
-        AddHeadingAnimation(story, HeadingBadgeShift, "X", HeadingBadgeShift.X, target.X - half.X, milliseconds, isLayout: false, EasingMode.EaseInOut);
-        AddHeadingAnimation(story, HeadingBadgeShift, "Y", HeadingBadgeShift.Y, target.Y - half.Y, milliseconds, isLayout: false, EasingMode.EaseInOut);
-        AddHeadingAnimation(story, HeadingBadgeScale, "ScaleX", HeadingBadgeScale.ScaleX, scale, milliseconds, isLayout: false, EasingMode.EaseInOut);
-        AddHeadingAnimation(story, HeadingBadgeScale, "ScaleY", HeadingBadgeScale.ScaleY, scale, milliseconds, isLayout: false, EasingMode.EaseInOut);
-    }
-
-    /// <summary>角标那个框的半宽半高（＝选项格子的一半）：把"框心"对到目标中心就靠它。</summary>
-    private Point HeadingBadgeHalf => new(HeadingBadge.Width / 2, HeadingBadge.Height / 2);
-
-    /// <summary>把角标摆到某个中心（<paramref name="scale"/> = 1 是选项的字号，收起时按占位的字号缩小）。</summary>
-    private void PlaceHeadingBadge(Point center, double scale)
-    {
-        Point half = HeadingBadgeHalf;
-        double x = center.X - half.X;
-        double y = center.Y - half.Y;
-        if (_headingBadgePlaced == (x, y, scale))
-        {
-            return;
-        }
-
-        HeadingBadgeShift.X = x;
-        HeadingBadgeShift.Y = y;
-        HeadingBadgeScale.ScaleX = scale;
-        HeadingBadgeScale.ScaleY = scale;
-        _headingBadgePlaced = (x, y, scale);
-
-        // 量到位置之后才露出来（否则头一帧它会闪在工具栏左上角）；"入库"时就该是藏着的
-        HeadingBadge.Opacity = _headingBadgeParked ? 0 : 1;
-    }
-
-    /// <summary>
-    /// 角标"入库"：展开落定后把数字**交还给格子自己的 TextBlock**，角标藏起来。
-    /// </summary>
-    /// <remarks>
-    /// 角标和格子里的数字是**两个不同元素、两条渲染路径**——哪怕两边都居中、哪怕量的是数字自己，
-    /// 也总会差不到 1dip（实机反复出现，而且随字号/框大小变）。落定后让格子自己画，
-    /// 就等于"和旁边两个一模一样"，差多少都为零，**以后怎么调都不跑偏**。
-    /// 收起时再把它瞬移回目标格上起飞（见 <see cref="CollapseHeadingChoices"/>）。
-    /// </remarks>
-    private void ParkHeadingBadge()
-    {
-        _headingBadgeParked = true;
-        HeadingBadge.Opacity = 0;
-    }
-
-    /// <summary>每次布局完校一次角标与选项数字——位置/选中项变了就自己跟上。</summary>
-    private void SyncHeadingBadge()
-    {
-        // 入库期间不用管它（藏着的，位置无所谓）；收起时会重新摆
-        if (_headingBadgeAnimating || _headingBadgeParked)
-        {
-            return;
-        }
-
-        if (_headingOpen)
-        {
-            SyncHeadingChoiceDigits();
-            PlaceHeadingBadge(HeadingChoiceCenter(_toolbar.HeadingLevel), 1d);
-        }
-        else
-        {
-            PlaceHeadingBadge(HeadingFaceLevelSlotCenter(), _headingBadgeRestingScale);
-        }
-    }
-
-    /// <summary>
-    /// 把展开的 1/2/3 整排**对到 H 那个下角标的高度**上。
-    /// </summary>
-    /// <remarks>
-    /// 为什么要对：角标从"下角标"飞到"选项格子里"，两端高度一致时它就是**纯横向平移**
-    /// （高度全程不变），看着才像"那个数字挪了个位置"，而不是边飞边长边上下跳。
-    /// 用 <see cref="HeadingChoiceHostShift"/> 那个 `TranslateTransform` 调、不动外框的 `Margin`：
-    /// 位移**精确**（居中排布下 Margin 会被打对折），而且每次布局按实测重算——
-    /// 字号、行高、下角标位置、格子大小怎么改都不会跑偏。
-    /// </remarks>
-    private void AlignHeadingChoicesWithSubscript()
-    {
-        double current = HeadingChoiceHostShift.Y;
-
-        // 量到的位置里已经含了当前位移，先减掉它，得到"位移为 0 时"的位置，再定目标
-        double digitY = CenterOf(HeadingChoiceText1).Y - current;
-        double target = HeadingFaceLevelSlotCenter().Y - digitY;
-
-        if (Math.Abs(current - target) < 0.01)
-        {
-            return;
-        }
-
-        HeadingChoiceHostShift.Y = target;
-    }
-
-    /// <summary>收起时角标停在哪儿：面里那个看不见的占位数字的中心。</summary>
-    private Point HeadingFaceLevelSlotCenter() => CenterOf(HeadingFaceLevelSlot);
-
-    /// <summary>
-    /// 落点再往下压一点点（dip）。**现在是 0**——两边的渲染已经对齐了，不需要补。
-    /// </summary>
-    /// <remarks>
-    /// 早先这里要补 0.42（两点标定：0 偏高、0.85 偏低），根因是**两边走了两条渲染路径**：
-    /// 格子里的数字是按钮 `ContentPresenter` 的直接内容，`LineHeight` 被它顶掉（数字在框里偏低 0.85dip），
-    /// 而角标是浮层 `Border` 的直接子元素、样式正常生效（居中）。
-    /// 现在两边结构一样（数字都套了一层容器 + `VerticalAlignment=Center`），落点自然对得上。
-    /// **真要再微调就动这个数**：正数往下、负数往上；只作用于"展开时飞过去停在哪儿"，
-    /// 收起时那个下角标走另一条路（量占位），不受影响。
-    /// </remarks>
-    private const double HeadingChoiceLandingDrop = 0;
-
-    /// <summary>
-    /// 展开时角标停在哪儿：**选中那一格里的那个数字**的中心，再按
-    /// <see cref="HeadingChoiceLandingDrop"/> 压一点。
-    /// </summary>
-    /// <remarks>
-    /// 量的是数字、不是格子：格子是 16×16，而 13 号数字的行框比它高——两者"居中"的位置差着半格。
-    /// 量数字就与"那一格自己怎么摆这个数字"无关了。
-    /// 前提：量之前帘子宽度必须已是终态（<see cref="OpenHeadingChoices"/> 里先写宽度、
-    /// <c>UpdateLayout()</c> 之后再量），否则量到的是"还挤在 0 宽里"的位置。
-    /// </remarks>
-    private Point HeadingChoiceCenter(int level)
-    {
-        Point center = CenterOf(level switch
-        {
-            1 => HeadingChoiceText1,
-            2 => HeadingChoiceText2,
-            _ => HeadingChoiceText3,
-        });
-
-        return new Point(center.X, center.Y + HeadingChoiceLandingDrop);
-    }
-
-    /// <summary>元素在角标覆盖层坐标系里的中心（覆盖层与工具栏同格，量的是元素实际排版的位置）。</summary>
-    private Point CenterOf(FrameworkElement element)
-    {
-        Rect rect = element.TransformToVisual(HeadingBadgeLayer)
-            .TransformBounds(new Rect(0, 0, element.ActualWidth, element.ActualHeight));
-
-        return new Point(rect.X + (rect.Width / 2), rect.Y + (rect.Height / 2));
-    }
-
-    /// <summary>选中的那一格不画自己的数字（角标正停在它上面，两个数字会叠在一起）。</summary>
-    private void SyncHeadingChoiceDigits()
-    {
-        int level = _toolbar.HeadingLevel;
-        HeadingChoiceText1.Opacity = level == 1 ? 0 : 1;
-        HeadingChoiceText2.Opacity = level == 2 ? 0 : 1;
-        HeadingChoiceText3.Opacity = level == 3 ? 0 : 1;
-    }
-
-    private void ShowAllHeadingChoiceDigits()
-    {
-        HeadingChoiceText1.Opacity = 1;
-        HeadingChoiceText2.Opacity = 1;
-        HeadingChoiceText3.Opacity = 1;
-    }
-
-    /// <summary>动画收尾：先把终值写回属性，再停掉动画（否则保持值会盖住以后的直接赋值）。</summary>
-    private void RunHeadingAnimation(Storyboard story, Action bake)
-    {
-        story.Completed += (_, _) =>
-        {
-            bake();
-            story.Stop();
-            if (ReferenceEquals(_headingStory, story))
-            {
-                _headingStory = null;
-            }
-        };
-
-        _headingStory?.Stop(); // 放掉上一轮的保持值（上一轮已经不在跑了）
-        _headingStory = story;
-        story.Begin();
-    }
-
-    private static void AddHeadingAnimation(Storyboard story, DependencyObject target, string property,
-        double from, double to, int milliseconds, bool isLayout, EasingMode easing = EasingMode.EaseOut)
-    {
-        var animation = new DoubleAnimation
-        {
-            From = from,
-            To = to,
-            Duration = new Duration(TimeSpan.FromMilliseconds(milliseconds)),
-            EasingFunction = new CubicEase { EasingMode = easing },
-            EnableDependentAnimation = isLayout, // 宽度这类布局属性的动画必须显式允许
-        };
-        Storyboard.SetTarget(animation, target);
-        Storyboard.SetTargetProperty(animation, property);
-        story.Children.Add(animation);
-    }
-
-    /// <summary>
-    /// 标题控件的显性态：面里的占位、看得见的角标、选项的选中态都对齐到**常用级别**
-    /// （全局设置，不是光标所在块的级别）。角标的数字在它飞行期间**不换**——落地那一下才换
-    /// （见 <see cref="CollapseHeadingChoices"/> 的收尾）。
-    /// </summary>
-    private void UpdateHeadingVisuals()
-    {
-        int level = _toolbar.HeadingLevel;
-        HeadingFaceLevelSlot.Text = DigitOf(level); // 看不见、但撑住 H 的位置并给角标量坐标
-        if (!_headingBadgeAnimating)
-        {
-            UpdateHeadingBadgeText();
-        }
-
-        HeadingChoice1.IsChecked = level == 1;
-        HeadingChoice2.IsChecked = level == 2;
-        HeadingChoice3.IsChecked = level == 3;
-    }
-
-    private void UpdateHeadingBadgeText() => HeadingBadgeText.Text = DigitOf(_toolbar.HeadingLevel);
-
-    private static string DigitOf(int level) => level switch
-    {
-        1 => "1",
-        2 => "2",
-        3 => "3",
-        _ => string.Empty,
-    };
+    private void UpdateHeadingVisuals() =>
+        HeadingFaceLevel.Text = _toolbar.HeadingLevel.ToString(System.Globalization.CultureInfo.InvariantCulture);
 
     /// <summary>分点/勾选按钮态随光标所在块刷新（Phase 3 M2 §6.1）：光标所在块已带标记就显示为激活。</summary>
     private void OnCaretBlockChanged(object? sender, EventArgs e)
@@ -887,14 +485,11 @@ public sealed partial class MainWindow : Window
         ToolTipService.SetToolTip(HighlightButton, idle ? null : HighlightButtonTip);
     }
 
-    /// <summary>
-    /// 展开 1/2/3 期间把 H "熄灭"（背景/边框/焦点框都不画）。
-    /// 点一下可以收起选项。
-    /// </summary>
-    private void SetHeadingButtonActive(bool active)
+    private void SetHeadingButtonIdle(bool idle)
     {
-        SetButtonIdle(HeadingButton, active);
-        ToolTipService.SetToolTip(HeadingButton, active ? null : HeadingButtonTip);
+        SetButtonIdle(HeadingButton, idle);
+        HeadingFace.Opacity = idle ? 0 : 1;
+        ToolTipService.SetToolTip(HeadingButton, idle ? null : HeadingButtonTip);
     }
 
     /// <summary>点亮别处＝取消取色（色带收起，不套用）；标题选项同理（收起，不改级别）。</summary>
@@ -907,10 +502,9 @@ public sealed partial class MainWindow : Window
             HighlightPickerLayer.Close(apply: false);
         }
 
-        // 标题：点 H 本体不算"别处"（它有 Click 处理器，自己决定收起还是取消），点选项当然也不算
-        if (_headingOpen && !IsWithin(source, HeadingButton) && !IsWithin(source, HeadingChoiceHost))
+        if (HeadingPickerLayer.IsOpen && !IsWithin(source, HeadingButton))
         {
-            CollapseHeadingChoices();
+            HeadingPickerLayer.Close();
         }
     }
 
@@ -927,9 +521,9 @@ public sealed partial class MainWindow : Window
             HighlightPickerLayer.Close(apply: false);
             e.Handled = true;
         }
-        else if (_headingOpen)
+        else if (HeadingPickerLayer.IsOpen)
         {
-            CollapseHeadingChoices();
+            HeadingPickerLayer.Close();
             e.Handled = true;
         }
     }

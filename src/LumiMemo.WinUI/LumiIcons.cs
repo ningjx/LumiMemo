@@ -10,7 +10,7 @@ namespace LumiMemo.WinUI;
 /// 系统字体在 Win10 上会回退成 Segoe MDL2 Assets，字形对不上（README 写明支持 Win10 1809+）。</para>
 /// <para><b>尺寸要配对</b>：字体里每个图标按尺寸各存一份字形（12/16/20/24/28/32/48），
 /// 所以"取哪个尺寸的码位"必须和 <c>FontSize</c> 一致，否则光学重量不对。
-/// 下面分两组：工具栏 20（<c>LumiIconSizeToolbar</c>）、标题栏与管理器 16（<c>LumiIconSizeChrome</c>）。</para>
+/// 下列常量包含 20px 格式图标和标题栏与管理器使用的 16px 图标（<c>LumiIconSizeChrome</c>）。</para>
 /// <para><b>写死成转义</b>：字符串一律用 <c>\uXXXX</c> / <c>\U000XXXXX</c> 写，不放裸的私用区字符——
 /// 那种字符在编辑器里看不见，编码一动就悄悄坏掉。</para>
 /// <para><b>字体升级后怎么重核</b>：按注释里的名字去官方 <c>fonts/FluentSystemIcons-Regular.css</c>
